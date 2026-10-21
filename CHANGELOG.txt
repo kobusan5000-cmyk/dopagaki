@@ -1,0 +1,17 @@
+DOPAGAKI v0.8 fix1
+- NIGHT REAPER now appears once per wave from wave 3 (was up to 5 at once); never more than one alive.
+- Sword and greatsword: longer reach, faster attacks, a bit more damage and knockback.
+- NIGHT REAPER now walks up close while shooting, so melee heroes can hit it and its touch attack works.
+
+DOPAGAKI v0.8
+- Large scrolling world 2540x1590 with following Camera2D and two camp sites.
+- Player health shown in a prominent HUD bar, character overhead bar, and companion bar.
+- Prep 25s -> Combat 48s -> Rest 26s loop; no enemy spawns during prep/rest.
+- Crops grow in 10s; 10 farm plots split across two campgrounds.
+- Two recipes can be cooked and stored for later. H/J consumes meals.
+- Companion MINT: custom 4-frame pixel art, follows, shoots nearest threats, heals hero,
+  uses stored food when injured, and respawns after falling.
+- New NIGHT REAPER elite boss from wave 3: 3-shot ranged attack, higher HP, epic gear reward.
+- Normal enemy equipment chance reduced to 8% total. Brute chance 35% instead of guaranteed.
+- F9 NIGHT REAPER spawn / F10 MINT food-consumption test added.
+- Online/networked multiplayer is planned, not included.

@@ -1,0 +1,92 @@
+name: build
+
+# Every upload / push to main builds the Windows game and publishes it as the newest GitHub Release.
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build
+  cancel-in-progress: false
+
+env:
+  GODOT_VERSION: "4.7.2-stable"
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check project layout
+        run: |
+          if [ ! -f project.godot ]; then
+            echo "::error::project.godot was not found at the repository root. Upload the CONTENTS of the project folder, not the folder itself."
+            exit 1
+          fi
+          count=$(find . -name project.godot -not -path './tools/*' -not -path './.git/*' | wc -l)
+          if [ "$count" != "1" ]; then
+            echo "::error::More than one project.godot found (nested project folder?):"
+            find . -name project.godot -not -path './tools/*' -not -path './.git/*'
+            exit 1
+          fi
+
+      - name: Cache Godot
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ~/godot-cache
+          key: godot-${{ env.GODOT_VERSION }}
+
+      - name: Download Godot and export templates
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/godot-cache && cd ~/godot-cache
+          gh release download "$GODOT_VERSION" -R godotengine/godot \
+            -p "Godot_v${GODOT_VERSION}_linux.x86_64.zip" \
+            -p "Godot_v${GODOT_VERSION}_export_templates.tpz"
+          unzip -q "Godot_v${GODOT_VERSION}_linux.x86_64.zip"
+          mkdir -p tpl && unzip -q "Godot_v${GODOT_VERSION}_export_templates.tpz" -d tpl
+
+      - name: Install Godot
+        run: |
+          chmod +x ~/godot-cache/Godot_v${GODOT_VERSION}_linux.x86_64
+          sudo ln -sf ~/godot-cache/Godot_v${GODOT_VERSION}_linux.x86_64 /usr/local/bin/godot
+          dir=~/.local/share/godot/export_templates/${GODOT_VERSION/-/.}
+          mkdir -p "$dir"
+          cp -r ~/godot-cache/tpl/templates/. "$dir"/
+          ls "$dir" | head
+
+      - name: Export game
+        run: |
+          mkdir -p build
+          cp ci/export_presets_game.cfg export_presets.cfg
+          godot --headless --import || true
+          godot --headless --export-release "Windows Desktop" build/DOPAGAKI.exe
+          test -f build/DOPAGAKI.exe
+          cd build && zip -q DOPAGAKI_game.zip DOPAGAKI.exe
+
+      - name: Export launcher
+        run: |
+          cd tools/launcher
+          godot --headless --import || true
+          godot --headless --export-release "Windows Desktop" ../../build/DOPAGAKI_Launcher.exe
+          test -f ../../build/DOPAGAKI_Launcher.exe
+
+      - name: Publish release
+        run: |
+          tag="b${{ github.run_number }}"
+          # Release notes = newest block (up to the first blank line) of CHANGELOG.txt
+          awk 'NF==0 && seen {exit} NF>0 {seen=1; print}' CHANGELOG.txt > notes.txt
+          msg=$(git log -1 --pretty=%s)
+          printf '\n(upload: %s)\n' "$msg" >> notes.txt
+          gh release create "$tag" build/DOPAGAKI_game.zip build/DOPAGAKI_Launcher.exe \
+            --title "$tag" --notes-file notes.txt --latest

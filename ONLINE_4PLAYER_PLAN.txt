@@ -1,0 +1,19 @@
+DOPAGAKI: 4-player online co-op migration plan (NOT yet implemented)
+===================================================================
+Current v0.8 is a single-player design prototype. The existing combat script is
+monolithic; a real 4-player version will require refactoring, not a mere checkbox.
+
+Recommended implementation order
+1. Refactor hero stats, class/weapon/armor/inventory into reusable Player scene.
+   Each player's HP/MP, inventory, class and look must be separately owned.
+2. Refactor enemy spawning, drops and farming into independent world nodes.
+3. Local 2-player test scene with 2 independent input schemes for co-op testing.
+4. ENet LAN host/join prototype: player movement and aim synchronization.
+5. Host-authoritative enemy HP, damage, loot, farm plots and crafting to prevent
+   double-looting/desync. The host decides the outcome and broadcasts state.
+6. Revive/heal allies, class synergy and item transfer/ownership rules.
+7. Verify 4 players on different machines and design room codes, NAT traversal
+   or relay solution. Steam invites require extra integration/testing.
+
+Note: class-select 1-6 here does NOT connect additional clients and the game is
+not network playable in v0.8.
