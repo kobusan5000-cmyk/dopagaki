@@ -1,6 +1,12 @@
-DOPAGAKI v0.13.1
-- Fixed EPIC sword art not consistently showing in all places.
-- Unified sword-art lookup for drops, hotbar, bag, equipped icon, slot preview, and held weapon.
+DOPAGAKI v0.14.1 — ちゅぶら（黒うさぎ）とのふれあい
+・黒うさぎの名前を「ちゅぶら」に変更
+・[T]でお世話メニュー：なでる／抱っこ・おろす／にんじんをあげる／装備購入
+・にんじんを直接与えると満腹度＋38、なかよし度＋15
+・飾った料理（特にニンジンシチュー）を食べると満腹度と好感度が上がる
+・装備3種類：赤いリボン12G／探検ハーネス40G／月の首飾り80G（ゲーム内Gのみ）
+・装備に応じた見た目と少量の攻撃力上昇。抱っこ中は戦闘・料理を行わない
+・v0.14の未定義MEAL_NAMES参照も修正
+※オンライン4人プレイ・セーブ機能は未実装
 
 DOPAGAKI v0.9.1 — Startup Hotfix
 - Fixed GDScript parse errors at former lines 816 and 819: type inference of offset/outward from an untyped constant array.

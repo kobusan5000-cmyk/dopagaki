@@ -47,6 +47,10 @@ const MERCHANT_POS := Vector2(1780, 985)
 const WEAPON_TRAITS := ["烈火", "氷霜", "猛毒", "星光", "疾風"]
 const TRAIT_COLORS := [Color("ff985a"), Color("9be6ff"), Color("9eff9b"), Color("ffe68b"), Color("c5a2ff")]
 const CROP_NAMES := ["ニンジン", "メロン", "スイカ"]
+const MEAL_NAMES := ["ニンジンシチュー", "ハンタースープ", "メロンジュース", "スイカパフェ"]
+const RABBIT_NAME := "ちゅぶら"
+const RABBIT_GEAR_NAMES := ["なし", "赤いリボン", "探検ハーネス", "月の首飾り"]
+const RABBIT_GEAR_COSTS := [0, 12, 40, 80]
 const CROP_GROW := [10.0, 22.0, 35.0]
 const CROP_COLORS := [Color("ffa665"), Color("aaff8d"), Color("79d7b0")]
 const WEAPON_SHORT := ["銃", "弓", "剣", "大剣", "連弩", "魔杖", "癒杖", "クナイ"]
@@ -205,6 +209,26 @@ var companion_stats: Array[int] = [0, 0, 0, 0, 0, 0]
 var hero_stats: Array[int] = [0, 0, 0, 0, 0, 0]
 var pending_hero_points := 0
 var pending_mint_points := 0
+
+# Black rabbit pet: light support only, cute and weak.
+var rabbit_pet := Vector2(1168, 902)
+var rabbit_pet_goal := Vector2(1168, 902)
+var rabbit_pet_mode := "ついてくる"
+var rabbit_pet_attack_clock := 0.0
+var rabbit_pet_walk_clock := 0.0
+var rabbit_pet_meal_clock := 0.0
+var rabbit_pet_bob_clock := 0.0
+var rabbit_pet_was_moving := false
+var rabbit_pet_enabled := true
+var rabbit_gear_level := 0
+var rabbit_affection := 35.0
+var rabbit_hunger := 48.0 # 0=空腹 / 100=満腹
+var rabbit_carried := false
+var rabbit_pet_glow := 0.0
+var rabbit_menu_open := false
+var rabbit_menu: PanelContainer
+var rabbit_menu_info: Label
+var rabbit_menu_buttons: Array[Button] = []
 var upgrade_target := "hero"
 var mp := 30.0
 var max_mp := 30.0
@@ -455,7 +479,7 @@ func build_ui() -> void:
 	choose_box.add_theme_constant_override("separation", 7)
 	choose_panel.get_child(0).add_child(choose_box)
 	choose_box.add_child(make_label("DOPAGAKI  /  キャラクター作成", 29, Color("7de9f0"), true))
-	choose_box.add_child(make_label("v0.13  |  忍者・料理展示・装備性能個体差", 14, Color("d0dcf3"), true))
+	choose_box.add_child(make_label("v0.14.1  |  黒うさぎ『ちゅぶら』・にんじん・ペット装備・ふれあい", 14, Color("d0dcf3"), true))
 	var name_row := HBoxContainer.new()
 	name_row.add_theme_constant_override("separation", 13)
 	choose_box.add_child(name_row)
@@ -488,7 +512,7 @@ func build_ui() -> void:
 		grid.add_child(btn)
 		class_buttons.append(btn)
 	choose_box.add_child(make_label("[1〜7] 職業を選択  /  先に名前・色・帽子を設定", 15, Color("adc6e1"), true))
-	choose_box.add_child(make_label("敵を全滅でWAVEクリア！ 商人で買い物・レア作物の栽培・ミントの蘇生", 16, Color("86eac5"), true))
+	choose_box.add_child(make_label("敵を全滅でWAVEクリア！ [T]で黒うさぎ『ちゅぶら』をお世話できるよ", 16, Color("86eac5"), true))
 	# A compact cooking menu with recipe buttons and resource counter.
 	cooking_panel = make_panel(Vector2(311, 36), Vector2(530, 566), Color("f6b970"))
 	layer.add_child(cooking_panel)
@@ -529,6 +553,26 @@ func build_ui() -> void:
 	exit_cook.pressed.connect(toggle_cooking)
 	cook_box.add_child(exit_cook)
 	cooking_panel.hide()
+
+	# ちゅぶら is a small independent pet; interact near it with [T].
+	rabbit_menu = make_panel(Vector2(285, 117), Vector2(584, 398), Color("d6a9ed"))
+	layer.add_child(rabbit_menu)
+	var rabbit_box := VBoxContainer.new()
+	rabbit_box.add_theme_constant_override("separation", 9)
+	rabbit_menu.get_child(0).add_child(rabbit_box)
+	rabbit_box.add_child(make_label("🐇 ちゅぶらのお世話", 29, Color("eac7ff"), true))
+	rabbit_menu_info = make_label("", 16, Color("e8eaf6"), true)
+	rabbit_box.add_child(rabbit_menu_info)
+	var rabbit_titles := ["[1] なでる  ♥", "[2] 抱っこ / おろす", "[3] にんじんをあげる", "[4] ペット装備を購入・装着"]
+	for rabbit_action in range(4):
+		var rabbit_button := make_button(rabbit_titles[rabbit_action], Color("b6a1ed"), Vector2(502, 46))
+		rabbit_button.pressed.connect(rabbit_action_selected.bind(rabbit_action))
+		rabbit_menu_buttons.append(rabbit_button)
+		rabbit_box.add_child(rabbit_button)
+	var rabbit_close := make_button("閉じる [T / Esc]", Color("d6a9ed"), Vector2(502, 34))
+	rabbit_close.pressed.connect(toggle_rabbit_menu)
+	rabbit_box.add_child(rabbit_close)
+	rabbit_menu.hide()
 
 	upgrade_panel = make_panel(Vector2(182, 110), Vector2(788, 448), Color("93a8ff"))
 	layer.add_child(upgrade_panel)
@@ -645,8 +689,6 @@ func build_ui() -> void:
 		item_row.add_theme_constant_override("separation", 5)
 		var button := make_button("", Color("5b7a9f"), Vector2(331, 36))
 		button.add_theme_font_size_override("font_size", 14)
-		button.clip_text = true
-		button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		button.pressed.connect(use_backpack_slot.bind(i))
 		inventory_buttons.append(button)
 		item_row.add_child(button)
@@ -660,8 +702,6 @@ func build_ui() -> void:
 	for i in range(ARMOR_SLOTS.size()):
 		var button := make_button("", Color("5b7a9f"), Vector2(414, 33))
 		button.add_theme_font_size_override("font_size", 14)
-		button.clip_text = true
-		button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		button.pressed.connect(unequip_armor.bind(i))
 		armor_buttons.append(button)
 		inv_box.add_child(button)
@@ -676,6 +716,7 @@ func build_ui() -> void:
 	inventory_panel.hide()
 	choose_panel.hide()
 	cooking_panel.hide()
+	rabbit_menu.hide()
 	upgrade_panel.hide()
 	dead_panel.hide()
 
@@ -753,6 +794,22 @@ func reset_game() -> void:
 	companion_patrol_index = 0
 	companion_skill_clock = 9.0
 	companion_stats = [0, 0, 0, 0, 0, 0]
+	rabbit_pet = player + Vector2(52, 48)
+	rabbit_pet_goal = rabbit_pet
+	rabbit_pet_mode = "ついてくる"
+	rabbit_pet_attack_clock = 0.25
+	rabbit_pet_walk_clock = 0.0
+	rabbit_pet_meal_clock = 2.0
+	rabbit_pet_bob_clock = 0.0
+	rabbit_pet_was_moving = false
+	rabbit_pet_enabled = true
+	rabbit_gear_level = 0
+	rabbit_affection = 35.0
+	rabbit_hunger = 48.0
+	rabbit_carried = false
+	rabbit_pet_glow = 0.0
+	rabbit_menu_open = false
+	rabbit_menu.hide()
 	hero_stats = [0, 0, 0, 0, 0, 0]
 	pending_hero_points = 0
 	pending_mint_points = 0
@@ -1374,6 +1431,12 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			reset_game()
 		return
 	if state == "playing":
+		if rabbit_menu_open:
+			if event.keycode == KEY_T or event.keycode == KEY_ESCAPE:
+				toggle_rabbit_menu()
+			elif event.keycode >= KEY_1 and event.keycode <= KEY_4:
+				rabbit_action_selected(event.keycode - KEY_1)
+			return
 		if merchant_open:
 			if event.keycode == KEY_ESCAPE or event.keycode == KEY_E:
 				toggle_merchant()
@@ -1403,7 +1466,9 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			return
 		if inventory_open:
 			return
-		if event.keycode == KEY_E:
+		if event.keycode == KEY_T:
+			toggle_rabbit_menu()
+		elif event.keycode == KEY_E:
 			interact_nearby()
 		elif event.keycode == KEY_SPACE:
 			start_jump()
@@ -1530,7 +1595,7 @@ func _process(delta: float) -> void:
 		if slot_spin_clock <= 0.0:
 			resolve_slot_spin()
 	enemy_sound_cooldown = maxf(0.0, enemy_sound_cooldown - delta)
-	if state != "playing" or inventory_open or cooking_open or slot_open or merchant_open:
+	if state != "playing" or inventory_open or cooking_open or slot_open or merchant_open or rabbit_menu_open:
 		update_hud()
 		queue_redraw()
 		return
@@ -1615,6 +1680,7 @@ func _process(delta: float) -> void:
 		else:
 			wave_clear_clock = 0.0
 	update_companion(delta)
+	update_rabbit_pet(delta)
 	update_shadow_clones(delta)
 	update_projectiles(delta)
 	if phase == "combat":
@@ -2682,7 +2748,6 @@ func refresh_inventory_ui() -> void:
 		inventory_buttons[i].text = "[%d]  %s" % [i + 1, item_description(item)]
 		inventory_buttons[i].icon = null if item.is_empty() else item_icon(item)
 		inventory_buttons[i].expand_icon = true
-		inventory_buttons[i].tooltip_text = inventory_buttons[i].text
 		inventory_buttons[i].disabled = item.is_empty()
 		discard_buttons[i].disabled = item.is_empty()
 		var c: Color = Color("628aa7") if item.is_empty() else RARITY_COLORS[int(item["rarity"])]
@@ -2692,7 +2757,6 @@ func refresh_inventory_ui() -> void:
 		armor_buttons[i].text = "%s: %s" % [ARMOR_SLOTS[i], "-- 空き --" if item.is_empty() else item_description(item)]
 		armor_buttons[i].icon = null if item.is_empty() else item_icon(item)
 		armor_buttons[i].expand_icon = true
-		armor_buttons[i].tooltip_text = armor_buttons[i].text
 		armor_buttons[i].disabled = item.is_empty()
 		var c: Color = Color("628aa7") if item.is_empty() else RARITY_COLORS[int(item["rarity"])]
 		armor_buttons[i].add_theme_color_override("font_color", c)
@@ -2917,7 +2981,7 @@ func update_hud() -> void:
 	if freeze_clock > 0.0: effects += " [凍結%d秒]" % ceili(freeze_clock)
 	mp_text.text += effects
 	skill_text.text = "[Q] %s %s" % [SKILL_NAMES[class_id], ("強化" if level >= 10 else "習得済") if level >= 5 else "LV5で習得"]
-	help.text = "WASD:移動  SPACE:回避%s  E:調べる/料理回収  F:作物選択  1-5:装備  I:バッグ  Q:スキル" % ("(%.1f秒)" % jump_cooldown if jump_cooldown > 0.0 else "")
+	help.text = "WASD:移動  SPACE:回避%s  E:調べる  [T]:ちゅぶらのお世話  F:作物  1-5:装備  I:バッグ  Q:スキル" % ("(%.1f秒)" % jump_cooldown if jump_cooldown > 0.0 else "")
 	hotbar_container.visible = state == "playing" or state == "upgrade"
 	hotbar_currency.visible = state == "playing" or state == "upgrade"
 
@@ -3167,6 +3231,195 @@ func draw_farm_and_kitchen() -> void:
 	draw_slot_machine()
 	draw_merchant()
 
+func toggle_rabbit_menu() -> void:
+	if state != "playing":
+		return
+	if not rabbit_menu_open and not rabbit_carried and player.distance_to(rabbit_pet) > 115.0:
+		show_status("ちゅぶらの近くで [T] を押してね", Color("ead7ff"))
+		return
+	rabbit_menu_open = not rabbit_menu_open
+	rabbit_menu.visible = rabbit_menu_open
+	if rabbit_menu_open:
+		inventory_open = false
+		inventory_panel.hide()
+		refresh_rabbit_menu()
+
+func refresh_rabbit_menu() -> void:
+	if rabbit_menu_info == null:
+		return
+	var gear_next := mini(3, rabbit_gear_level + 1)
+	var gear_line := "装備は最上級まで購入済" if rabbit_gear_level >= 3 else "次の装備: %s (%dG)" % [RABBIT_GEAR_NAMES[gear_next], RABBIT_GEAR_COSTS[gear_next]]
+	rabbit_menu_info.text = "名前: %s　好物: にんじん
+なかよし度: %d/100  満腹度: %d/100　にんじん: %d個
+装備: %s　%s
+状態: %s" % [RABBIT_NAME, roundi(rabbit_affection), roundi(rabbit_hunger), carrots, RABBIT_GEAR_NAMES[rabbit_gear_level], gear_line, "抱っこ中" if rabbit_carried else rabbit_pet_mode]
+	rabbit_menu_buttons[2].disabled = carrots <= 0 or rabbit_hunger >= 98.0
+	rabbit_menu_buttons[3].disabled = rabbit_gear_level >= 3 or coins < RABBIT_GEAR_COSTS[gear_next]
+	rabbit_menu_buttons[3].text = "[4] 次の装備を購入 (%dG)" % RABBIT_GEAR_COSTS[gear_next] if rabbit_gear_level < 3 else "[4] すべての装備を購入済"
+
+func rabbit_action_selected(action: int) -> void:
+	if state != "playing" or not rabbit_pet_enabled:
+		return
+	match action:
+		0: # Pet
+			rabbit_affection = minf(100.0, rabbit_affection + 9.0)
+			rabbit_pet_glow = 1.15
+			burst(rabbit_pet, Color("ff9bc8"), 17)
+			play_sound(AUDIO_PICKUP, -20.0, 1.55)
+			show_status("%sをなでた！ なかよし度 +9 ♥" % RABBIT_NAME, Color("ffd1ed"))
+		1: # Carry / put down
+			rabbit_carried = not rabbit_carried
+			if rabbit_carried:
+				rabbit_pet = player + Vector2(0, -44)
+				show_status("%sを抱っこした！" % RABBIT_NAME, Color("ead6ff"))
+			else:
+				rabbit_pet = (player + Vector2(57, 20)).clamp(ARENA.position + Vector2(40, 40), ARENA.end - Vector2(40, 40))
+				show_status("%sをそっとおろした" % RABBIT_NAME, Color("ead6ff"))
+		2: # Raw carrot treat
+			if carrots <= 0:
+				show_status("にんじんがない！ 畑で収穫しよう", Color("ffcdb8"))
+				return
+			if rabbit_hunger >= 98.0:
+				show_status("%sはおなかいっぱい！" % RABBIT_NAME, Color("ffe9cd"))
+				return
+			carrots -= 1
+			rabbit_hunger = minf(100.0, rabbit_hunger + 38.0)
+			rabbit_affection = minf(100.0, rabbit_affection + 15.0)
+			rabbit_pet_glow = 1.5
+			burst(rabbit_pet, Color("ffac6d"), 20)
+			play_sound(AUDIO_PICKUP, -13.0, 1.3)
+			show_status("%sはにんじんが大好き！ ♥+15" % RABBIT_NAME, Color("ffdeb0"))
+		3: # Sequential small pet gear upgrades from in-game coins
+			if rabbit_gear_level >= 3:
+				show_status("%sの装備はすべて揃っているよ" % RABBIT_NAME, Color("d9cfff"))
+				return
+			var next_level: int = rabbit_gear_level + 1
+			var cost: int = RABBIT_GEAR_COSTS[next_level]
+			if coins < cost:
+				show_status("ちゅぶらの装備には %dG 必要！" % cost, Color("ffe0b2"))
+				return
+			coins -= cost
+			rabbit_gear_level = next_level
+			rabbit_pet_glow = 1.7
+			burst(rabbit_pet, Color("bfa8ff"), 26)
+			play_sound(AUDIO_RARE, -18.0)
+			refresh_hotbar()
+			show_status("ちゅぶらに『%s』を装備！" % RABBIT_GEAR_NAMES[next_level], Color("e9c9ff"))
+	refresh_rabbit_menu()
+
+func update_rabbit_pet(delta: float) -> void:
+	if not rabbit_pet_enabled or state != "playing":
+		return
+	rabbit_pet_attack_clock = maxf(0.0, rabbit_pet_attack_clock - delta)
+	rabbit_pet_meal_clock = maxf(0.0, rabbit_pet_meal_clock - delta)
+	rabbit_pet_glow = maxf(0.0, rabbit_pet_glow - delta)
+	rabbit_pet_bob_clock += delta * 8.0
+	rabbit_hunger = maxf(0.0, rabbit_hunger - delta * 0.45)
+	if rabbit_carried:
+		rabbit_pet = player + Vector2(0, -44)
+		rabbit_pet_mode = "抱っこ中"
+		return
+
+	var target_meal_index := -1
+	if rabbit_pet_meal_clock <= 0.0 and rabbit_hunger < 75.0:
+		var best_meal_score := 999999.0
+		for i in range(meal_displays.size()):
+			var meal_pos: Vector2 = meal_displays[i]["pos"]
+			var meal_type: int = int(meal_displays[i]["kind"])
+			# Carrot stew is Chubura's favorite: go after it first.
+			var score: float = rabbit_pet.distance_to(meal_pos) + (0.0 if meal_type == 0 else 180.0)
+			if score < best_meal_score and rabbit_pet.distance_to(meal_pos) < 470.0:
+				best_meal_score = score
+				target_meal_index = i
+	var enemy_target: Dictionary = {}
+	var enemy_found := false
+	var best_enemy_dist := 999999.0
+	if phase == "combat":
+		for enemy in enemies:
+			if float(enemy["hp"]) <= 0.0:
+				continue
+			var de: float = rabbit_pet.distance_to(enemy["pos"])
+			if de < best_enemy_dist and de < 220.0:
+				best_enemy_dist = de
+				enemy_target = enemy
+				enemy_found = true
+	if target_meal_index >= 0:
+		rabbit_pet_mode = "ごはんを探す"
+		rabbit_pet_goal = meal_displays[target_meal_index]["pos"]
+	elif enemy_found and not is_in_safe_camp(rabbit_pet):
+		rabbit_pet_mode = "戦う"
+		var enemy_pos: Vector2 = enemy_target["pos"]
+		var away: Vector2 = (rabbit_pet - enemy_pos).normalized()
+		if away.length_squared() < 0.01:
+			away = Vector2.RIGHT
+		rabbit_pet_goal = enemy_pos + away * 48.0
+	else:
+		rabbit_pet_mode = "おさんぽ"
+		rabbit_pet_goal = player + Vector2(57, 40).rotated(elapsed * 0.45)
+	if rabbit_pet.distance_to(player) > 660.0 and target_meal_index < 0:
+		rabbit_pet = player + Vector2(48, 34)
+	rabbit_pet_goal = rabbit_pet_goal.clamp(ARENA.position + Vector2(40, 40), ARENA.end - Vector2(40, 40))
+	var dist: float = rabbit_pet.distance_to(rabbit_pet_goal)
+	rabbit_pet_was_moving = dist > 8.0
+	if rabbit_pet_was_moving:
+		var step: float = minf(dist, (227.0 + float(rabbit_gear_level) * 8.0) * delta)
+		rabbit_pet += (rabbit_pet_goal - rabbit_pet).normalized() * step
+		rabbit_pet_walk_clock += 10.0 * delta
+	else:
+		rabbit_pet_walk_clock = 0.0
+	if target_meal_index >= 0 and rabbit_pet.distance_to(meal_displays[target_meal_index]["pos"]) < 28.0:
+		var meal_kind: int = int(meal_displays[target_meal_index]["kind"])
+		meal_displays.remove_at(target_meal_index)
+		rabbit_pet_meal_clock = 13.0
+		rabbit_hunger = minf(100.0, rabbit_hunger + (45.0 if meal_kind == 0 else 26.0))
+		rabbit_affection = minf(100.0, rabbit_affection + (8.0 if meal_kind == 0 else 3.0))
+		rabbit_pet_glow = 1.1
+		burst(rabbit_pet, Color("ffc2ea"), 12)
+		play_sound(AUDIO_PICKUP, -20.0, 1.3)
+		show_status("%sが展示された%sを食べた！" % [RABBIT_NAME, MEAL_NAMES[meal_kind]], Color("ffe7f6"))
+	if enemy_found and rabbit_pet_attack_clock <= 0.0 and rabbit_pet.distance_to(enemy_target["pos"]) < 70.0 and not is_in_safe_camp(rabbit_pet):
+		var pet_damage: float = 2.3 + float(rabbit_gear_level) * 0.45
+		deal_enemy_damage(enemy_target, pet_damage, enemy_target["pos"], 0.04, -1)
+		rabbit_pet_attack_clock = 1.15
+		burst(enemy_target["pos"], Color("d7d1ff"), 6)
+
+func draw_rabbit_pet() -> void:
+	if not rabbit_pet_enabled:
+		return
+	var p: Vector2 = rabbit_pet
+	var bob: float = sin(rabbit_pet_bob_clock) * 1.5 if not rabbit_carried else 0.0
+	if rabbit_carried:
+		p = player + Vector2(0, -55)
+	if rabbit_pet_glow > 0.0:
+		draw_circle(p + Vector2(0, -8), 25.0, Color("ff9ccc", minf(0.24, rabbit_pet_glow * 0.15)))
+	draw_circle(p + Vector2(0, 10), 12.0, Color(0, 0, 0, 0.22))
+	# Pointy ears with inner-ear highlights.
+	draw_colored_polygon(PackedVector2Array([p + Vector2(-10, -12 + bob), p + Vector2(-8, -31 + bob), p + Vector2(-1, -13 + bob)]), Color("161820"))
+	draw_colored_polygon(PackedVector2Array([p + Vector2(10, -12 + bob), p + Vector2(8, -31 + bob), p + Vector2(1, -13 + bob)]), Color("161820"))
+	draw_colored_polygon(PackedVector2Array([p + Vector2(-8, -14 + bob), p + Vector2(-7, -25 + bob), p + Vector2(-3, -14 + bob)]), Color("72526e"))
+	draw_colored_polygon(PackedVector2Array([p + Vector2(8, -14 + bob), p + Vector2(7, -25 + bob), p + Vector2(3, -14 + bob)]), Color("72526e"))
+	draw_circle(p + Vector2(0, bob), 12.0, Color("171920"))
+	draw_circle(p + Vector2(0, -10 + bob), 10.0, Color("23242c"))
+	draw_circle(p + Vector2(-4, -12 + bob), 1.5, Color("ff777c"))
+	draw_circle(p + Vector2(4, -12 + bob), 1.5, Color("ff777c"))
+	draw_circle(p + Vector2(0, -8 + bob), 1.7, Color("ffd7e9"))
+	draw_circle(p + Vector2(10, -2 + bob), 3.0, Color("eef4ff"))
+	# Visuals change with each pet gear upgrade.
+	if rabbit_gear_level >= 1:
+		draw_line(p + Vector2(-10, -2 + bob), p + Vector2(10, -2 + bob), Color("ff7d91"), 3.5)
+		draw_colored_polygon(PackedVector2Array([p + Vector2(-3, 0 + bob), p + Vector2(0, 6 + bob), p + Vector2(3, 0 + bob)]), Color("ff9aa9"))
+	if rabbit_gear_level >= 2:
+		draw_rect(Rect2(p + Vector2(-13, 1 + bob), Vector2(26, 8)), Color("867258", 0.82))
+		draw_rect(Rect2(p + Vector2(6, 2 + bob), Vector2(6, 6)), Color("dfc797"))
+	if rabbit_gear_level >= 3:
+		draw_circle(p + Vector2(0, 7 + bob), 5.0, Color("c4adff"))
+		draw_arc(p + Vector2(0, 7 + bob), 8.0, 0.0, TAU, 20, Color("ebc8ff", 0.8), 2.0)
+	if rabbit_pet_glow > 0.0:
+		for i in range(3):
+			var heart_pos: Vector2 = p + Vector2(-13 + float(i) * 13.0, -40 - rabbit_pet_glow * 5.0)
+			draw_circle(heart_pos, 3.0, Color("ffb2d8", minf(1.0, rabbit_pet_glow)))
+	draw_string(ui_font, p + Vector2(-29, -40), RABBIT_NAME, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("f2dcff"))
+
 func draw_accessory(pos: Vector2) -> void:
 	var c := Color("ffdc81")
 	if accessory_id == 1:
@@ -3311,6 +3564,7 @@ func _draw() -> void:
 		var alpha := clampf(float(p["life"]) / float(p["total"]), 0.0, 1.0)
 		draw_circle(p["pos"], 2.0 + 3.0 * alpha, Color(p["color"], alpha))
 	draw_companion()
+	draw_rabbit_pet()
 	draw_shadow_clones()
 	var player_center := player
 	if screen_shake > 0.0:

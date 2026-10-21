@@ -1,0 +1,2 @@
+DOPAGAKI v0.14
+- Added a black rabbit pet that follows the player, lightly attacks nearby enemies, and eats displayed meals.
