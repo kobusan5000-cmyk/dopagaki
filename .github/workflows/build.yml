@@ -65,6 +65,16 @@ jobs:
           cp -r ~/godot-cache/tpl/templates/. "$dir"/
           ls "$dir" | head
 
+      - name: Smoke test (stop here if the game has script errors)
+        run: |
+          godot --headless --import || true
+          timeout 90 godot --headless --quit-after 300 > run.log 2>&1 || true
+          cat run.log
+          if grep -E "SCRIPT ERROR|Parse Error|Failed to load script|Failed to compile" run.log; then
+            echo "::error::The game has script errors (see the log above). Nothing was published."
+            exit 1
+          fi
+
       - name: Export game
         run: |
           mkdir -p build

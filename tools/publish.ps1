@@ -2,19 +2,61 @@
 	[string]$DriveDir = "G:\マイドライブ\DOPA",
 	[switch]$DryRun,
 	[switch]$Yes,
+	[switch]$Auto,
 	[switch]$RefreshLatestOnly
 )
 # Takes the newest project ZIP from the shared Google Drive folder, shows what would change,
-# and (after confirmation) publishes it: copy into the repo -> git push -> GitHub builds the release.
+# and publishes it: copy into the repo -> git push -> GitHub builds the release.
+#   (no switch)  interactive: shows the differences and asks for confirmation
+#   -Auto        unattended (scheduled task): publishes by itself, but holds back anything suspicious
 $ErrorActionPreference = "Stop"
 $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $doneDir = Join-Path $DriveDir "取り込み済み"
+$failDir = Join-Path $DriveDir "失敗"
+$holdDir = Join-Path $DriveDir "要確認"
+$oldDir = Join-Path $DriveDir "古いZIP"
+$statusFile = Join-Path $DriveDir "配信状況.txt"
+$logFile = Join-Path $PSScriptRoot "publish.log"
 $protectedDirs = @(".git", ".github", ".godot", "ci", "tools", "docs")
 $protectedFiles = @("README.md", ".gitignore", "export_presets.cfg")
+$script:zip = $null
+$script:tmp = $null
+if ($Auto) { $Yes = $true }
+
+function Log([string]$message, [string]$color = "") {
+	if ($color) { Write-Host $message -ForegroundColor $color } else { Write-Host $message }
+	try { Add-Content -LiteralPath $logFile -Value ("{0:yyyy-MM-dd HH:mm:ss}  {1}" -f (Get-Date), $message) -Encoding UTF8 } catch { }
+}
+
+# Short status lines for everyone who uses the Drive folder (newest first, last 30).
+function Set-Status([string]$text) {
+	try {
+		$line = "{0:yyyy-MM-dd HH:mm}  {1}" -f (Get-Date), $text
+		$old = @()
+		if (Test-Path -LiteralPath $statusFile) { $old = @(Get-Content -LiteralPath $statusFile -Encoding UTF8 | Select-Object -First 29) }
+		Set-Content -LiteralPath $statusFile -Value (@($line) + $old) -Encoding UTF8
+	} catch { }
+}
+
+function Move-ZipTo([string]$dir) {
+	if ($script:zip -and (Test-Path -LiteralPath $script:zip.FullName)) {
+		if (-not (Test-Path $dir)) { New-Item -ItemType Directory $dir | Out-Null }
+		Move-Item -LiteralPath $script:zip.FullName -Destination (Join-Path $dir $script:zip.Name) -Force
+	}
+}
+
+function Clear-Temp {
+	if ($script:tmp -and (Test-Path $script:tmp)) { Remove-Item $script:tmp -Recurse -Force -ErrorAction SilentlyContinue }
+}
 
 function Fail([string]$message) {
-	Write-Host ""
-	Write-Host "[NG] $message" -ForegroundColor Red
+	Log ""
+	Log "[NG] $message" "Red"
+	if ($Auto -and $script:zip) {
+		Set-Status ("失敗: {0} -> {1}" -f $script:zip.Name, $message)
+		try { Move-ZipTo $failDir } catch { }
+	}
+	Clear-Temp
 	exit 1
 }
 
@@ -63,25 +105,56 @@ function Update-LatestZip {
 	if (Test-Path $target) { Remove-Item $target -Force }
 	Compress-Archive -Path $inner -DestinationPath $target
 	Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
-	Write-Host "Latest copy for the other developer: $target"
+	Log "Latest copy for the other developer: $target"
 }
 
-Write-Host "=== DOPAGAKI publish ===" -ForegroundColor Cyan
-if (-not (Test-Path $DriveDir)) { Fail "Drive folder not found: $DriveDir  (Is Google Drive running?)" }
-if ($RefreshLatestOnly) { Update-LatestZip; exit 0 }
-$zips = @(Get-ChildItem $DriveDir -Filter *.zip -File | Sort-Object LastWriteTime -Descending)
-if ($zips.Count -eq 0) {
-	Write-Host "No ZIP file in the Drive folder. Nothing to publish."
+# Only one publish at a time (the scheduled task can overlap with a manual run).
+$mutex = New-Object System.Threading.Mutex($false, "Global\DOPAGAKI_publish")
+if (-not $mutex.WaitOne(0)) {
+	if (-not $Auto) { Write-Host "Another publish is already running." }
 	exit 0
 }
-$zip = $zips[0]
-if ($zips.Count -gt 1) { Write-Host "Note: $($zips.Count) ZIP files found. Using the newest: $($zip.Name)" -ForegroundColor Yellow }
-Write-Host "ZIP: $($zip.Name)  ($([math]::Round($zip.Length / 1MB, 1)) MB, $($zip.LastWriteTime))"
 
-$tmp = Join-Path $env:TEMP ("dopagaki_in_" + [guid]::NewGuid().ToString("N"))
+if (-not $Auto) { Write-Host "=== DOPAGAKI publish ===" -ForegroundColor Cyan }
+if (-not (Test-Path $DriveDir)) {
+	if ($Auto) { exit 0 } # Drive not mounted (PC just started); try again at the next run
+	Fail "Drive folder not found: $DriveDir  (Is Google Drive running?)"
+}
+if ($RefreshLatestOnly) { Update-LatestZip; exit 0 }
+$zips = @(Get-ChildItem -LiteralPath $DriveDir -Filter *.zip -File | Sort-Object LastWriteTime -Descending)
+if ($zips.Count -eq 0) {
+	if (-not $Auto) { Write-Host "No ZIP file in the Drive folder. Nothing to publish." }
+	exit 0
+}
+$script:zip = $zips[0]
+$zip = $script:zip
+# A ZIP that was modified in the last 2 minutes may still be uploading/syncing.
+if ($Auto -and ((Get-Date) - $zip.LastWriteTime).TotalSeconds -lt 120) { exit 0 }
+if ($zips.Count -gt 1) { Log "Note: $($zips.Count) ZIP files found. Using the newest: $($zip.Name)" "Yellow" }
+Log "ZIP: $($zip.Name)  ($([math]::Round($zip.Length / 1MB, 1)) MB, $($zip.LastWriteTime))"
+
+# Make sure the local clone is current and has no unrelated local edits before touching it.
+Push-Location $repo
+try {
+	if ($Auto -or -not $DryRun) {
+		$dirty = git status --porcelain
+		if ($dirty) {
+			if ($Auto) { Log "Skipped: the repo has local uncommitted changes ($repo)." "Yellow"; exit 0 }
+			Fail "The repo has local uncommitted changes. Commit or discard them first."
+		}
+		git pull -q --rebase origin main
+		if ($LASTEXITCODE -ne 0) { Fail "git pull failed." }
+	}
+} finally {
+	Pop-Location
+}
+
+$script:tmp = Join-Path $env:TEMP ("dopagaki_in_" + [guid]::NewGuid().ToString("N"))
+$tmp = $script:tmp
 try {
 	Expand-Archive -LiteralPath $zip.FullName -DestinationPath $tmp -Force
 } catch {
+	if ($Auto) { Log "Could not open the ZIP yet (still syncing?): $($_.Exception.Message)" "Yellow"; Clear-Temp; exit 0 }
 	Fail "Could not open the ZIP (still syncing or broken?): $($_.Exception.Message)"
 }
 
@@ -99,14 +172,15 @@ $removed = @($current.Keys | Where-Object { -not $incoming.ContainsKey($_) } | S
 $changed = @($incoming.Keys | Where-Object { $current.ContainsKey($_) -and $current[$_] -ne $incoming[$_] } | Sort-Object)
 
 Write-Host ""
-Write-Host "Added: $($added.Count)   Changed: $($changed.Count)   Removed: $($removed.Count)"
+Log "Added: $($added.Count)   Changed: $($changed.Count)   Removed: $($removed.Count)"
 foreach ($f in $added) { Write-Host "  + $f" -ForegroundColor Green }
 foreach ($f in $changed) { Write-Host "  ~ $f" -ForegroundColor Cyan }
 foreach ($f in $removed) { Write-Host "  - $f  (will be DELETED)" -ForegroundColor Yellow }
 
 if ($added.Count + $changed.Count + $removed.Count -eq 0) {
-	Write-Host "`nNo differences from the current version. Nothing to publish." -ForegroundColor Green
-	Remove-Item $tmp -Recurse -Force
+	Log "No differences from the current version. Nothing to publish." "Green"
+	if ($Auto) { Move-ZipTo $doneDir; Set-Status ("変更なし: {0}" -f $zip.Name) }
+	Clear-Temp
 	exit 0
 }
 
@@ -128,27 +202,37 @@ if ($verFiles.Count -gt 0) {
 }
 Write-Host ""
 if ([string]::IsNullOrEmpty($newNotes)) {
-	Write-Host "[!] CHANGELOG.txt is missing. The tester will see no update notes." -ForegroundColor Yellow
+	Log "[!] CHANGELOG.txt is missing. The tester will see no update notes." "Yellow"
 } elseif ($newNotes -eq $oldNotes) {
-	Write-Host "[!] CHANGELOG.txt top block is the SAME as the previous version - the notes were probably not updated." -ForegroundColor Yellow
+	Log "[!] CHANGELOG.txt top block is the SAME as the previous version - the notes were probably not updated." "Yellow"
 } else {
 	Write-Host "Update notes the tester will see:" -ForegroundColor Cyan
 	Write-Host $newNotes
 }
-if ($removed.Count -gt 0) {
+
+# Removing generated Godot files (.import / .uid) is normal; removing anything else may mean an outdated copy.
+$suspicious = @($removed | Where-Object { $_ -notmatch '\.import$' -and $_ -notmatch '\.uid$' })
+if ($suspicious.Count -gt 0) {
 	Write-Host "`n[!] Files would be deleted. If the sender worked from an OLD copy, fixes could be lost." -ForegroundColor Yellow
+	if ($Auto) {
+		Log ("HELD for review - would delete: " + (($suspicious | Select-Object -First 8) -join ", ")) "Yellow"
+		Set-Status ("要確認: {0} は {1} 個のファイルを削除する内容のため、公開を保留しました(管理者が確認します)" -f $zip.Name, $suspicious.Count)
+		Move-ZipTo $holdDir
+		Clear-Temp
+		exit 0
+	}
 }
 
 if ($DryRun) {
 	Write-Host "`n(dry run - nothing was changed)" -ForegroundColor Cyan
-	Remove-Item $tmp -Recurse -Force
+	Clear-Temp
 	exit 0
 }
 if (-not $Yes) {
 	$answer = Read-Host "`nPublish this to the testers? (y/N)"
 	if ($answer -ne "y" -and $answer -ne "Y") {
 		Write-Host "Cancelled. Nothing was changed."
-		Remove-Item $tmp -Recurse -Force
+		Clear-Temp
 		exit 0
 	}
 }
@@ -167,24 +251,31 @@ Push-Location $repo
 try {
 	git add -A
 	$status = git status --porcelain
-	if (-not $status) { Write-Host "Nothing to commit."; exit 0 }
+	if (-not $status) { Log "Nothing to commit."; Clear-Temp; exit 0 }
 	git -c user.name=kouta -c user.email=kobusan5000-cmyk@users.noreply.github.com commit -q -m "Drive upload: $($zip.Name)"
 	if ($LASTEXITCODE -ne 0) { Fail "git commit failed." }
 	git push -q origin main
 	if ($LASTEXITCODE -ne 0) { Fail "git push failed (not logged in to GitHub?)." }
-	Write-Host "`nPushed. Waiting for GitHub to build..." -ForegroundColor Cyan
+	Log "Pushed. Waiting for GitHub to build..." "Cyan"
 	Start-Sleep -Seconds 12
 	$runId = gh run list --limit 1 --json databaseId -q ".[0].databaseId"
 	gh run watch $runId --exit-status | Out-Null
-	if ($LASTEXITCODE -ne 0) { Fail "The build FAILED. Open GitHub > Actions to see why. The testers still have the previous version." }
+	if ($LASTEXITCODE -ne 0) { Fail "The build FAILED (the game has errors?). Open GitHub > Actions to see why. The testers still have the previous version." }
 	$tag = gh release list --limit 1 --json tagName -q ".[0].tagName"
-	Write-Host "`n[OK] Published as $tag. Testers get it the next time they start the launcher." -ForegroundColor Green
+	Log "[OK] Published as $tag. Testers get it the next time they start the launcher." "Green"
+	Set-Status ("公開しました: {0} ({1}) -> テスターに配信" -f $tag, $zip.Name)
 } finally {
 	Pop-Location
 }
 
-if (-not (Test-Path $doneDir)) { New-Item -ItemType Directory $doneDir | Out-Null }
-Move-Item -LiteralPath $zip.FullName -Destination (Join-Path $doneDir $zip.Name) -Force
-Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
-Write-Host "The ZIP was moved to: $doneDir"
+Move-ZipTo $doneDir
+# Older ZIPs that were still lying around must never be published later (they would roll the game back).
+foreach ($old in ($zips | Select-Object -Skip 1)) {
+	if (Test-Path -LiteralPath $old.FullName) {
+		if (-not (Test-Path $oldDir)) { New-Item -ItemType Directory $oldDir | Out-Null }
+		Move-Item -LiteralPath $old.FullName -Destination (Join-Path $oldDir $old.Name) -Force
+	}
+}
+Clear-Temp
+Log "The ZIP was moved to: $doneDir"
 Update-LatestZip
