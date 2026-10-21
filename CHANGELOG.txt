@@ -1,25 +1,6 @@
-DOPAGAKI v0.12.2 / 剣4レアリティの専用ドット絵
-- 作者提供の剣PNG4枚を無加工で追加
-- COMMON / RARE / EPIC / LEGENDARYで剣の絵が切り替わる
-- ドロップ・スロット結果・ホットバー・バッグ・HUD・キャラ装備中の絵を統一
-- 装備中の剣はマウス方向を向き、攻撃時に振るモーションを追加
-- Shift+F8で4種類の剣をテスト出現
-- MYTHIC剣は暫定でLEGENDARYの絵＋追加のピンク色エフェクト
-- 既存の武器バランスやレア度抽選率は変更なし
-- Godot実機テストは未実施
-
-DOPAGAKI v0.12.2 speed check
-- (配信の速度テスト。ゲームの変更なし)
-
-DOPAGAKI v0.12.2 / 剣4レアリティの専用ドット絵
-- 作者提供の剣PNG4枚を無加工で追加
-- COMMON / RARE / EPIC / LEGENDARYで剣の絵が切り替わる
-- ドロップ・スロット結果・ホットバー・バッグ・HUD・キャラ装備中の絵を統一
-- 装備中の剣はマウス方向を向き、攻撃時に振るモーションを追加
-- Shift+F8で4種類の剣をテスト出現
-- MYTHIC剣は暫定でLEGENDARYの絵＋追加のピンク色エフェクト
-- 既存の武器バランスやレア度抽選率は変更なし
-- Godot実機テストは未実施
+DOPAGAKI v0.13.1
+- Fixed EPIC sword art not consistently showing in all places.
+- Unified sword-art lookup for drops, hotbar, bag, equipped icon, slot preview, and held weapon.
 
 DOPAGAKI v0.9.1 — Startup Hotfix
 - Fixed GDScript parse errors at former lines 816 and 819: type inference of offset/outward from an untyped constant array.

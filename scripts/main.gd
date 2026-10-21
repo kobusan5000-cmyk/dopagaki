@@ -1,13 +1,13 @@
 extends Node2D
 
-# DOPAGAKI v0.12.2 — clear-to-advance waves, merchant, crops, status enemies, Celtic BGM.
+# DOPAGAKI v0.13 — expanded camps, food display, randomized gear, corpses and ninja class.
 # Solo prototype; network/4-player functionality is NOT implemented.
 # Compatible with Godot 4.3–4.7; one runnable Node2D scene.
 
 const SIZE := Vector2(1152, 648)
 const ARENA := Rect2(40, 105, 3600, 2380)
 const CAMP_STATIONS := [Vector2(1170, 842), Vector2(2020, 1175)]
-const CAMP_RADIUS := 178.0
+const CAMP_RADIUS := 365.0
 const CAMP_ENEMY_MARGIN := 27.0
 const MAX_ENEMIES := 78
 const REST_PLAYER_HEAL_FRACTION := 0.24
@@ -25,14 +25,14 @@ const ARMOR_VISUALS := [
 	[preload("res://assets/armor_leggings_0.png"), preload("res://assets/armor_leggings_1.png"), preload("res://assets/armor_leggings_2.png"), preload("res://assets/armor_leggings_3.png")],
 	[preload("res://assets/armor_arms_0.png"), preload("res://assets/armor_arms_1.png"), preload("res://assets/armor_arms_2.png"), preload("res://assets/armor_arms_3.png")]
 ]
-const WEAPONS := ["PISTOL", "BOW", "SWORD", "GREATSWORD", "REPEATING CROSSBOW", "ARCANE STAFF", "HEALING STAFF"]
-const CLASS_NAMES := ["戦士", "弓兵", "連弩士", "メイジ", "バーサーカー", "ヒーラー"]
-const CLASS_DESC := ["剣と防御のバランス型", "弓で遠距離攻撃", "連射する弩で攻撃", "知力で魔法を強化", "大剣の高火力と高HP", "回復と遠距離支援"]
-const CLASS_WEAPONS := [2, 1, 4, 5, 3, 6]
+const WEAPONS := ["PISTOL", "BOW", "SWORD", "GREATSWORD", "REPEATING CROSSBOW", "ARCANE STAFF", "HEALING STAFF", "KUNAI"]
+const CLASS_NAMES := ["戦士", "弓兵", "連弩士", "メイジ", "バーサーカー", "ヒーラー", "忍者"]
+const CLASS_DESC := ["剣と防御のバランス型", "弓で遠距離攻撃", "連射する弩で攻撃", "知力で魔法を強化", "大剣の高火力と高HP", "回復と遠距離支援", "剣とクナイ・分身の術"]
+const CLASS_WEAPONS := [2, 1, 4, 5, 3, 6, 7]
 const WOLF_PALETTES := [Color("ffffff"), Color("ffe4c0"), Color("bce4ff"), Color("edc4ff"), Color("d3ffbe"), Color("ffc6da")]
 const PALETTE_NAMES := ["オリジナル", "ゴールド", "アイス", "ライラック", "ミント", "ローズ"]
 const ACCESSORY_NAMES := ["なし", "星", "王冠", "光"]
-const FARM_PLOTS := [Vector2(1320, 745), Vector2(1390, 745), Vector2(1460, 745), Vector2(1320, 817), Vector2(1390, 817), Vector2(1460, 817), Vector2(2130, 1090), Vector2(2200, 1090), Vector2(2130, 1160), Vector2(2200, 1160), Vector2(1710, 1160), Vector2(1780, 1160), Vector2(1850, 1160)]
+const FARM_PLOTS := [Vector2(1390, 723), Vector2(1460, 723), Vector2(1530, 723), Vector2(1390, 800), Vector2(1460, 800), Vector2(1530, 800), Vector2(2230, 1085), Vector2(2300, 1085), Vector2(2230, 1162), Vector2(2300, 1162), Vector2(1710, 1160), Vector2(1780, 1160), Vector2(1850, 1160)]
 const GROW_SECONDS := 10.0
 const RARITIES := ["COMMON", "RARE", "EPIC", "LEGENDARY", "MYTHIC"]
 const ARMOR_SLOTS := ["HEAD", "CHEST", "LEGGINGS", "ARMS"]
@@ -41,7 +41,7 @@ const ARMOR_PREFIX := ["WORN", "GUARDED", "ENCHANTED", "MYTHIC", "DIVINE"]
 const ARMOR_RARITY_MULT := [1.0, 1.6, 2.3, 3.5, 5.0]
 const BAG_CAPACITY := 5
 const SLOT_COST := 25
-const SLOT_POS := Vector2(1310, 900)
+const SLOT_POS := Vector2(865, 895)
 const REVIVE_SHRINE := Vector2(3060, 1860)
 const MERCHANT_POS := Vector2(1780, 985)
 const WEAPON_TRAITS := ["烈火", "氷霜", "猛毒", "星光", "疾風"]
@@ -49,7 +49,7 @@ const TRAIT_COLORS := [Color("ff985a"), Color("9be6ff"), Color("9eff9b"), Color(
 const CROP_NAMES := ["ニンジン", "メロン", "スイカ"]
 const CROP_GROW := [10.0, 22.0, 35.0]
 const CROP_COLORS := [Color("ffa665"), Color("aaff8d"), Color("79d7b0")]
-const WEAPON_SHORT := ["銃", "弓", "剣", "大剣", "連弩", "魔杖", "癒杖"]
+const WEAPON_SHORT := ["銃", "弓", "剣", "大剣", "連弩", "魔杖", "癒杖", "クナイ"]
 const ARMOR_SHORT := ["頭", "胴", "脚", "腕"]
 const WEAPON_ICONS := [
 	preload("res://assets/item_icons/weapon_0.png"),
@@ -58,7 +58,8 @@ const WEAPON_ICONS := [
 	preload("res://assets/item_icons/weapon_3.png"),
 	preload("res://assets/item_icons/weapon_4.png"),
 	preload("res://assets/item_icons/weapon_5.png"),
-	preload("res://assets/item_icons/weapon_6.png")
+	preload("res://assets/item_icons/weapon_6.png"),
+	preload("res://assets/item_icons/weapon_7.png")
 ]
 # Original pixel art provided by the game creator. Sword kind=2 uses tier-specific art.
 # MYTHIC currently shares the legendary sprite with a unique magenta aura.
@@ -68,6 +69,23 @@ const SWORD_RARITY_ART := [
 	preload("res://assets/item_icons/sword_epic.png"),
 	preload("res://assets/item_icons/sword_legendary.png")
 ]
+
+func sword_art_for_rarity(rarity: int) -> Texture2D:
+	# Explicit mapping so EPIC always resolves to the custom purple sword art.
+	match clampi(rarity, 0, 4):
+		0:
+			return SWORD_RARITY_ART[0]
+		1:
+			return SWORD_RARITY_ART[1]
+		2:
+			return SWORD_RARITY_ART[2]
+		3:
+			return SWORD_RARITY_ART[3]
+		4:
+			# MYTHIC still reuses the legendary art with an aura.
+			return SWORD_RARITY_ART[3]
+		_:
+			return SWORD_RARITY_ART[0]
 const ARMOR_ICONS := [
 	preload("res://assets/item_icons/armor_0.png"),
 	preload("res://assets/item_icons/armor_1.png"),
@@ -77,14 +95,14 @@ const ARMOR_ICONS := [
 const RARITY_COLORS := [Color("d0e2f1"), Color("59cdff"), Color("d493ff"), Color("ffd568"), Color("ff91d9")]
 const RARITY_DAMAGE := [1.0, 1.38, 1.88, 2.85, 4.4]
 const RARITY_RATE := [1.0, 1.06, 1.13, 1.22, 1.33]
-const RARE_NAMES := ["GILDED PISTOL", "HUNTER'S BOW", "MOON SWORD", "IRON CLEAVER", "SWIFT REPEATER", "RUNE WAND", "BLESSED STAFF"]
-const EPIC_NAMES := ["STORM PISTOL", "PHANTOM BOW", "SOLAR SABER", "TITAN BLADE", "THUNDER REPEATER", "ASTRAL STAFF", "LIFEBLOOM"]
-const LEGEND_NAMES := ["STARFALL", "CELESTIAL BOW", "FATEBREAKER", "WORLDENDER", "INFINITE SALVO", "VOIDCALLER", "SUNHEALER"]
-const MYTHIC_NAMES := ["神銃・天雷", "神弓・暁", "神剣・星砕", "神斧・終焉", "神連弩・無限", "神杖・深淵", "神杖・聖樹"]
+const RARE_NAMES := ["GILDED PISTOL", "HUNTER'S BOW", "MOON SWORD", "IRON CLEAVER", "SWIFT REPEATER", "RUNE WAND", "BLESSED STAFF", "SHADOW KUNAI"]
+const EPIC_NAMES := ["STORM PISTOL", "PHANTOM BOW", "SOLAR SABER", "TITAN BLADE", "THUNDER REPEATER", "ASTRAL STAFF", "LIFEBLOOM", "MOON KUNAI"]
+const LEGEND_NAMES := ["STARFALL", "CELESTIAL BOW", "FATEBREAKER", "WORLDENDER", "INFINITE SALVO", "VOIDCALLER", "SUNHEALER", "PHANTOM KUNAI"]
+const MYTHIC_NAMES := ["神銃・天雷", "神弓・暁", "神剣・星砕", "神斧・終焉", "神連弩・無限", "神杖・深淵", "神杖・聖樹", "神クナイ・影月"]
 const STAT_NAMES := ["力", "スピード", "体力", "MP", "器用", "知力"]
 const STAT_DESCRIPTIONS := ["物理攻撃力 +8%", "移動 +4% / 攻撃速度 +2%", "最大HP +15 / HP回復", "最大MP +10 / MP自然回復", "命中率 +3% / 射撃 +7% / 会心率 +2.5%", "魔法攻撃力 +9%"]
-const SKILL_NAMES := ["鉄壁の構え", "五連矢", "連弩乱射", "魔力爆発", "狂戦士の怒り", "癒やしの波動"]
-const SKILL_DESCRIPTIONS := ["被ダメージを8秒間軽減", "狙った方向に5本の矢", "狙った方向に8本の矢", "周囲の敵に魔法ダメージ", "10秒間、攻撃力と速度を上昇", "自分とミントを回復"]
+const SKILL_NAMES := ["鉄壁の構え", "五連矢", "連弩乱射", "魔力爆発", "狂戦士の怒り", "癒やしの波動", "影分身の術"]
+const SKILL_DESCRIPTIONS := ["被ダメージを8秒間軽減", "狙った方向に5本の矢", "狙った方向に8本の矢", "周囲の敵に魔法ダメージ", "10秒間、攻撃力と速度を上昇", "自分とミントを回復", "分身2体が自動攻撃（Lv10で3体）"]
 const AUDIO_PISTOL: AudioStream = preload("res://audio/pistol.wav")
 const AUDIO_BOW: AudioStream = preload("res://audio/bow.wav")
 const AUDIO_SLASH: AudioStream = preload("res://audio/slash.wav")
@@ -228,6 +246,10 @@ var enemy_serial := 0
 var enemies: Array[Dictionary] = []
 var projectiles: Array[Dictionary] = []
 var drops: Array[Dictionary] = []
+var corpses: Array[Dictionary] = []
+var meal_displays: Array[Dictionary] = []
+var shadow_clone_clock := 0.0
+var shadow_clone_fire := 0.0
 var particles: Array[Dictionary] = []
 var upgrades: Array[int] = []
 var banner_clock := 0.0
@@ -427,13 +449,13 @@ func build_ui() -> void:
 	layer.add_child(banner)
 
 	# Character creation is intentionally a single menu, with six class archetypes.
-	choose_panel = make_panel(Vector2(112, 91), Vector2(928, 464), Color("42cfd5"))
+	choose_panel = make_panel(Vector2(112, 32), Vector2(928, 552), Color("42cfd5"))
 	layer.add_child(choose_panel)
 	var choose_box := VBoxContainer.new()
 	choose_box.add_theme_constant_override("separation", 7)
 	choose_panel.get_child(0).add_child(choose_box)
 	choose_box.add_child(make_label("DOPAGAKI  /  キャラクター作成", 29, Color("7de9f0"), true))
-	choose_box.add_child(make_label("v0.12.2  |  4段階のオリジナル剣・装備プレビュー", 14, Color("d0dcf3"), true))
+	choose_box.add_child(make_label("v0.13  |  忍者・料理展示・装備性能個体差", 14, Color("d0dcf3"), true))
 	var name_row := HBoxContainer.new()
 	name_row.add_theme_constant_override("separation", 13)
 	choose_box.add_child(name_row)
@@ -460,18 +482,18 @@ func build_ui() -> void:
 	grid.add_theme_constant_override("v_separation", 8)
 	choose_box.add_child(grid)
 	for i in range(CLASS_NAMES.size()):
-		var btn := make_button("%d  %s\n%s" % [i + 1, CLASS_NAMES[i], CLASS_DESC[i]], Color("45cad3"), Vector2(269, 77))
+		var btn := make_button("%d  %s\n%s" % [i + 1, CLASS_NAMES[i], CLASS_DESC[i]], Color("45cad3"), Vector2(269, 64))
 		btn.add_theme_font_size_override("font_size", 15)
 		btn.pressed.connect(select_class.bind(i))
 		grid.add_child(btn)
 		class_buttons.append(btn)
-	choose_box.add_child(make_label("[1〜6] 職業を選択  /  先に名前・色・帽子を設定", 15, Color("adc6e1"), true))
+	choose_box.add_child(make_label("[1〜7] 職業を選択  /  先に名前・色・帽子を設定", 15, Color("adc6e1"), true))
 	choose_box.add_child(make_label("敵を全滅でWAVEクリア！ 商人で買い物・レア作物の栽培・ミントの蘇生", 16, Color("86eac5"), true))
 	# A compact cooking menu with recipe buttons and resource counter.
-	cooking_panel = make_panel(Vector2(311, 106), Vector2(530, 440), Color("f6b970"))
+	cooking_panel = make_panel(Vector2(311, 36), Vector2(530, 566), Color("f6b970"))
 	layer.add_child(cooking_panel)
 	var cook_box := VBoxContainer.new()
-	cook_box.add_theme_constant_override("separation", 12)
+	cook_box.add_theme_constant_override("separation", 5)
 	cooking_panel.get_child(0).add_child(cook_box)
 	cook_box.add_child(make_label("キャンプの料理", 28, Color("ffd5a0"), true))
 	cooking_info = make_label("", 18, Color("b6e8ce"), true)
@@ -491,7 +513,19 @@ func build_ui() -> void:
 	watermelon_button.add_theme_font_size_override("font_size", 15)
 	watermelon_button.pressed.connect(cook_recipe.bind(3))
 	cook_box.add_child(watermelon_button)
-	var exit_cook := make_button("閉じる [E / Esc]", Color("f6b970"), Vector2(461, 37))
+	cook_box.add_child(make_label("完成した料理をキャンプの展示台に飾れるよ！", 15, Color("a8ffe1"), true))
+	var decorate_box := GridContainer.new()
+	decorate_box.columns = 2
+	decorate_box.add_theme_constant_override("h_separation", 7)
+	decorate_box.add_theme_constant_override("v_separation", 5)
+	cook_box.add_child(decorate_box)
+	for meal_id in range(4):
+		var meal_titles := ["[5] シチューを飾る", "[6] スープを飾る", "[7] ジュースを飾る", "[8] パフェを飾る"]
+		var decoration_btn := make_button(meal_titles[meal_id], Color("d6b781"), Vector2(220, 33))
+		decoration_btn.add_theme_font_size_override("font_size", 14)
+		decoration_btn.pressed.connect(place_meal_display.bind(meal_id))
+		decorate_box.add_child(decoration_btn)
+	var exit_cook := make_button("閉じる [E / Esc]", Color("f6b970"), Vector2(461, 32))
 	exit_cook.pressed.connect(toggle_cooking)
 	cook_box.add_child(exit_cook)
 	cooking_panel.hide()
@@ -765,6 +799,10 @@ func reset_game() -> void:
 	enemies.clear()
 	projectiles.clear()
 	drops.clear()
+	corpses.clear()
+	meal_displays.clear()
+	shadow_clone_clock = 0.0
+	shadow_clone_fire = 0.0
 	particles.clear()
 	upgrades.clear()
 	banner_clock = 0.0
@@ -825,6 +863,10 @@ func select_class(index: int) -> void:
 		5: # Healer: low damage, repeatable self-heal in this solo prototype.
 			max_hp = 115.0
 			hp = 115.0
+		6: # Ninja: quick kunai throws and short range sword combos.
+			move_speed = 309.0
+			max_hp = 95.0
+			hp = 95.0
 	base_class_speed = move_speed
 	state = "playing"
 	fire_clock = 0.25
@@ -853,6 +895,15 @@ func interact_nearby() -> void:
 		show_status("ミントの命を回収！ 遠くの月の祭壇へ運ぼう（マップ南東）", Color("ffa3d0"))
 		play_sound(AUDIO_RARE, -13.0)
 		return
+	# Ground gear has first priority; slot rewards cannot get stuck under an interaction.
+	for drop in drops:
+		if player.distance_to(drop["pos"]) < 92.0:
+			pickup_nearby()
+			return
+	for display_index in range(meal_displays.size()):
+		if player.distance_to(meal_displays[display_index]["pos"]) < 62.0:
+			collect_meal_display(display_index)
+			return
 	if player.distance_to(SLOT_POS) < 105.0:
 		toggle_slot()
 		return
@@ -1008,6 +1059,83 @@ func cook_recipe(which: int) -> void:
 	play_sound(AUDIO_RARE, -16.0)
 	burst(CAMP_STATIONS[maxi(0, nearest_camp_index())], Color("ffc782"), 24)
 
+
+func meal_amount(kind: int) -> int:
+	match kind:
+		0: return stew_meals
+		1: return broth_meals
+		2: return melon_meals
+		3: return watermelon_meals
+	return 0
+
+func add_meal_amount(kind: int, increment: int) -> void:
+	match kind:
+		0: stew_meals += increment
+		1: broth_meals += increment
+		2: melon_meals += increment
+		3: watermelon_meals += increment
+
+func place_meal_display(kind: int) -> void:
+	if not cooking_open or meal_amount(kind) <= 0:
+		show_status("その料理の作り置きがありません", Color("ffc0a3"))
+		return
+	var camp_i := nearest_camp_index()
+	if camp_i < 0:
+		return
+	var taken: Array[int] = []
+	for meal in meal_displays:
+		if int(meal["camp"]) == camp_i:
+			taken.append(int(meal["spot"]))
+	var open_spot := -1
+	for test_spot in range(8):
+		if not taken.has(test_spot):
+			open_spot = test_spot
+			break
+	if open_spot < 0:
+		show_status("展示台がいっぱい！（キャンプごとに8皿まで）", Color("ffc0a3"))
+		return
+	add_meal_amount(kind, -1)
+	var camp: Vector2 = CAMP_STATIONS[camp_i]
+	var position := camp + Vector2(-105.0 + float(open_spot % 4) * 70.0, 145.0 + float(open_spot / 4) * 72.0)
+	meal_displays.append({"camp": camp_i, "spot": open_spot, "kind": kind, "pos": position})
+	show_status("料理を展示！ 展示台の近くで[E]を押すと回収", Color("ffeaa8"))
+	play_sound(AUDIO_PICKUP, -16.0)
+	refresh_cooking_ui()
+
+func collect_meal_display(index: int) -> void:
+	if index < 0 or index >= meal_displays.size():
+		return
+	var dish_type: int = int(meal_displays[index]["kind"])
+	add_meal_amount(dish_type, 1)
+	meal_displays.remove_at(index)
+	show_status("飾っていた料理を回収して作り置きに戻した！", Color("b8ffdc"))
+	play_sound(AUDIO_PICKUP, -18.0)
+
+func draw_meal_displays() -> void:
+	var dish_colors := [Color("ce996a"), Color("dfc68f"), Color("9eea91"), Color("ed8eae")]
+	for meal in meal_displays:
+		var pos: Vector2 = meal["pos"]
+		var kind: int = int(meal["kind"])
+		var food_color: Color = dish_colors[kind]
+		draw_circle(pos + Vector2(2, 13), 28.0, Color("091119", 0.28))
+		draw_rect(Rect2(pos + Vector2(-27, -17), Vector2(54, 44)), Color("815d42"))
+		draw_rect(Rect2(pos + Vector2(-27, -17), Vector2(54, 44)), Color("d9b986"), false, 3.0)
+		draw_circle(pos, 18.0, Color("e6e1d7"))
+		draw_circle(pos, 13.0, food_color)
+		match kind:
+			0:
+				for n in range(3):
+					draw_circle(pos + Vector2(-7 + n * 7, 1), 3, Color("f7ba68"))
+			1:
+				draw_arc(pos, 9.0, 0, TAU, 20, Color("f0ddbd"), 2.5)
+			2:
+				draw_rect(Rect2(pos + Vector2(-7, -10), Vector2(14, 22)), Color("c4f7a7"))
+				draw_line(pos + Vector2(0, -10), pos + Vector2(5, -19), Color("f7f4d3"), 2)
+			3:
+				draw_circle(pos + Vector2(0, -3), 7.0, Color("fbf5ee"))
+				draw_circle(pos + Vector2(3, -7), 4.0, Color("ed6389"))
+		draw_string(ui_font, pos + Vector2(-34, 43), "料理展示 [E]", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("ffe5bd"))
+
 func quickbar_equip(index: int) -> void:
 	if state != "playing" or cooking_open or slot_open:
 		return
@@ -1037,7 +1165,7 @@ func item_icon(item: Dictionary) -> Texture2D:
 	if str(item.get("type", "")) == "armor":
 		return ARMOR_ICONS[clampi(int(item.get("slot", 0)), 0, ARMOR_ICONS.size() - 1)]
 	if int(item.get("kind", 0)) == 2:
-		return SWORD_RARITY_ART[clampi(int(item.get("rarity", 0)), 0, 3)]
+		return sword_art_for_rarity(int(item.get("rarity", 0)))
 	return WEAPON_ICONS[clampi(int(item.get("kind", 0)), 0, WEAPON_ICONS.size() - 1)]
 
 func toggle_merchant() -> void:
@@ -1126,7 +1254,7 @@ func spin_slot() -> void:
 	play_sound(AUDIO_PICKUP, -12.0, 1.5)
 
 func resolve_slot_spin() -> void:
-	var prize_pos: Vector2 = SLOT_POS + Vector2(-60, -15)
+	var prize_pos: Vector2 = SLOT_POS + Vector2(130, 145)
 	var won_equipment := false
 	if slot_roll < 0.01:
 		slot_result.text = "★ ★ ★  神話級 MYTHIC 大当たり！"
@@ -1160,7 +1288,7 @@ func resolve_slot_spin() -> void:
 		slot_prize_icon.texture = null
 		slot_prize_icon.hide()
 	refresh_slot_ui()
-	show_status("スロット結果：%s" % slot_result.text, Color("ffe0a1"))
+	show_status("スロット結果：%s  （装備はマシン右下の景品台）" % slot_result.text, Color("ffe0a1"))
 
 func revive_mint() -> void:
 	if not mint_soul_carried:
@@ -1230,7 +1358,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		# Do not steal numeric input while entering a character name.
 		if name_input.has_focus():
 			return
-		if event.keycode >= KEY_1 and event.keycode <= KEY_6:
+		if event.keycode >= KEY_1 and event.keycode <= KEY_7:
 			select_class(event.keycode - KEY_1)
 		return
 	if state == "upgrade":
@@ -1263,6 +1391,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 				cook_recipe(2)
 			elif event.keycode == KEY_4:
 				cook_recipe(3)
+			elif event.keycode >= KEY_5 and event.keycode <= KEY_8:
+				place_meal_display(event.keycode - KEY_5)
 			return
 		if event.keycode == KEY_I or (inventory_open and event.keycode == KEY_ESCAPE):
 			toggle_inventory()
@@ -1425,6 +1555,7 @@ func _process(delta: float) -> void:
 	food_buff_clock = maxf(0.0, food_buff_clock - delta)
 	skill_buff_clock = maxf(0.0, skill_buff_clock - delta)
 	skill_guard_clock = maxf(0.0, skill_guard_clock - delta)
+	shadow_clone_clock = maxf(0.0, shadow_clone_clock - delta)
 	mp = minf(max_mp, mp + (1.6 + float(hero_stats[3]) * 0.3) * delta)
 	heal_spell_clock = maxf(0.0, heal_spell_clock - delta)
 	for plot in farm_plots:
@@ -1480,12 +1611,14 @@ func _process(delta: float) -> void:
 		else:
 			wave_clear_clock = 0.0
 	update_companion(delta)
+	update_shadow_clones(delta)
 	update_projectiles(delta)
 	if phase == "combat":
 		update_enemies(delta)
 		update_hostile_orbs(delta)
 		cleanup_defeated_enemies()
 	update_particles(delta)
+	update_corpses(delta)
 	update_drops(delta)
 	update_coins(delta)
 	update_crop_drops(delta)
@@ -1822,15 +1955,15 @@ func generate_scenery() -> void:
 	scenery.clear()
 	var decor_rng := RandomNumberGenerator.new()
 	decor_rng.seed = 802411
-	for i in range(330):
+	for i in range(125):
 		var pos := Vector2(decor_rng.randf_range(105.0, ARENA.end.x - 85.0), decor_rng.randf_range(175.0, ARENA.end.y - 68.0))
 		var close_to_camp := false
 		for station in CAMP_STATIONS:
-			if pos.distance_to(station) < 255.0:
+			if pos.distance_to(station) < CAMP_RADIUS + 80.0:
 				close_to_camp = true
 		if close_to_camp:
 			continue
-		scenery.append({"pos": pos, "kind": decor_rng.randi_range(0, 6), "size": decor_rng.randf_range(0.8, 1.4), "glow": decor_rng.randf_range(0.0, TAU)})
+		scenery.append({"pos": pos, "kind": decor_rng.randi_range(0, 2), "size": decor_rng.randf_range(0.8, 1.4), "glow": decor_rng.randf_range(0.0, TAU)})
 
 func crit_probability(dexterity: int) -> float:
 	return minf(0.50, 0.05 + float(dexterity) * 0.025)
@@ -1925,6 +2058,22 @@ func attack() -> void:
 				heal_spell_clock = 3.0
 				burst(player, Color("a4ffce"), 10)
 			play_sound(AUDIO_BOW, -19.0, 1.6)
+		7: # Ninja: sword within reach; otherwise throw kunai.
+			var close_target := false
+			for foe in enemies:
+				if float(foe["hp"]) > 0.0 and player.distance_to(foe["pos"]) < 108.0:
+					close_target = true
+					break
+			if close_target:
+				fire_clock = 0.31 / speed
+				attack_duration = 0.21
+				melee_hit(112.0, 1.10, 5.4 * power, 26.0)
+				burst(player + Vector2.RIGHT.rotated(aim_angle) * 65.0, Color("caa3ff"), 10)
+				play_sound(AUDIO_SLASH, -15.0, 1.25)
+			else:
+				fire_clock = 0.42 / speed
+				launch_projectile(aim_angle, 940.0, 4.6 * power, 5.0, 1, Color("c6afff"), "kunai")
+				play_sound(AUDIO_BOW, -19.0, 1.40)
 
 func launch_projectile(angle: float, speed: float, dmg: float, radius: float, pierce: int, tint: Color, kind: String) -> void:
 	var velocity := Vector2.RIGHT.rotated(angle) * speed * projectile_speed_mult
@@ -2173,6 +2322,69 @@ func update_projectiles(delta: float) -> void:
 		if exhausted:
 			projectiles.remove_at(i)
 
+
+
+func ninja_clone_position(clone_index: int, clone_total: int) -> Vector2:
+	var angle := elapsed * 1.45 + (TAU * float(clone_index) / float(clone_total))
+	return player + Vector2.RIGHT.rotated(angle) * 86.0
+
+func update_shadow_clones(delta: float) -> void:
+	if shadow_clone_clock <= 0.0 or phase != "combat" or is_in_safe_camp(player):
+		return
+	shadow_clone_fire -= delta
+	if shadow_clone_fire > 0.0:
+		return
+	shadow_clone_fire = 0.59 if level >= 10 else 0.74
+	var total := 3 if level >= 10 else 2
+	for i in range(total):
+		var clone_pos := ninja_clone_position(i, total)
+		var best_dist := 385.0
+		var target: Dictionary = {}
+		for foe in enemies:
+			if float(foe["hp"]) <= 0.0:
+				continue
+			var dist: float = clone_pos.distance_to(foe["pos"])
+			if dist < best_dist:
+				best_dist = dist
+				target = foe
+		if target.is_empty():
+			continue
+		var direction: Vector2 = ((target["pos"] as Vector2) - clone_pos).normalized()
+		projectiles.append({"pos": clone_pos + direction * 22.0, "vel": direction * 910.0, "dmg": (4.7 if level >= 10 else 3.3) * attack_stat_multiplier(7), "accuracy": 0.96, "radius": 5.0, "pierce": 1, "kind": "kunai", "tint": Color("c6a5ff"), "life": 1.1, "hit_ids": [], "crit_chance": crit_probability(hero_stats[4]), "trait": -1})
+		burst(clone_pos, Color("a88dff"), 4)
+
+func draw_shadow_clones() -> void:
+	if shadow_clone_clock <= 0.0 or class_id != 6:
+		return
+	var total := 3 if level >= 10 else 2
+	for i in range(total):
+		var at: Vector2 = ninja_clone_position(i, total)
+		draw_circle(at + Vector2(0, 17), 18.0, Color("5a3ca0", 0.22))
+		draw_character(WOLF_WALK, at, int(walk_clock) % 4, cos(aim_angle) > 0.0, 1.72, Color(0.67, 0.50, 1.0, 0.61))
+		draw_rect(Rect2(at + Vector2(-12, -36), Vector2(24, 11)), Color("59387a", 0.79))
+		draw_string(ui_font, at + Vector2(-25, -51), "分身", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("d9c9ff"))
+
+func update_corpses(delta: float) -> void:
+	for i in range(corpses.size() - 1, -1, -1):
+		corpses[i]["life"] = float(corpses[i]["life"]) - delta
+		if float(corpses[i]["life"]) <= 0.0:
+			corpses.remove_at(i)
+
+func draw_corpses() -> void:
+	for corpse in corpses:
+		var pos: Vector2 = corpse["pos"]
+		if pos.distance_to(player) > 900.0:
+			continue
+		var alpha: float = clampf(float(corpse["life"]) / 1.25, 0.0, 1.0)
+		draw_circle(pos + Vector2(3, 17), 26.0, Color("091119", 0.26 * alpha))
+		var tex: Texture2D = NIGHT_REAPER if bool(corpse["boss"]) else (STORM_BRUTE if bool(corpse["elite"]) else PIERO_WALK)
+		var tex_size := Vector2(40, 48) if bool(corpse["elite"]) else Vector2(32, 40)
+		var scale_value := 1.55 if bool(corpse["elite"]) else 1.40
+		var tint := Color(0.45, 0.51, 0.55, alpha)
+		draw_set_transform(pos + Vector2(0, 14), 1.35 if bool(corpse["facing"]) else -1.35, Vector2(scale_value, scale_value * 0.70))
+		draw_texture_rect_region(tex, Rect2(-tex_size.x / 2.0, -tex_size.y / 2.0, tex_size.x, tex_size.y), Rect2(0, 0, tex_size.x, tex_size.y), tint)
+		draw_set_transform(Vector2.ZERO)
+
 func cleanup_defeated_enemies() -> void:
 	for i in range(enemies.size() - 1, -1, -1):
 		var enemy: Dictionary = enemies[i]
@@ -2180,6 +2392,10 @@ func cleanup_defeated_enemies() -> void:
 			continue
 		var death_spot: Vector2 = enemy["pos"]
 		var elite: bool = bool(enemy["elite"])
+		# Visually keep fallen enemies for exactly five seconds, then fade away.
+		corpses.append({"pos": death_spot, "kind": str(enemy.get("kind", "grunt")), "boss": bool(enemy["boss"]), "elite": elite, "life": 5.0, "facing": player.x > death_spot.x})
+		if corpses.size() > 55:
+			corpses.remove_at(0)
 		burst(death_spot, Color("a1cbff") if elite else Color("ff7c9b"), 24 if elite else 12)
 		enemies.remove_at(i)
 		kills += 1
@@ -2267,18 +2483,18 @@ func roll_brute_rarity() -> int:
 func spawn_drop(pos: Vector2, rarity: int, forced_kind: int = -1, forced_trait: int = -1) -> void:
 	var kind := forced_kind if forced_kind >= 0 else rng.randi_range(0, WEAPONS.size() - 1)
 	var element_id: int = forced_trait if forced_trait >= 0 else rng.randi_range(0, WEAPON_TRAITS.size() - 1)
-	var bonus: float = 1.0 + float(element_id) * 0.04 + float(rarity) * 0.035
-	var item_name: String = "%s・%s" % [WEAPON_TRAITS[element_id], build_drop_name(kind, rarity)]
+	var bonus: float = snappedf(rng.randf_range(0.85, 1.20) + float(element_id) * 0.04 + float(rarity) * 0.035, 0.01)
+	var item_name: String = "%s・%s  [威力x%.2f]" % [WEAPON_TRAITS[element_id], build_drop_name(kind, rarity), bonus]
 	drops.append({"type": "weapon", "pos": pos, "rarity": rarity, "kind": kind, "trait": element_id, "bonus": bonus, "name": item_name, "life": 65.0 if rarity >= 3 else 32.0, "phase": rng.randf() * TAU})
 	celebrate_loot(pos, rarity, item_name)
 
 func spawn_armor_drop(pos: Vector2, rarity: int, forced_slot: int = -1) -> void:
 	var slot := forced_slot if forced_slot >= 0 else rng.randi_range(0, ARMOR_SLOTS.size() - 1)
-	var defense := maxi(1, roundi(float(ARMOR_BASE_DEF[slot]) * ARMOR_RARITY_MULT[rarity]))
+	var defense := maxi(1, roundi(float(ARMOR_BASE_DEF[slot]) * ARMOR_RARITY_MULT[rarity] * rng.randf_range(0.80, 1.30)))
 	var style_id := rng.randi_range(0, 3)
 	var style_names := ["守護", "銀月", "翡翠", "暁"]
 	defense += style_id
-	var item_name: String = "%s・%s %s" % [style_names[style_id], ARMOR_PREFIX[rarity], ARMOR_SLOTS[slot]]
+	var item_name: String = "%s・%s %s [防御+%d]" % [style_names[style_id], ARMOR_PREFIX[rarity], ARMOR_SLOTS[slot], defense]
 	drops.append({"type": "armor", "pos": pos, "rarity": rarity, "slot": slot, "trait": style_id, "name": item_name, "defense": defense, "life": 55.0 if rarity >= 4 else (30.0 if rarity == 3 else 22.0), "phase": rng.randf() * TAU})
 	celebrate_loot(pos, rarity, item_name)
 
@@ -2500,10 +2716,13 @@ func update_drops(delta: float) -> void:
 			else:
 				pickup_hint.text = "[E] 拾う  %s  |  [I] バッグ" % d["name"]
 			pickup_hint.add_theme_color_override("font_color", RARITY_COLORS[int(d["rarity"])])
-	if player.distance_to(SLOT_POS) < 105.0:
-		pickup_hint.text = "[E] スロット 25G  |  所持金 %dG" % coins
+	if player.distance_to(SLOT_POS) < 105.0 and nearest >= 92.0:
+		pickup_hint.text = "[E] スロット 25G  |  景品は右下の受け取り台へ"
 	if player.distance_to(MERCHANT_POS) < 108.0:
 		pickup_hint.text = "[E] 武器商人ルーンの店  |  装備・レア作物の種を購入"
+	for meal in meal_displays:
+		if player.distance_to(meal["pos"]) < 62.0:
+			pickup_hint.text = "[E] 飾った料理を回収"
 	for seed_drop in crop_drops:
 		if player.distance_to(seed_drop["pos"]) < 95.0:
 			pickup_hint.text = "[E] %sのレアな種を拾う" % CROP_NAMES[int(seed_drop["crop"])]
@@ -2531,8 +2750,8 @@ func burst(pos: Vector2, color: Color, amount: int) -> void:
 		particles.append({"pos": pos, "vel": Vector2.RIGHT.rotated(angle) * speed, "life": life, "total": life, "color": color})
 
 func attack_stat_multiplier(kind: int) -> float:
-	var physical := kind == 0 or kind == 1 or kind == 2 or kind == 3 or kind == 4
-	var ranged := kind == 0 or kind == 1 or kind == 4
+	var physical := kind == 0 or kind == 1 or kind == 2 or kind == 3 or kind == 4 or kind == 7
+	var ranged := kind == 0 or kind == 1 or kind == 4 or kind == 7
 	var magic := kind == 5 or kind == 6
 	var mult := 1.0 + float(hero_stats[4]) * 0.015
 	if physical:
@@ -2587,6 +2806,10 @@ func activate_class_skill() -> void:
 			companion_hp = minf(companion_max_hp, companion_hp + amount)
 			burst(player, Color("a4ffe0"), 38)
 			burst(companion, Color("a4ffe0"), 25)
+		6: # Ninja: shadow clones independently throw kunai at nearby enemies.
+			shadow_clone_clock = 12.0 if enhanced else 8.0
+			shadow_clone_fire = 0.1
+			burst(player, Color("c4a2ff"), 50)
 	show_status("スキル発動！ %s%s" % [SKILL_NAMES[class_id], "・強化版" if enhanced else ""], Color("b6edff"))
 	play_sound(AUDIO_EPIC, -19.0)
 
@@ -2688,7 +2911,7 @@ func update_hud() -> void:
 	if freeze_clock > 0.0: effects += " [凍結%d秒]" % ceili(freeze_clock)
 	mp_text.text += effects
 	skill_text.text = "[Q] %s %s" % [SKILL_NAMES[class_id], ("強化" if level >= 10 else "習得済") if level >= 5 else "LV5で習得"]
-	help.text = "WASD:移動  SPACE:回避%s  E:調べる/商人  F:作物選択  1-5:装備  I:バッグ  Q:スキル" % ("(%.1f秒)" % jump_cooldown if jump_cooldown > 0.0 else "")
+	help.text = "WASD:移動  SPACE:回避%s  E:調べる/料理回収  F:作物選択  1-5:装備  I:バッグ  Q:スキル" % ("(%.1f秒)" % jump_cooldown if jump_cooldown > 0.0 else "")
 	hotbar_container.visible = state == "playing" or state == "upgrade"
 	hotbar_currency.visible = state == "playing" or state == "upgrade"
 
@@ -2803,7 +3026,7 @@ func draw_loot(d: Dictionary) -> void:
 func draw_equipped_sword(sword_origin: Vector2, rarity: int, attacking: bool) -> void:
 	# Sword art faces upward. Rotate it toward the mouse while keeping the grip at the hand.
 	# No colored placeholder line: the creator's exact PNG is rendered on the wolf.
-	var sword_art: Texture2D = SWORD_RARITY_ART[clampi(rarity, 0, 3)]
+	var sword_art: Texture2D = sword_art_for_rarity(rarity)
 	var attack_progress: float = clampf(1.0 - attack_clock / maxf(attack_duration, 0.01), 0.0, 1.0)
 	var swing: float = (attack_progress - 0.5) * 1.2 if attacking else 0.0
 	var sword_rotation: float = aim_angle + PI * 0.5 + swing
@@ -2927,10 +3150,14 @@ func draw_farm_and_kitchen() -> void:
 		draw_colored_polygon(PackedVector2Array([f + Vector2(-13, 8), f + Vector2(-5, -24), f + Vector2(4, -10), f + Vector2(10, -29), f + Vector2(17, 11)]), Color("ff963e"))
 		draw_circle(f + Vector2(0, 3), 9.0, Color("ffeb9e"))
 		draw_string(ui_font, f + Vector2(-43, 49), "料理 [E]", HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color("ffdda4"))
-	draw_string(ui_font, Vector2(1323, 700), "畑 [E]", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color("b8f1ba"))
-	draw_string(ui_font, Vector2(2129, 1044), "畑 [E]", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color("b8f1ba"))
+	draw_string(ui_font, Vector2(1390, 675), "農場 [E/F]", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color("b8f1ba"))
+	draw_string(ui_font, Vector2(2230, 1032), "農場 [E/F]", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color("b8f1ba"))
 	draw_string(ui_font, Vector2(1710, 1110), "森の畑 [E/F]", HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color("b8f1ba"))
 	draw_revive_shrine()
+	var payout: Vector2 = SLOT_POS + Vector2(130, 145)
+	draw_rect(Rect2(payout - Vector2(52, 36), Vector2(104, 72)), Color("293b43", 0.55))
+	draw_rect(Rect2(payout - Vector2(52, 36), Vector2(104, 72)), Color("edcf82", 0.8), false, 3.0)
+	draw_string(ui_font, payout + Vector2(-64, 62), "スロット景品 / [E]拾う", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("fff0b6"))
 	draw_slot_machine()
 	draw_merchant()
 
@@ -2954,55 +3181,37 @@ func _draw() -> void:
 	for i in range(7):
 		draw_circle(Vector2(2780, 700), 430.0 - float(i) * 55.0, Color("7d6cb8", 0.020))
 		draw_circle(Vector2(530, 1980), 370.0 - float(i) * 46.0, Color("62c4bb", 0.020))
-	for x in range(int(ARENA.position.x) + 14, int(ARENA.end.x), 64):
-		draw_line(Vector2(x, ARENA.position.y), Vector2(x, ARENA.end.y), Color("284448", 0.47), 1.0)
-	for y in range(int(ARENA.position.y) + 12, int(ARENA.end.y), 64):
-		draw_line(Vector2(ARENA.position.x, y), Vector2(ARENA.end.x, y), Color("284448", 0.47), 1.0)
+	# Subtle ground pattern, not item-like sparkles or crystals.
+	for x in range(int(ARENA.position.x) + 14, int(ARENA.end.x), 128):
+		draw_line(Vector2(x, ARENA.position.y), Vector2(x, ARENA.end.y), Color("284448", 0.12), 1.0)
+	for y in range(int(ARENA.position.y) + 12, int(ARENA.end.y), 128):
+		draw_line(Vector2(ARENA.position.x, y), Vector2(ARENA.end.x, y), Color("284448", 0.12), 1.0)
 	for prop in scenery:
 		var p: Vector2 = prop["pos"]
 		if p.distance_to(player) > 850.0:
 			continue
 		var rad: float = 18.0 * float(prop["size"])
 		if int(prop["kind"]) == 0:
-			draw_circle(p + Vector2(7, 15), rad + 4.0, Color(0, 0, 0, 0.23))
-			draw_circle(p, rad + 5.0, Color("244c43"))
-			draw_circle(p + Vector2(-6, -6), rad * 0.7, Color("3b7a5d"))
+			# Flat moss shrub, no item sparkle or glow.
+			draw_circle(p, rad + 4.0, Color("294b40", 0.80))
+			draw_circle(p + Vector2(-6, -4), rad * 0.66, Color("3c6752", 0.86))
 		elif int(prop["kind"]) == 1:
-			draw_circle(p, rad * 0.7, Color("566471"))
-			draw_circle(p + Vector2(-5, -5), rad * 0.37, Color("849ba0"))
-		elif int(prop["kind"]) == 2:
-			draw_circle(p, rad * 0.4, Color("519780"))
-			draw_circle(p + Vector2(8, 3), rad * 0.26, Color("7ebb92"))
-		elif int(prop["kind"]) == 3:
-			# Moonlit fairy mushrooms with soft glowing halos.
-			draw_circle(p, rad * 1.45, Color("74c9ff", 0.06 + 0.03 * sin(elapsed * 2.0 + float(prop["glow"]))))
-			draw_line(p + Vector2(0, 12), p + Vector2(0, -2), Color("d3d6d9"), 5.0)
-			draw_circle(p + Vector2(0, -5), rad * 0.63, Color("8bc4ff"))
-			draw_circle(p + Vector2(-5, -9), 3.0, Color("e3f7ff"))
-		elif int(prop["kind"]) == 4:
-			# Rune stones with pulsing turquoise sigils.
-			draw_colored_polygon(PackedVector2Array([p + Vector2(-18, 16), p + Vector2(-12, -20), p + Vector2(4, -30), p + Vector2(18, -15), p + Vector2(16, 16)]), Color("607d8b"))
-			draw_arc(p + Vector2(0, -4), 12.0, 0.0, TAU, 20, Color("8cf2e7", 0.60 + 0.25 * sin(elapsed * 2.0)), 2.0)
-			draw_line(p + Vector2(-9, -3), p + Vector2(9, -3), Color("b9ffea"), 2.0)
-		elif int(prop["kind"]) == 5:
-			# Shallow magical pools.
-			draw_circle(p, rad * 1.7, Color("204c62", 0.70))
-			draw_circle(p, rad * 1.4, Color("398b9d", 0.65))
-			draw_arc(p, rad, elapsed * 0.4, elapsed * 0.4 + PI * 1.3, 20, Color("a6eaff", 0.55), 2.0)
+			# Plain, wide slate-colored stone.
+			draw_circle(p, rad * 0.82, Color("465b60", 0.82))
+			draw_circle(p + Vector2(-4, -3), rad * 0.38, Color("708185", 0.65))
 		else:
-			# Luminous fireflies around wildflowers.
-			draw_line(p, p + Vector2(0, -12), Color("6ebf9e"), 2.0)
-			for j in range(3):
-				var a := elapsed * (0.6 + j * 0.13) + float(j) * TAU / 3.0 + float(prop["glow"])
-				var light := p + Vector2(cos(a) * 15.0, -13 + sin(a) * 10.0)
-				draw_circle(light, 8.0, Color("fff2a6", 0.11))
-				draw_circle(light, 2.5, Color("f9efb0", 0.88))
+			# Low grasses that cannot be mistaken for collectible equipment.
+			for blade in range(3):
+				var px := float(blade - 1) * 6.0
+				draw_line(p + Vector2(px, 4), p + Vector2(px * 1.3, -8 - blade * 2), Color("3d7765", 0.70), 2.0)
 	for station in CAMP_STATIONS:
 		draw_circle(station, CAMP_RADIUS, Color("a3eac4", 0.11 if phase == "combat" else 0.19))
 		draw_arc(station, CAMP_RADIUS, 0.0, TAU, 80, Color("86ffb5", 0.85), 4.0)
 		draw_string(ui_font, station + Vector2(-77, -CAMP_RADIUS - 14), "安全キャンプ / 攻撃不可", HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color("b6ffd1"))
 	draw_rect(ARENA, Color("5d8798"), false, 5.0)
 	draw_farm_and_kitchen()
+	draw_meal_displays()
+	draw_corpses()
 	for d in drops:
 		draw_loot(d)
 	for coin in coin_drops:
@@ -3073,7 +3282,11 @@ func _draw() -> void:
 	for bullet in projectiles:
 		var pos: Vector2 = bullet["pos"]
 		var c: Color = bullet["tint"]
-		if bullet["kind"] == "arrow":
+		if bullet["kind"] == "kunai":
+			var direction: Vector2 = (bullet["vel"] as Vector2).normalized()
+			draw_line(pos - direction * 13.0, pos + direction * 9.0, Color("a49ad2"), 4.0)
+			draw_colored_polygon(PackedVector2Array([pos + direction * 15.0, pos + direction.rotated(2.4) * 8.0, pos + direction.rotated(-2.4) * 8.0]), Color("e9e0ff"))
+		elif bullet["kind"] == "arrow":
 			var arrow_dir: Vector2 = (bullet["vel"] as Vector2).normalized()
 			draw_line(pos - arrow_dir * 13.0, pos + arrow_dir * 10.0, c, 3.5)
 			draw_colored_polygon(PackedVector2Array([pos + arrow_dir * 14.0, pos - arrow_dir.rotated(0.5) * 9.0, pos - arrow_dir.rotated(-0.5) * 9.0]), Color("ecfff4"))
@@ -3092,6 +3305,7 @@ func _draw() -> void:
 		var alpha := clampf(float(p["life"]) / float(p["total"]), 0.0, 1.0)
 		draw_circle(p["pos"], 2.0 + 3.0 * alpha, Color(p["color"], alpha))
 	draw_companion()
+	draw_shadow_clones()
 	var player_center := player
 	if screen_shake > 0.0:
 		player_center += Vector2(rng.randf_range(-3.0, 3.0), rng.randf_range(-3.0, 3.0))
@@ -3111,6 +3325,10 @@ func _draw() -> void:
 	if is_player_airborne():
 		draw_arc(player, 35.0, 0.0, TAU, 24, Color("a8eaff", 0.6), 2.0)
 	draw_player_with_armor(sprite, player_center + Vector2(0, walk_bob - jump_height), character_frame, cos(aim_angle) > 0.0, 1.82, Color("ff8585") if hurt_clock > 0.0 else WOLF_PALETTES[palette_id], lean)
+	if class_id == 6:
+		# Ninja mask and headband, layered over the hero's existing sprite.
+		draw_rect(Rect2(player_center + Vector2(-19, -35 - jump_height), Vector2(38, 16)), Color("28233f"))
+		draw_line(player_center + Vector2(-19, -39 - jump_height), player_center + Vector2(21, -39 - jump_height), Color("a96eff"), 4.0)
 	if freeze_lock_clock > 0.0:
 		draw_colored_polygon(PackedVector2Array([player + Vector2(-32, 21), player + Vector2(-39, -40), player + Vector2(-6, -72), player + Vector2(37, -43), player + Vector2(33, 23)]), Color("8be8ff", 0.20))
 		draw_arc(player + Vector2(0, -16), 42.0, 0.0, TAU, 28, Color("b7f2ff", 0.82), 3.0)
@@ -3133,7 +3351,11 @@ func _draw() -> void:
 				draw_equipped_sword(player_center + Vector2(0, walk_bob - jump_height), rarity, fighting)
 			3:
 				draw_line(player + Vector2(0, 0), player + Vector2.RIGHT.rotated(aim_angle) * 65.0, color, 9.0)
-		if fighting and wtype >= 2:
+			7:
+				var tip: Vector2 = player + Vector2.RIGHT.rotated(aim_angle) * (61.0 if fighting else 45.0)
+				draw_line(player + Vector2(0, -7), tip, Color("abb2cc"), 4.0)
+				draw_colored_polygon(PackedVector2Array([tip + Vector2.RIGHT.rotated(aim_angle) * 15.0, tip + Vector2.RIGHT.rotated(aim_angle + 2.2) * 8.0, tip + Vector2.RIGHT.rotated(aim_angle - 2.2) * 8.0]), Color("d6c9f4"))
+		if fighting and wtype >= 2 and wtype <= 3:
 			var radius := 110.0 if wtype == 2 else 155.0
 			var sweep := 0.95 if wtype == 2 else 1.21
 			var opacity := clampf(attack_clock / attack_duration, 0.0, 1.0)

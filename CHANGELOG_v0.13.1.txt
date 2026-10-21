@@ -1,0 +1,3 @@
+DOPAGAKI v0.13.1
+- Fixed EPIC sword art not consistently showing in all places.
+- Unified sword-art lookup for drops, hotbar, bag, equipped icon, slot preview, and held weapon.
