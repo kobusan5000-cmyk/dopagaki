@@ -39,6 +39,11 @@ function Set-Status([string]$text) {
 	} catch { }
 }
 
+# Short message to the Discord channel (silently skipped when Discord is not set up).
+function Notify([string]$kind, [string]$text) {
+	try { & (Join-Path $PSScriptRoot "discord-post.ps1") -Kind $kind -Message $text | Out-Null } catch { }
+}
+
 function Move-ZipTo([string]$dir) {
 	if ($script:zip -and (Test-Path -LiteralPath $script:zip.FullName)) {
 		if (-not (Test-Path $dir)) { New-Item -ItemType Directory $dir | Out-Null }
@@ -55,6 +60,7 @@ function Fail([string]$message) {
 	Log "[NG] $message" "Red"
 	if ($Auto -and $script:zip) {
 		Set-Status ("失敗: {0} -> {1}" -f $script:zip.Name, $message)
+		Notify "warn" ("配信に失敗しました: {0}`n{1}" -f $script:zip.Name, $message)
 		try { Move-ZipTo $failDir } catch { }
 	}
 	Clear-Temp
@@ -235,6 +241,7 @@ if ($suspicious.Count -gt 0) {
 	if ($Auto) {
 		Log ("HELD for review - would delete: " + (($suspicious | Select-Object -First 8) -join ", ")) "Yellow"
 		Set-Status ("要確認: {0} は {1} 個のファイルを削除する内容のため、公開を保留しました(管理者が確認します)" -f $zip.Name, $suspicious.Count)
+		Notify "warn" ("{0} は {1} 個のファイルを削除する内容のため、公開を保留しました" -f $zip.Name, $suspicious.Count)
 		Move-ZipTo $holdDir
 		Clear-Temp
 		exit 0
@@ -293,6 +300,7 @@ try {
 	$tag = gh release list --limit 1 --json tagName -q ".[0].tagName"
 	Log "[OK] Published as $tag. Testers get it the next time they start the launcher." "Green"
 	Set-Status ("公開しました: {0} ({1}) -> テスターに配信" -f $tag, $zip.Name)
+	Notify "release" ("{0} をテスターに配信しました`n{1}" -f $tag, (($newNotes -split "`n" | Select-Object -First 8) -join "`n"))
 } finally {
 	Pop-Location
 }

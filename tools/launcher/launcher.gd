@@ -4,6 +4,10 @@ extends Control
 
 const REPO := "kobusan5000-cmyk/dopagaki"
 const REPORT_EMAIL := "keitakeitam2@gmail.com"
+# Bug reports go to the Discord relay (see docs/不具合報告の設定.md). Empty = fall back to e-mail.
+# The token is not a secret (this repo is public); it only keeps random traffic out.
+const REPORT_URL := ""
+const REPORT_TOKEN := "dopagaki-report"
 const GAME_ZIP := "DOPAGAKI_game.zip"
 const GAME_EXE := "DOPAGAKI.exe"
 const API_URL := "https://api.github.com/repos/%s/releases/latest" % REPO
@@ -142,7 +146,10 @@ func build_report_panel() -> void:
 	report_text.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	box.add_child(report_text)
 	var hint := Label.new()
-	hint.text = "ボタンを押すと、版番号とゲームのログ入りの報告ファイルを保存し、\nメールの下書きを開きます。メールが開かない時は、開いたフォルダのファイルを %s に送ってください。" % REPORT_EMAIL
+	if REPORT_URL.is_empty():
+		hint.text = "ボタンを押すと、版番号とゲームのログ入りの報告ファイルを保存し、\nメールの下書きを開きます。メールが開かない時は、開いたフォルダのファイルを %s に送ってください。" % REPORT_EMAIL
+	else:
+		hint.text = "ボタンを押すと、版番号とゲームのログ付きで、開発者に自動で送信されます。"
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	box.add_child(hint)
 	var row := HBoxContainer.new()
@@ -411,9 +418,36 @@ func create_report() -> void:
 	if file:
 		file.store_string(full)
 		file.close()
+	report_panel.visible = false
+	if REPORT_URL.is_empty():
+		open_mail_report(full, path)
+		return
+	# Online path: the relay forwards the report to the developers' Discord channel.
+	set_status("Sending the report ... / 報告を送信中")
+	var payload := JSON.stringify({
+		"token": REPORT_TOKEN, "version": current_tag, "launcher": LAUNCHER_VERSION,
+		"description": report_text.text.left(1500), "report": full.right(9000),
+	})
+	var req := HTTPRequest.new()
+	add_child(req)
+	req.request_completed.connect(on_report_sent.bind(req, full, path))
+	var err := req.request(REPORT_URL, ["Content-Type: application/json"], HTTPClient.METHOD_POST, payload)
+	if err != OK:
+		req.queue_free()
+		open_mail_report(full, path)
+
+func on_report_sent(result: int, code: int, _headers: PackedStringArray, _body: PackedByteArray, req: HTTPRequest, full: String, path: String) -> void:
+	req.queue_free()
+	# Apps Script answers a POST with a redirect; the report itself has already been delivered by then.
+	if result == HTTPRequest.RESULT_SUCCESS and code >= 200 and code < 400:
+		report_text.text = ""
+		set_status("Report sent. Thank you! / 報告を送信しました。ありがとうございます")
+	else:
+		open_mail_report(full, path)
+
+func open_mail_report(full: String, path: String) -> void:
 	DisplayServer.clipboard_set(full)
 	var short_body := "Version %s\n\n%s\n\n(Full report with the game log is saved at: %s and is also copied to your clipboard - please paste it below.)" % [current_tag, report_text.text.left(1200), path]
 	OS.shell_open("mailto:%s?subject=%s&body=%s" % [REPORT_EMAIL, ("DOPAGAKI bug report " + current_tag).uri_encode(), short_body.uri_encode()])
 	OS.shell_open(path.get_base_dir())
-	report_panel.visible = false
 	set_status("Report saved and copied to clipboard. Send it to %s." % REPORT_EMAIL)

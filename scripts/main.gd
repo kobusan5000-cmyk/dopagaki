@@ -645,6 +645,8 @@ func build_ui() -> void:
 		item_row.add_theme_constant_override("separation", 5)
 		var button := make_button("", Color("5b7a9f"), Vector2(331, 36))
 		button.add_theme_font_size_override("font_size", 14)
+		button.clip_text = true
+		button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		button.pressed.connect(use_backpack_slot.bind(i))
 		inventory_buttons.append(button)
 		item_row.add_child(button)
@@ -658,6 +660,8 @@ func build_ui() -> void:
 	for i in range(ARMOR_SLOTS.size()):
 		var button := make_button("", Color("5b7a9f"), Vector2(414, 33))
 		button.add_theme_font_size_override("font_size", 14)
+		button.clip_text = true
+		button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 		button.pressed.connect(unequip_armor.bind(i))
 		armor_buttons.append(button)
 		inv_box.add_child(button)
@@ -2678,6 +2682,7 @@ func refresh_inventory_ui() -> void:
 		inventory_buttons[i].text = "[%d]  %s" % [i + 1, item_description(item)]
 		inventory_buttons[i].icon = null if item.is_empty() else item_icon(item)
 		inventory_buttons[i].expand_icon = true
+		inventory_buttons[i].tooltip_text = inventory_buttons[i].text
 		inventory_buttons[i].disabled = item.is_empty()
 		discard_buttons[i].disabled = item.is_empty()
 		var c: Color = Color("628aa7") if item.is_empty() else RARITY_COLORS[int(item["rarity"])]
@@ -2687,6 +2692,7 @@ func refresh_inventory_ui() -> void:
 		armor_buttons[i].text = "%s: %s" % [ARMOR_SLOTS[i], "-- 空き --" if item.is_empty() else item_description(item)]
 		armor_buttons[i].icon = null if item.is_empty() else item_icon(item)
 		armor_buttons[i].expand_icon = true
+		armor_buttons[i].tooltip_text = armor_buttons[i].text
 		armor_buttons[i].disabled = item.is_empty()
 		var c: Color = Color("628aa7") if item.is_empty() else RARITY_COLORS[int(item["rarity"])]
 		armor_buttons[i].add_theme_color_override("font_color", c)
