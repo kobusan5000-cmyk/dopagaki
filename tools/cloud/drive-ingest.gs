@@ -32,6 +32,7 @@ function tick() {
       checkPending_(props, JSON.parse(pending));
     } else {
       startNext_(props);
+      refreshStarter_(props);
     }
   } finally {
     lock.releaseLock();
@@ -167,7 +168,7 @@ function finish_(props, root, p, result, detail) {
     published: '公開しました: ' + detail + ' (' + p.name + ') -> テスターに配信',
     nochange: '変更なし: ' + p.name,
     unknown: '完了: ' + p.name + '(結果の詳細は GitHub の Actions で確認してください)',
-    held: '要確認: ' + p.name + ' は削除されるファイルがあるため、公開を保留しました(管理者が確認します)',
+    held: '要確認: ' + p.name + ' は自動で取り込めないため、公開を保留しました(同じ場所を2人が編集した、ファイルが大幅に足りない、など。管理者が確認します)',
     failed: '失敗: ' + p.name + ' ' + (detail ? '(' + detail + ')' : '(ゲームにエラーがある可能性があります。管理者に連絡してください)')
   }[result];
   status_(root, text, false);
@@ -211,4 +212,44 @@ function status_(root, text, onlyIfNew) {
   var old = f.getBlob().getDataAsString('UTF-8').replace(/^﻿/, '').split(/\r?\n/).filter(function (l) { return l; });
   if (onlyIfNew && old.length && old[0].substring(18) === text) return;
   f.setContent([line].concat(old.slice(0, 29)).join('\n') + '\n');
+}
+
+// ---- starter ZIP --------------------------------------------------------------------------------
+/**
+ * Keeps 最新版(読むだけ)/DOPAGAKI_latest.zip equal to the "DOPAGAKI_latest.zip" asset of the newest GitHub release.
+ * That ZIP is built by GitHub (it contains BASE_VERSION.txt, which lets the ingest merge both developers' work).
+ * Checked at most every 5 minutes. Never blocks publishing: errors only go to 配信状況.txt.
+ */
+function refreshStarter_(props) {
+  var last = Number(props.getProperty('starterCheckedAt') || 0);
+  if (Date.now() - last < 5 * 60 * 1000) return;
+  props.setProperty('starterCheckedAt', String(Date.now()));
+  var root = DriveApp.getFolderById(ROOT_FOLDER_ID);
+  try {
+    var rel = github_('get', '/releases/latest');
+    if (rel.code !== 200) return;
+    var info = JSON.parse(rel.body);
+    if (props.getProperty('starterTag') === info.tag_name) return;
+    var asset = (info.assets || []).filter(function (a) { return a.name === 'DOPAGAKI_latest.zip'; })[0];
+    if (!asset) return; // releases made before this feature have no starter ZIP
+    var res = UrlFetchApp.fetch(asset.browser_download_url, { muteHttpExceptions: true, followRedirects: true });
+    if (res.getResponseCode() !== 200 || res.getBlob().getBytes().length < 1000) return;
+    var dir = firstFolder_(root, '最新版(読むだけ)') || root.createFolder('最新版(読むだけ)');
+    var old = [];
+    var it = dir.getFilesByName('DOPAGAKI_latest.zip');
+    while (it.hasNext()) old.push(it.next());
+    dir.createFile(res.getBlob().setName('DOPAGAKI_latest.zip'));
+    old.forEach(function (f) { f.setTrashed(true); });
+    props.setProperty('starterTag', info.tag_name);
+  } catch (e) {
+    status_(root, '最新版ZIPの更新に失敗しました: ' + e.message, true);
+  }
+}
+
+/** Run by hand once after pasting this code: copies the starter ZIP right away. */
+function refreshStarterNow() {
+  var props = PropertiesService.getScriptProperties();
+  props.deleteProperty('starterCheckedAt');
+  props.deleteProperty('starterTag');
+  refreshStarter_(props);
 }
