@@ -1,7 +1,8 @@
 ﻿param(
 	[string]$DriveDir = "G:\マイドライブ\DOPA",
 	[switch]$DryRun,
-	[switch]$Yes
+	[switch]$Yes,
+	[switch]$RefreshLatestOnly
 )
 # Takes the newest project ZIP from the shared Google Drive folder, shows what would change,
 # and (after confirmation) publishes it: copy into the repo -> git push -> GitHub builds the release.
@@ -48,8 +49,24 @@ function Get-TopBlock([string]$file) {
 	return ($lines -join "`n")
 }
 
+# Puts a ZIP of the current project into Drive "譛譁ｰ迚・ so the other developer always starts from the newest copy.
+function Update-LatestZip {
+	$latestDir = Join-Path $DriveDir "譛譁ｰ迚・
+	if (-not (Test-Path $latestDir)) { New-Item -ItemType Directory $latestDir | Out-Null }
+	$stage = Join-Path $env:TEMP ("dopagaki_latest_" + [guid]::NewGuid().ToString("N"))
+	$inner = Join-Path $stage "DOPAGAKI"
+	New-Item -ItemType Directory $inner | Out-Null
+	$xd = @(); foreach ($d in $protectedDirs) { $xd += (Join-Path $repo $d) }
+	robocopy $repo $inner /E /XD @xd /XF @protectedFiles /NFL /NDL /NJH /NJS /NP | Out-Null
+	$target = Join-Path $latestDir "DOPAGAKI_latest.zip"
+	if (Test-Path $target) { Remove-Item $target -Force }
+	Compress-Archive -Path $inner -DestinationPath $target
+	Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
+	Write-Host "Latest copy for the other developer: $target"
+}
 Write-Host "=== DOPAGAKI publish ===" -ForegroundColor Cyan
 if (-not (Test-Path $DriveDir)) { Fail "Drive folder not found: $DriveDir  (Is Google Drive running?)" }
+if ($RefreshLatestOnly) { Update-LatestZip; exit 0 }
 $zips = @(Get-ChildItem $DriveDir -Filter *.zip -File | Sort-Object LastWriteTime -Descending)
 if ($zips.Count -eq 0) {
 	Write-Host "No ZIP file in the Drive folder. Nothing to publish."
@@ -149,3 +166,4 @@ if (-not (Test-Path $doneDir)) { New-Item -ItemType Directory $doneDir | Out-Nul
 Move-Item -LiteralPath $zip.FullName -Destination (Join-Path $doneDir $zip.Name) -Force
 Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host "The ZIP was moved to: $doneDir"
+Update-LatestZip
