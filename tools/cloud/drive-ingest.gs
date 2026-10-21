@@ -127,7 +127,7 @@ function checkPending_(props, p) {
   }
 
   // Which "RESULT: ..." step ran?
-  var result = 'failed', tag = '';
+  var result = null, tag = '';
   var jobs = github_('get', '/actions/runs/' + p.runId + '/jobs');
   if (jobs.code === 200) {
     (JSON.parse(jobs.body).jobs || []).forEach(function (job) {
@@ -136,6 +136,17 @@ function checkPending_(props, p) {
         if (m && s.conclusion === 'success') result = m[1];
       });
     });
+  }
+  if (!result) {
+    if (info.conclusion !== 'success') {
+      result = 'failed';
+    } else if ((p.tries = (p.tries || 0) + 1) < 6) {
+      // GitHub may mark the run finished before the step results are readable: look again on the next ticks.
+      props.setProperty('pending', JSON.stringify(p));
+      return;
+    } else {
+      result = 'unknown';
+    }
   }
   if (result === 'published') {
     var rel = github_('get', '/releases/latest');
@@ -149,12 +160,13 @@ function finish_(props, root, p, result, detail) {
   try { file = DriveApp.getFileById(p.fileId); } catch (e) {}
   if (file) {
     try { file.setSharing(DriveApp.Access.PRIVATE, DriveApp.Permission.NONE); } catch (e) {}
-    var folder = { published: '取り込み済み', nochange: '取り込み済み', held: '要確認', failed: '失敗' }[result] || '失敗';
+    var folder = { published: '取り込み済み', nochange: '取り込み済み', unknown: '取り込み済み', held: '要確認', failed: '失敗' }[result] || '失敗';
     moveTo_(root, file, folder);
   }
   var text = {
     published: '公開しました: ' + detail + ' (' + p.name + ') -> テスターに配信',
     nochange: '変更なし: ' + p.name,
+    unknown: '完了: ' + p.name + '(結果の詳細は GitHub の Actions で確認してください)',
     held: '要確認: ' + p.name + ' は削除されるファイルがあるため、公開を保留しました(管理者が確認します)',
     failed: '失敗: ' + p.name + ' ' + (detail ? '(' + detail + ')' : '(ゲームにエラーがある可能性があります。管理者に連絡してください)')
   }[result];
