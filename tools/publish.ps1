@@ -103,7 +103,9 @@ function Update-LatestZip {
 	robocopy $repo $inner /E /XD @xd /XF @protectedFiles /NFL /NDL /NJH /NJS /NP | Out-Null
 	$target = Join-Path $latestDir "DOPAGAKI_latest.zip"
 	if (Test-Path $target) { Remove-Item $target -Force }
-	Compress-Archive -Path $inner -DestinationPath $target
+	# tar.exe (bsdtar, built into Windows 10+) writes standard "/" paths; Compress-Archive in Windows PowerShell 5.1 writes "\".
+	tar.exe -a -c -f $target -C $stage DOPAGAKI
+	if ($LASTEXITCODE -ne 0) { Fail "Could not create the latest ZIP." }
 	Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
 	Log "Latest copy for the other developer: $target"
 }
