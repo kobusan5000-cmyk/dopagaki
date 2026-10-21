@@ -7,6 +7,8 @@ const REPORT_EMAIL := "keitakeitam2@gmail.com"
 const GAME_ZIP := "DOPAGAKI_game.zip"
 const GAME_EXE := "DOPAGAKI.exe"
 const API_URL := "https://api.github.com/repos/%s/releases/latest" % REPO
+const LAUNCHER_VERSION := 1 # bump when the launcher itself changes; testers then update it automatically
+const LAUNCHER_ASSET := "DOPAGAKI_Launcher.exe"
 const KEEP_VERSIONS := 3
 const STATE_PATH := "user://state.json"
 const VERSIONS_DIR := "user://versions"
@@ -16,6 +18,9 @@ var current_tag := ""
 var latest_tag := ""
 var latest_notes := ""
 var latest_url := ""
+var launcher_url := ""
+var remote_launcher_version := 0
+var last_code := 0
 var busy := false
 
 var status_label: Label
@@ -71,7 +76,7 @@ func build_ui() -> void:
 	box.add_theme_constant_override("separation", 10)
 	margin.add_child(box)
 	var title := Label.new()
-	title.text = "DOPAGAKI  TEST LAUNCHER"
+	title.text = "DOPAGAKI  TEST LAUNCHER  (v%d)" % LAUNCHER_VERSION
 	title.add_theme_font_size_override("font_size", 28)
 	title.add_theme_color_override("font_color", Color("7de9f0"))
 	box.add_child(title)
@@ -206,9 +211,66 @@ func on_release_info(result: int, code: int, _headers: PackedStringArray, body: 
 	latest_tag = str(parsed.get("tag_name", ""))
 	latest_notes = str(parsed.get("body", ""))
 	latest_url = ""
+	launcher_url = ""
+	remote_launcher_version = 0
 	for asset in parsed.get("assets", []):
-		if str(asset.get("name", "")) == GAME_ZIP:
+		var asset_name := str(asset.get("name", ""))
+		if asset_name == GAME_ZIP:
 			latest_url = str(asset.get("browser_download_url", ""))
+		elif asset_name == LAUNCHER_ASSET:
+			launcher_url = str(asset.get("browser_download_url", ""))
+			# CI stores the launcher version in the asset label, e.g. "launcher-v3".
+			remote_launcher_version = int(str(asset.get("label", "")).trim_prefix("launcher-v"))
+	last_code = code
+	if can_self_update() and remote_launcher_version > LAUNCHER_VERSION and not launcher_url.is_empty():
+		start_launcher_update()
+		return
+	process_game_release()
+
+func can_self_update() -> bool:
+	return OS.get_name() == "Windows" and not OS.has_feature("editor")
+
+func start_launcher_update() -> void:
+	busy = true
+	play_button.disabled = true
+	set_status("Updating the launcher (v%d -> v%d) ..." % [LAUNCHER_VERSION, remote_launcher_version])
+	http.download_file = ProjectSettings.globalize_path("user://launcher_new.exe")
+	http.request_completed.connect(on_launcher_downloaded, CONNECT_ONE_SHOT)
+	var err := http.request(launcher_url, ["User-Agent: dopagaki-launcher"])
+	if err != OK:
+		http.request_completed.disconnect(on_launcher_downloaded)
+		on_launcher_downloaded(HTTPRequest.RESULT_CANT_CONNECT, 0, PackedStringArray(), PackedByteArray())
+
+func on_launcher_downloaded(result: int, code: int, _headers: PackedStringArray, _body: PackedByteArray) -> void:
+	busy = false
+	http.download_file = ""
+	var new_path := ProjectSettings.globalize_path("user://launcher_new.exe")
+	if result == HTTPRequest.RESULT_SUCCESS and code == 200 and is_valid_exe(new_path):
+		apply_launcher_update(new_path)
+		return
+	# A failed launcher update must never block the game update or play.
+	DirAccess.remove_absolute(new_path)
+	process_game_release()
+
+func is_valid_exe(path: String) -> bool:
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return false
+	return file.get_length() > 1000000 and file.get_buffer(2).get_string_from_ascii() == "MZ"
+
+func apply_launcher_update(new_path: String) -> void:
+	# A running exe cannot overwrite itself: a hidden helper waits for us to exit, swaps the file, restarts it.
+	var current_exe := OS.get_executable_path()
+	var script := "for($i=0;$i -lt 60;$i++){try{Move-Item -Force -LiteralPath '%s' -Destination '%s' -ErrorAction Stop;break}catch{Start-Sleep -Milliseconds 500}};Start-Process -FilePath '%s'" % [ps_quote(new_path), ps_quote(current_exe), ps_quote(current_exe)]
+	set_status("Restarting the launcher ...")
+	OS.create_process("powershell.exe", ["-NoProfile", "-WindowStyle", "Hidden", "-Command", script])
+	get_tree().quit()
+
+func ps_quote(value: String) -> String:
+	return value.replace("'", "''")
+
+func process_game_release() -> void:
+	var code := last_code
 	if latest_url.is_empty():
 		offline_mode(code)
 		set_status("The newest release has no game file yet. " + status_label.text)

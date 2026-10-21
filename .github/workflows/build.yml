@@ -88,5 +88,7 @@ jobs:
           awk 'NF==0 && seen {exit} NF>0 {seen=1; print}' CHANGELOG.txt > notes.txt
           msg=$(git log -1 --pretty=%s)
           printf '\n(upload: %s)\n' "$msg" >> notes.txt
-          gh release create "$tag" build/DOPAGAKI_game.zip build/DOPAGAKI_Launcher.exe \
+          # The launcher version is stored in the asset label so running launchers can self-update.
+          lver=$(grep -oP 'const LAUNCHER_VERSION := \K[0-9]+' tools/launcher/launcher.gd)
+          gh release create "$tag" build/DOPAGAKI_game.zip "build/DOPAGAKI_Launcher.exe#launcher-v${lver}" \
             --title "$tag" --notes-file notes.txt --latest
