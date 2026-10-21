@@ -285,6 +285,8 @@ var audio_index := 0
 
 var hud: Label
 var help: Label
+var controls_panel: PanelContainer
+var controls_open := false
 var player_hp_bar: ProgressBar
 var companion_hp_bar: ProgressBar
 var player_hp_text: Label
@@ -714,6 +716,32 @@ func build_ui() -> void:
 	close_button.pressed.connect(toggle_inventory)
 	inv_box.add_child(close_button)
 	inventory_panel.hide()
+
+	# Controls reference: its own screen, opened with [C], instead of a long line on the HUD.
+	controls_panel = make_panel(Vector2(256, 70), Vector2(640, 500), Color("8fd3a6"))
+	layer.add_child(controls_panel)
+	var ctl_padding: MarginContainer = controls_panel.get_child(0)
+	ctl_padding.add_theme_constant_override("margin_top", 14)
+	ctl_padding.add_theme_constant_override("margin_bottom", 14)
+	var ctl_box := VBoxContainer.new()
+	ctl_box.add_theme_constant_override("separation", 5)
+	ctl_padding.add_child(ctl_box)
+	ctl_box.add_child(make_label("操作方法", 26, Color("b8ffd0"), true))
+	var ctl_grid := GridContainer.new()
+	ctl_grid.columns = 2
+	ctl_grid.add_theme_constant_override("h_separation", 22)
+	ctl_grid.add_theme_constant_override("v_separation", 4)
+	ctl_box.add_child(ctl_grid)
+	for row in CONTROLS_HELP:
+		var key_label := make_label(row[0], 16, Color("ffe69c"))
+		key_label.custom_minimum_size = Vector2(150, 0)
+		ctl_grid.add_child(key_label)
+		ctl_grid.add_child(make_label(row[1], 16, Color("dbe9f7")))
+	var ctl_close := make_button("閉じる [C / Esc]", Color("8fd3a6"), Vector2(0, 34))
+	ctl_close.add_theme_font_size_override("font_size", 14)
+	ctl_close.pressed.connect(toggle_controls)
+	ctl_box.add_child(ctl_close)
+	controls_panel.hide()
 	choose_panel.hide()
 	cooking_panel.hide()
 	rabbit_menu.hide()
@@ -845,6 +873,8 @@ func reset_game() -> void:
 	armor_test_slot = 0
 	brute_flash_clock = 0.0
 	inventory_panel.hide()
+	controls_open = false
+	controls_panel.hide()
 	kills = 0
 	level = 1
 	xp = 0
@@ -1431,6 +1461,13 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			reset_game()
 		return
 	if state == "playing":
+		if controls_open:
+			if event.keycode == KEY_C or event.keycode == KEY_ESCAPE:
+				toggle_controls()
+			return
+		if event.keycode == KEY_C and not (rabbit_menu_open or merchant_open or slot_open or cooking_open or inventory_open):
+			toggle_controls()
+			return
 		if rabbit_menu_open:
 			if event.keycode == KEY_T or event.keycode == KEY_ESCAPE:
 				toggle_rabbit_menu()
@@ -2019,6 +2056,8 @@ func companion_take_damage(amount: float) -> void:
 func player_died() -> void:
 	state = "dead"
 	dead_panel.show()
+	controls_open = false
+	controls_panel.hide()
 	dead_label.text = "Wave %d  討伐 %d  レベル %d" % [wave, kills, level]
 
 func generate_scenery() -> void:
@@ -2617,6 +2656,18 @@ func item_description(item: Dictionary) -> String:
 		return "%s  [防御+%d]  (%s)" % [item["name"], int(item["defense"]), rarity]
 	return "%s  [武器/倍率x%.2f]  (%s)" % [item["name"], float(item.get("bonus", 1.0)), rarity]
 
+# Long item names must not be cut off: shrink the font until the text fits next to the icon
+# (never below 9 px; the full text is always available as the tooltip).
+func fit_item_button(button: Button, text_value: String, button_width: float, base_size: int = 14) -> void:
+	var available := button_width - 60.0
+	var size := base_size
+	while size > 9 and ui_font.get_string_size(text_value, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x > available:
+		size -= 1
+	button.text = text_value
+	button.tooltip_text = text_value
+	button.clip_text = true
+	button.add_theme_font_size_override("font_size", size)
+
 func pickup_nearby() -> void:
 	var closest := -1
 	var distance := 92.0
@@ -2646,6 +2697,29 @@ func show_status(message: String, color: Color = Color("ffe998")) -> void:
 	banner.add_theme_color_override("font_color", color)
 	banner_clock = 2.7
 	banner.show()
+
+const CONTROLS_HELP := [
+	["WASD / 矢印キー", "移動"],
+	["マウス左ボタン", "攻撃（戦闘中、カーソルの方向へ）"],
+	["SPACE", "回避"],
+	["E", "調べる（拾う・畑・料理・商人・スロット）"],
+	["Q", "クラススキル（LV5で習得）"],
+	["1 - 5", "バッグの装備をすばやく切り替え"],
+	["I", "バッグを開く / 閉じる"],
+	["F", "作物の切り替え"],
+	["T", "ちゅぶらのお世話メニュー"],
+	["H / J", "シチュー / スープを食べる"],
+	["K / L", "果物を食べる"],
+	["M", "音のオン / オフ"],
+	["C", "この操作方法を開く / 閉じる"],
+	["Esc", "開いている画面を閉じる"],
+]
+
+func toggle_controls() -> void:
+	if state != "playing":
+		return
+	controls_open = not controls_open
+	controls_panel.visible = controls_open
 
 func toggle_inventory() -> void:
 	if state != "playing":
@@ -2745,7 +2819,7 @@ func refresh_inventory_ui() -> void:
 		return
 	for i in range(BAG_CAPACITY):
 		var item: Dictionary = backpack[i]
-		inventory_buttons[i].text = "[%d]  %s" % [i + 1, item_description(item)]
+		fit_item_button(inventory_buttons[i], "[%d]  %s" % [i + 1, item_description(item)], 331.0)
 		inventory_buttons[i].icon = null if item.is_empty() else item_icon(item)
 		inventory_buttons[i].expand_icon = true
 		inventory_buttons[i].disabled = item.is_empty()
@@ -2754,7 +2828,7 @@ func refresh_inventory_ui() -> void:
 		inventory_buttons[i].add_theme_color_override("font_color", c)
 	for i in range(ARMOR_SLOTS.size()):
 		var item: Dictionary = armor_equipped[i]
-		armor_buttons[i].text = "%s: %s" % [ARMOR_SLOTS[i], "-- 空き --" if item.is_empty() else item_description(item)]
+		fit_item_button(armor_buttons[i], "%s: %s" % [ARMOR_SLOTS[i], "-- 空き --" if item.is_empty() else item_description(item)], 414.0)
 		armor_buttons[i].icon = null if item.is_empty() else item_icon(item)
 		armor_buttons[i].expand_icon = true
 		armor_buttons[i].disabled = item.is_empty()
@@ -2981,7 +3055,7 @@ func update_hud() -> void:
 	if freeze_clock > 0.0: effects += " [凍結%d秒]" % ceili(freeze_clock)
 	mp_text.text += effects
 	skill_text.text = "[Q] %s %s" % [SKILL_NAMES[class_id], ("強化" if level >= 10 else "習得済") if level >= 5 else "LV5で習得"]
-	help.text = "WASD:移動  SPACE:回避%s  E:調べる  [T]:ちゅぶらのお世話  F:作物  1-5:装備  I:バッグ  Q:スキル" % ("(%.1f秒)" % jump_cooldown if jump_cooldown > 0.0 else "")
+	help.text = "[C] 操作方法%s" % ("   回避(%.1f秒)" % jump_cooldown if jump_cooldown > 0.0 else "")
 	hotbar_container.visible = state == "playing" or state == "upgrade"
 	hotbar_currency.visible = state == "playing" or state == "upgrade"
 
