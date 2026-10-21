@@ -251,7 +251,12 @@ Push-Location $repo
 try {
 	git add -A
 	$status = git status --porcelain
-	if (-not $status) { Log "Nothing to commit."; Clear-Temp; exit 0 }
+	if (-not $status) {
+		Log "Nothing to commit (only line-ending differences)."
+		if ($Auto) { Move-ZipTo $doneDir; Set-Status ("変更なし: {0}" -f $zip.Name) }
+		Clear-Temp
+		exit 0
+	}
 	git -c user.name=kouta -c user.email=kobusan5000-cmyk@users.noreply.github.com commit -q -m "Drive upload: $($zip.Name)"
 	if ($LASTEXITCODE -ne 0) { Fail "git commit failed." }
 	git push -q origin main
