@@ -45,14 +45,14 @@ jobs:
           url="https://drive.usercontent.google.com/download?id=${FILE_ID}&export=download&confirm=t"
           if [ -n "$TEST_URL" ]; then url="$TEST_URL"; fi
           curl -fsSL -o "$RUNNER_TEMP/in.zip" "$url"
-          unzip -tq "$RUNNER_TEMP/in.zip" > /dev/null || { echo "::error::The download is not a valid ZIP (is the file shared by link?)"; exit 1; }
+          { unzip -tq "$RUNNER_TEMP/in.zip" > /dev/null || [ $? -eq 1 ]; } || { echo "::error::The download is not a valid ZIP (is the file shared by link?)"; exit 1; }
           ls -l "$RUNNER_TEMP/in.zip"
 
       - name: Compare with the current version
         id: an
         run: |
           set -e
-          mkdir -p "$RUNNER_TEMP/in" && unzip -q "$RUNNER_TEMP/in.zip" -d "$RUNNER_TEMP/in"
+          mkdir -p "$RUNNER_TEMP/in" && unzip -q "$RUNNER_TEMP/in.zip" -d "$RUNNER_TEMP/in" || [ $? -eq 1 ]  # exit 1 = only warnings (e.g. backslash paths)
           mapfile -t projects < <(find "$RUNNER_TEMP/in" -name project.godot -not -path '*/.godot/*' -not -path '*/tools/*')
           if [ "${#projects[@]}" -eq 0 ]; then echo "::error::project.godot was not found inside the ZIP."; exit 1; fi
           if [ "${#projects[@]}" -gt 1 ]; then echo "::error::The ZIP contains more than one project.godot (nested projects?)."; exit 1; fi
