@@ -9,6 +9,9 @@ on:
       file_id:
         description: "Google Drive file id of the ZIP"
         required: true
+      test_url:
+        description: "Testing only: download from this URL instead of Drive"
+        required: false
       file_name:
         description: "File name of the ZIP (for messages)"
         required: true
@@ -25,6 +28,7 @@ env:
   GH_TOKEN: ${{ github.token }}
   FILE_ID: ${{ inputs.file_id }}
   FILE_NAME: ${{ inputs.file_name }}
+  TEST_URL: ${{ inputs.test_url }}
   DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
 
 jobs:
@@ -38,7 +42,9 @@ jobs:
       - name: Download the ZIP from Drive
         run: |
           if ! [[ "$FILE_ID" =~ ^[A-Za-z0-9_-]+$ ]]; then echo "::error::bad file id"; exit 1; fi
-          curl -fsSL -o "$RUNNER_TEMP/in.zip" "https://drive.usercontent.google.com/download?id=${FILE_ID}&export=download&confirm=t"
+          url="https://drive.usercontent.google.com/download?id=${FILE_ID}&export=download&confirm=t"
+          if [ -n "$TEST_URL" ]; then url="$TEST_URL"; fi
+          curl -fsSL -o "$RUNNER_TEMP/in.zip" "$url"
           unzip -tq "$RUNNER_TEMP/in.zip" > /dev/null || { echo "::error::The download is not a valid ZIP (is the file shared by link?)"; exit 1; }
           ls -l "$RUNNER_TEMP/in.zip"
 
