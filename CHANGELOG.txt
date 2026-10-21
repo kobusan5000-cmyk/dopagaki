@@ -1,20 +1,40 @@
-DOPAGAKI v0.8 fix2
-- (publish tool test: no gameplay change)
+DOPAGAKI v0.12.2 / 剣4レアリティの専用ドット絵
+- 作者提供の剣PNG4枚を無加工で追加
+- COMMON / RARE / EPIC / LEGENDARYで剣の絵が切り替わる
+- ドロップ・スロット結果・ホットバー・バッグ・HUD・キャラ装備中の絵を統一
+- 装備中の剣はマウス方向を向き、攻撃時に振るモーションを追加
+- Shift+F8で4種類の剣をテスト出現
+- MYTHIC剣は暫定でLEGENDARYの絵＋追加のピンク色エフェクト
+- 既存の武器バランスやレア度抽選率は変更なし
+- Godot実機テストは未実施
 
-DOPAGAKI v0.8 fix1
-- NIGHT REAPER now appears once per wave from wave 3 (was up to 5 at once); never more than one alive.
-- Sword and greatsword: longer reach, faster attacks, a bit more damage and knockback.
-- NIGHT REAPER now walks up close while shooting, so melee heroes can hit it and its touch attack works.
+DOPAGAKI v0.9.1 — Startup Hotfix
+- Fixed GDScript parse errors at former lines 816 and 819: type inference of offset/outward from an untyped constant array.
+- Explicit Vector2 type on camp_center, offset, outward; explicit float for min_dist.
+- Renamed four local variables that shadowed CanvasItem.draw or Node.name (warning cleanup).
+- No intended gameplay/balance changes from v0.9.
+- Godot editor runtime could not be executed here; static validation only.
 
-DOPAGAKI v0.8
-- Large scrolling world 2540x1590 with following Camera2D and two camp sites.
-- Player health shown in a prominent HUD bar, character overhead bar, and companion bar.
-- Prep 25s -> Combat 48s -> Rest 26s loop; no enemy spawns during prep/rest.
-- Crops grow in 10s; 10 farm plots split across two campgrounds.
-- Two recipes can be cooked and stored for later. H/J consumes meals.
-- Companion MINT: custom 4-frame pixel art, follows, shoots nearest threats, heals hero,
-  uses stored food when injured, and respawns after falling.
-- New NIGHT REAPER elite boss from wave 3: 3-shot ranged attack, higher HP, epic gear reward.
-- Normal enemy equipment chance reduced to 8% total. Brute chance 35% instead of guaranteed.
-- F9 NIGHT REAPER spawn / F10 MINT food-consumption test added.
-- Online/networked multiplayer is planned, not included.
+v0.9
+1. NIGHT REAPERの通常出現を3ウェーブ以降1ウェーブ1体までに制限。
+   前のNIGHT REAPERが生きている間は新たに自然出現しません。
+   通常敵の抽選からボスを除外。F9のみ無制限のデバッグ例外。
+2. 剣の射程85→110、間隔0.40→0.34秒、ダメージ4.2→5.2、ノックバック14→21。
+   大剣の射程130→155、間隔0.98→0.85秒、ダメージ8→9.8、ノックバック38→48。
+   斬撃の表示範囲も攻撃判定に合わせて拡大。
+3. NIGHT REAPERは敵の26前後まで接近しながら3方向の弾を撃つ。
+   体当たり攻撃が有効（基礎24ダメージ、ウェーブが進むと増加）。
+   移動速度は主人公より遅く、逃走可能。
+4. MINTは倒した敵のXPを共有して自動レベルアップ。
+   LV・XPをHUDと頭上に表示。レベルアップで最大HP、攻撃力、攻撃速度、
+   主人公への回復量・頻度が成長。料理を食べる機能も継続。
+5. ウェーブが進むほど敵の同時出現グループ数、出現頻度、HP、速度、
+   接触ダメージが増加。生存上限78体で負荷を制限。
+6. 休憩開始時に主人公も最大HPの24%（最低18）回復。
+   MINTの25回復、種+2・キノコ+1、休憩26秒は継続。
+7. 緑のキャンプ円は本当の安全地帯に変更。
+   敵は円内に侵入できず、敵の弾は境界で消えます。
+   プレイヤー・MINTは円内で敵の攻撃を受けません。
+   バランスのため、キャンプ内ではプレイヤーもMINTも攻撃できません。
+   農業・料理・休憩はキャンプ内でいつでも可能です。
+

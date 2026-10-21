@@ -112,6 +112,20 @@ if ($added.Count + $changed.Count + $removed.Count -eq 0) {
 
 $newNotes = Get-TopBlock (Join-Path $src "CHANGELOG.txt")
 $oldNotes = Get-TopBlock (Join-Path $repo "CHANGELOG.txt")
+
+# The other developer also keeps per-version notes (CHANGELOG_v0.12.2.txt). If the newest one is not at the top
+# of CHANGELOG.txt, use it as the release notes and put it on top (as one block) when publishing.
+$prependNotes = ""
+$verFiles = @(Get-ChildItem $src -Filter "CHANGELOG_v*.txt" -File | Sort-Object {
+	try { [version]($_.BaseName -replace '^CHANGELOG_v', '') } catch { [version]"0.0" }
+} -Descending)
+if ($verFiles.Count -gt 0) {
+	$verLines = @(Get-Content $verFiles[0].FullName -Encoding UTF8 | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 25)
+	if ($verLines.Count -gt 0 -and -not $newNotes.StartsWith($verLines[0])) {
+		$prependNotes = $verLines -join "`n"
+		$newNotes = $prependNotes
+	}
+}
 Write-Host ""
 if ([string]::IsNullOrEmpty($newNotes)) {
 	Write-Host "[!] CHANGELOG.txt is missing. The tester will see no update notes." -ForegroundColor Yellow
@@ -143,6 +157,11 @@ $xd = @()
 foreach ($d in $protectedDirs) { $xd += (Join-Path $src $d); $xd += (Join-Path $repo $d) }
 robocopy $src $repo /MIR /XD @xd /XF @protectedFiles /NFL /NDL /NJH /NJS /NP | Out-Null
 if ($LASTEXITCODE -ge 8) { Fail "File copy failed (robocopy code $LASTEXITCODE)." }
+if ($prependNotes) {
+	$clPath = Join-Path $repo "CHANGELOG.txt"
+	$existing = if (Test-Path $clPath) { [IO.File]::ReadAllText($clPath) } else { "" }
+	[IO.File]::WriteAllText($clPath, $prependNotes + "`n`n" + $existing, (New-Object Text.UTF8Encoding($false)))
+}
 
 Push-Location $repo
 try {

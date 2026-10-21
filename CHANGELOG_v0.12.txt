@@ -1,0 +1,15 @@
+DOPAGAKI v0.12
+=================
+- Combat waves now end only after a fixed spawn quota is defeated (11/15/19... capped at 56).
+- Rest 26s, preparation 25s; final 5 seconds have rising audible countdown.
+- Expanded arena 2540x1590 -> 3600x2380 (2.12x) with fantasy runestones, glowing mushrooms, fairy lights and pools.
+- Merchant Rune sells rare/epic equipment, carrots, melon/watermelon seeds, mushrooms for enemy-earned G coins.
+- Moved Mint revival altar far to southeast outside safe camp. HUD compass shows merchant and altar directions.
+- Melon and watermelon seed drops, crops with separate grow times, and two new recipes.
+- Weapon affixes: flame, frost, venom, starlight, wind; equipment has variant visuals/bonuses.
+- Critical hit 2x, base 5% + 2.5% per dexterity, capped at 50%; damage numbers and crit cue.
+- Combo kill bonuses, flawless-wave rewards, boss death flourish, stronger slash/trail visuals.
+- Poison, ice, fire ranged enemies with DOT, slow/freeze and distinctive tint/icon.
+- Original synthesized Celtic-inspired ambient and combat WAV loops, countdown/crit/clear effects.
+- Test shortcuts F1 merchant, F4 moon shrine, F3 coins, F10 Mint death, F11 phase skip.
+- Existing features from v0.11 retained; 4-player online remains unimplemented.
