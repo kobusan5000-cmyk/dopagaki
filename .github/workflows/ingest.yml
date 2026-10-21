@@ -53,6 +53,7 @@ jobs:
         run: |
           set -e
           mkdir -p "$RUNNER_TEMP/in" && unzip -q "$RUNNER_TEMP/in.zip" -d "$RUNNER_TEMP/in" || [ $? -eq 1 ]  # exit 1 = only warnings (e.g. backslash paths)
+          chmod -R u+rwX "$RUNNER_TEMP/in"
           mapfile -t projects < <(find "$RUNNER_TEMP/in" -name project.godot -not -path '*/.godot/*' -not -path '*/tools/*')
           if [ "${#projects[@]}" -eq 0 ]; then echo "::error::project.godot was not found inside the ZIP."; exit 1; fi
           if [ "${#projects[@]}" -gt 1 ]; then echo "::error::The ZIP contains more than one project.godot (nested projects?)."; exit 1; fi
