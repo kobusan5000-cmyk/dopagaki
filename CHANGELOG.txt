@@ -1,3 +1,6 @@
+DOPAGAKI v0.8 fix2
+- (publish tool test: no gameplay change)
+
 DOPAGAKI v0.8 fix1
 - NIGHT REAPER now appears once per wave from wave 3 (was up to 5 at once); never more than one alive.
 - Sword and greatsword: longer reach, faster attacks, a bit more damage and knockback.
