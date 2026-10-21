@@ -49,14 +49,15 @@ function Get-TopBlock([string]$file) {
 	return ($lines -join "`n")
 }
 
-# Puts a ZIP of the current project into Drive "譛譁ｰ迚・ so the other developer always starts from the newest copy.
+# Puts a ZIP of the current project into Drive "最新版" so the other developer always starts from the newest copy.
 function Update-LatestZip {
-	$latestDir = Join-Path $DriveDir "譛譁ｰ迚・
+	$latestDir = Join-Path $DriveDir "最新版"
 	if (-not (Test-Path $latestDir)) { New-Item -ItemType Directory $latestDir | Out-Null }
 	$stage = Join-Path $env:TEMP ("dopagaki_latest_" + [guid]::NewGuid().ToString("N"))
 	$inner = Join-Path $stage "DOPAGAKI"
 	New-Item -ItemType Directory $inner | Out-Null
-	$xd = @(); foreach ($d in $protectedDirs) { $xd += (Join-Path $repo $d) }
+	$xd = @()
+	foreach ($d in $protectedDirs) { $xd += (Join-Path $repo $d) }
 	robocopy $repo $inner /E /XD @xd /XF @protectedFiles /NFL /NDL /NJH /NJS /NP | Out-Null
 	$target = Join-Path $latestDir "DOPAGAKI_latest.zip"
 	if (Test-Path $target) { Remove-Item $target -Force }
@@ -64,6 +65,7 @@ function Update-LatestZip {
 	Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
 	Write-Host "Latest copy for the other developer: $target"
 }
+
 Write-Host "=== DOPAGAKI publish ===" -ForegroundColor Cyan
 if (-not (Test-Path $DriveDir)) { Fail "Drive folder not found: $DriveDir  (Is Google Drive running?)" }
 if ($RefreshLatestOnly) { Update-LatestZip; exit 0 }
