@@ -128,8 +128,19 @@ if ($zips.Count -eq 0) {
 }
 $script:zip = $zips[0]
 $zip = $script:zip
-# A ZIP that was modified in the last 2 minutes may still be uploading/syncing.
-if ($Auto -and ((Get-Date) - $zip.LastWriteTime).TotalSeconds -lt 120) { exit 0 }
+# A ZIP that is still being uploaded/synced must not be used: wait until it is a few seconds old,
+# stops growing and can be opened for reading.
+if ($Auto) {
+	if (((Get-Date) - $zip.LastWriteTime).TotalSeconds -lt 10) { exit 0 }
+	$sizeBefore = $zip.Length
+	Start-Sleep -Seconds 4
+	try {
+		$probe = [IO.File]::Open($zip.FullName, 'Open', 'Read', 'None')
+		$sizeAfter = $probe.Length
+		$probe.Close()
+	} catch { exit 0 }
+	if ($sizeAfter -ne $sizeBefore -or $sizeAfter -lt 1000) { exit 0 }
+}
 if ($zips.Count -gt 1) { Log "Note: $($zips.Count) ZIP files found. Using the newest: $($zip.Name)" "Yellow" }
 Log "ZIP: $($zip.Name)  ($([math]::Round($zip.Length / 1MB, 1)) MB, $($zip.LastWriteTime))"
 
@@ -262,9 +273,15 @@ try {
 	git push -q origin main
 	if ($LASTEXITCODE -ne 0) { Fail "git push failed (not logged in to GitHub?)." }
 	Log "Pushed. Waiting for GitHub to build..." "Cyan"
-	Start-Sleep -Seconds 12
-	$runId = gh run list --limit 1 --json databaseId -q ".[0].databaseId"
-	gh run watch $runId --exit-status | Out-Null
+	# Find the build that belongs to the commit we just pushed (poll instead of a fixed wait).
+	$sha = (git rev-parse HEAD).Trim()
+	$runId = ""
+	for ($i = 0; $i -lt 40 -and -not $runId; $i++) {
+		$runId = gh run list --commit $sha --limit 1 --json databaseId -q ".[0].databaseId"
+		if (-not $runId) { Start-Sleep -Seconds 2 }
+	}
+	if (-not $runId) { Fail "GitHub did not start a build for the pushed commit." }
+	gh run watch $runId --exit-status --interval 3 | Out-Null
 	if ($LASTEXITCODE -ne 0) { Fail "The build FAILED (the game has errors?). Open GitHub > Actions to see why. The testers still have the previous version." }
 	$tag = gh release list --limit 1 --json tagName -q ".[0].tagName"
 	Log "[OK] Published as $tag. Testers get it the next time they start the launcher." "Green"
