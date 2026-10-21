@@ -8,6 +8,14 @@ on:
       - "**.md"
       - "docs/**"
       - "tools/cloud/**"
+      - "tools/make-zip.ps1"
+      - "tools/publish.ps1"
+      - "ci/ingest-merge.sh"
+      - "ci/test-ingest-merge.sh"
+      - "ci/make-starter.sh"
+      - ".github/workflows/ingest.yml"
+      - ".github/workflows/starter.yml"
+      - ".github/workflows/build.yml"
   workflow_dispatch:
 
 permissions:
@@ -103,3 +111,11 @@ jobs:
           lver=$(grep -oP 'const LAUNCHER_VERSION := \K[0-9]+' tools/launcher/launcher.gd)
           gh release create "$tag" build/DOPAGAKI_game.zip "build/DOPAGAKI_Launcher.exe#launcher-v${lver}" \
             --title "$tag" --notes-file notes.txt --latest
+
+      # The other developer starts from this ZIP; it carries BASE_VERSION.txt so that uploads can be merged.
+      - name: Attach starter ZIP
+        continue-on-error: true
+        run: |
+          tag="b${{ github.run_number }}"
+          bash ci/make-starter.sh "$RUNNER_TEMP/DOPAGAKI_latest.zip"
+          gh release upload "$tag" "$RUNNER_TEMP/DOPAGAKI_latest.zip" --clobber

@@ -133,21 +133,11 @@ if (-not (Test-Path $DriveDir)) {
 }
 if ($RefreshLatestOnly) { Update-LatestZip; exit 0 }
 # Cloud mode: GitHub Actions + Apps Script publish the uploads (see docs/クラウド自動配信の設定.md).
-# This PC then only keeps "最新版(読むだけ)" fresh while it happens to be on.
+# This PC then does nothing here.
 $cloudFlag = Join-Path $PSScriptRoot "cloud-ingest.on"
 if ($Auto -and (Test-Path -LiteralPath $cloudFlag)) {
-	Push-Location $repo
-	try {
-		if (-not (git status --porcelain)) {
-			git pull -q --rebase origin main
-			$head = (git rev-parse HEAD).Trim()
-			$stamp = Join-Path $PSScriptRoot ".latest-sha"
-			if ($LASTEXITCODE -eq 0 -and (-not (Test-Path $stamp) -or (Get-Content $stamp -Raw).Trim() -ne $head)) {
-				Update-LatestZip
-				Set-Content -LiteralPath $stamp -Value $head
-			}
-		}
-	} finally { Pop-Location }
+	# The starter ZIP ("最新版(読むだけ)") is made by GitHub (it carries BASE_VERSION.txt) and copied to Drive by the
+	# Apps Script, so nothing is left to do here.
 	exit 0
 }
 # Uploads go into the inbox folder; ZIPs dropped directly into the Drive folder are still accepted.

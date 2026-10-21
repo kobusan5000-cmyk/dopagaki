@@ -1,0 +1,30 @@
+name: starter
+
+# Attaches the starter ZIP (DOPAGAKI_latest.zip, see ci/make-starter.sh) for the current main to a release.
+# build.yml does this for every new release; run this by hand to add it to an existing one.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to attach the ZIP to (default: the latest release)"
+        required: false
+
+permissions:
+  contents: write
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  starter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and attach
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          [ -n "$TAG" ] || TAG=$(gh api "repos/${{ github.repository }}/releases/latest" -q .tag_name)
+          bash ci/make-starter.sh "$RUNNER_TEMP/DOPAGAKI_latest.zip"
+          gh release upload "$TAG" "$RUNNER_TEMP/DOPAGAKI_latest.zip" --clobber
+          echo "attached to $TAG"

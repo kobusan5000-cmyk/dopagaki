@@ -3,18 +3,26 @@ name: ingest
 # Cloud version of tools/publish.ps1: takes a project ZIP from the shared Google Drive folder,
 # merges it into the repo, pushes, and runs the build. Started by the Apps Script in tools/cloud/
 # (works while the PC is off). The final "RESULT: ..." step tells the Apps Script what to do with the ZIP.
+#
+# A ZIP that carries BASE_VERSION.txt (every starter ZIP does) is merged three ways with the current branch
+# (ci/ingest-merge.sh): edits that do not overlap are combined, overlapping edits are held for review.
+# A ZIP without that file replaces the project as a whole (the old behaviour).
 on:
   workflow_dispatch:
     inputs:
       file_id:
         description: "Google Drive file id of the ZIP"
         required: true
-      test_url:
-        description: "Testing only: download from this URL instead of Drive"
-        required: false
       file_name:
         description: "File name of the ZIP (for messages)"
         required: true
+      test_url:
+        description: "Testing only: download from this URL instead of Drive"
+        required: false
+      target_branch:
+        description: "Testing only: merge into this branch instead of main (no build, no release, no Discord)"
+        required: false
+        default: "main"
 
 permissions:
   contents: write
@@ -29,7 +37,8 @@ env:
   FILE_ID: ${{ inputs.file_id }}
   FILE_NAME: ${{ inputs.file_name }}
   TEST_URL: ${{ inputs.test_url }}
-  DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+  TARGET: ${{ inputs.target_branch || 'main' }}
+  DISCORD_WEBHOOK: ${{ (inputs.target_branch || 'main') == 'main' && secrets.DISCORD_WEBHOOK || '' }}
 
 jobs:
   ingest:
@@ -37,6 +46,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.target_branch || 'main' }}
           fetch-depth: 0
 
       - name: Download the ZIP from Drive
@@ -59,6 +69,26 @@ jobs:
           if [ "${#projects[@]}" -gt 1 ]; then echo "::error::The ZIP contains more than one project.godot (nested projects?)."; exit 1; fi
           src=$(dirname "${projects[0]}")
           echo "$src" > "$RUNNER_TEMP/src.txt"
+
+          # ---- merge mode (the ZIP says which version it started from) ----
+          set +e
+          bash ci/ingest-merge.sh "$src" "$RUNNER_TEMP/merge.out"
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ] && [ "$rc" -ne 3 ]; then echo "::error::ingest-merge.sh failed (exit $rc)"; exit 1; fi
+          cat "$RUNNER_TEMP/merge.out"
+          if [ "$rc" -eq 0 ]; then
+            echo "mode=merge" >> "$GITHUB_OUTPUT"
+            echo "base=$(grep '^base=' "$RUNNER_TEMP/merge.out" | cut -d= -f2-)" >> "$GITHUB_OUTPUT"
+            echo "result=$(grep '^result=' "$RUNNER_TEMP/merge.out" | cut -d= -f2-)" >> "$GITHUB_OUTPUT"
+            m=$(grep '^msg=' "$RUNNER_TEMP/merge.out" | cut -d= -f2- || true)
+            if [ -n "$m" ]; then echo "msg=${FILE_NAME}: ${m}" >> "$GITHUB_OUTPUT"; fi
+            git log --stat -1 --format=%s | tail -20
+            exit 0
+          fi
+
+          # ---- legacy mode (no usable BASE_VERSION.txt): the ZIP replaces the project as a whole ----
+          echo "mode=legacy" >> "$GITHUB_OUTPUT"
           # Line endings must not count as changes
           find "$src" -type f \( -name '*.gd' -o -name '*.tscn' -o -name '*.tres' -o -name '*.txt' -o -name '*.godot' -o -name '*.cfg' -o -name '*.gdshader' \) -exec sed -i 's/\r$//' {} +
 
@@ -72,6 +102,7 @@ jobs:
           /README.md
           /.gitignore
           /export_presets.cfg
+          /BASE_VERSION.txt
           EOF
           sed -i 's/^ *//' "$RUNNER_TEMP/excl.txt"
           rsync -rcn --delete --itemize-changes --exclude-from="$RUNNER_TEMP/excl.txt" "$src/" ./ | grep -v '/$' > "$RUNNER_TEMP/diff.txt" || true
@@ -99,6 +130,10 @@ jobs:
           src=$(cat "$RUNNER_TEMP/src.txt")
           top_block() { tr -d '\r' < "$1" | sed '1s/^\xEF\xBB\xBF//' | awk 'NF==0 { if (n) exit; else next } { n=1; print }'; }
 
+          if [ "${{ steps.an.outputs.mode }}" = "legacy" ]; then
+            rsync -a --checksum --delete --exclude-from="$RUNNER_TEMP/excl.txt" "$src/" ./
+          fi
+
           # Per-version notes from the other developer: use the newest one as release notes when it is not on top of CHANGELOG.txt.
           prepend=""
           newest=$(ls "$src"/CHANGELOG_v*.txt 2>/dev/null | sed -E 's#.*/CHANGELOG_v(.*)\.txt#\1 &#' | sort -V | tail -1 | cut -d' ' -f2- || true)
@@ -106,10 +141,9 @@ jobs:
             lines=$(tr -d '\r' < "$newest" | sed '1s/^\xEF\xBB\xBF//' | awk 'NF>0' | head -25)
             first=$(echo "$lines" | head -1)
             cur=""; [ -f "$src/CHANGELOG.txt" ] && cur=$(top_block "$src/CHANGELOG.txt")
-            if [ -n "$first" ] && [[ "$cur" != "$first"* ]]; then prepend="$lines"; fi
+            top=""; [ -f CHANGELOG.txt ] && top=$(top_block CHANGELOG.txt)
+            if [ -n "$first" ] && [[ "$cur" != "$first"* ]] && [[ "$top" != "$first"* ]]; then prepend="$lines"; fi
           fi
-
-          rsync -a --checksum --delete --exclude-from="$RUNNER_TEMP/excl.txt" "$src/" ./
           if [ -n "$prepend" ]; then
             { printf '%s\n\n' "$prepend"; cat CHANGELOG.txt 2>/dev/null || true; } > "$RUNNER_TEMP/cl.txt"
             mv "$RUNNER_TEMP/cl.txt" CHANGELOG.txt
@@ -118,13 +152,25 @@ jobs:
           { echo "notes<<EOF"; echo "$notes"; echo "EOF"; } >> "$GITHUB_OUTPUT"
 
           git add -A
-          if git diff --cached --quiet; then
-            echo "result=nochange" >> "$GITHUB_OUTPUT"; exit 0
+          msg="Drive upload: ${FILE_NAME}"
+          if [ "${{ steps.an.outputs.mode }}" = "merge" ]; then
+            # ci/ingest-merge.sh left its merge as one commit on top: finish it
+            git -c user.name=kouta -c user.email=kobusan5000-cmyk@users.noreply.github.com commit -q --amend -m "$msg" -m "Base: ${{ steps.an.outputs.base }}"
+          else
+            if git diff --cached --quiet; then
+              echo "result=nochange" >> "$GITHUB_OUTPUT"; exit 0
+            fi
+            git -c user.name=kouta -c user.email=kobusan5000-cmyk@users.noreply.github.com commit -q -m "$msg"
           fi
-          git -c user.name=kouta -c user.email=kobusan5000-cmyk@users.noreply.github.com commit -q -m "Drive upload: ${FILE_NAME}"
-          git pull -q --rebase origin main
-          git push -q origin main
+          git pull -q --rebase origin "$TARGET"
+          git push -q origin "HEAD:$TARGET"
           sha=$(git rev-parse HEAD)
+
+          if [ "$TARGET" != "main" ]; then
+            echo "tag=test" >> "$GITHUB_OUTPUT"
+            echo "result=published" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           # Pushes made with GITHUB_TOKEN do not start other workflows, so start the build explicitly.
           gh workflow run build.yml --ref main
@@ -135,8 +181,19 @@ jobs:
             sleep 3
           done
           if [ -z "$run" ] || [ "$run" = "null" ]; then echo "::error::GitHub did not start a build."; exit 1; fi
-          gh run watch "$run" --exit-status --interval 5 > /dev/null
-          tag=$(gh release list --limit 1 --json tagName -q '.[0].tagName')
+          if ! gh run watch "$run" --exit-status --interval 5 > /dev/null; then
+            # The upload does not build: take it back off main, or every later merge would build on top of the broken version.
+            echo "::error::The build failed (the game has errors). The upload is being reverted; testers keep the previous version."
+            git pull -q --rebase origin main || true
+            if git -c user.name=kouta -c user.email=kobusan5000-cmyk@users.noreply.github.com revert --no-edit "$sha" > /dev/null 2>&1; then
+              git push -q origin HEAD:main || true
+            else
+              git revert --abort 2>/dev/null || true
+              echo "::warning::Could not revert $sha automatically."
+            fi
+            exit 1
+          fi
+          tag=$(gh api "repos/${{ github.repository }}/releases/latest" -q .tag_name)
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "result=published" >> "$GITHUB_OUTPUT"
 
@@ -147,6 +204,7 @@ jobs:
           TAG: ${{ steps.pub.outputs.tag }}
           NOTES: ${{ steps.pub.outputs.notes }}
           HELD_MSG: ${{ steps.an.outputs.msg }}
+          MODE: ${{ steps.an.outputs.mode }}
         run: |
           case "$R" in
             published) text="【公開】 ${TAG} をテスターに配信しました"$'\n'"${NOTES}" ;;
