@@ -15,6 +15,7 @@ $doneDir = Join-Path $DriveDir "取り込み済み"
 $failDir = Join-Path $DriveDir "失敗"
 $holdDir = Join-Path $DriveDir "要確認"
 $oldDir = Join-Path $DriveDir "古いZIP"
+$inboxDir = Join-Path $DriveDir "ここにZIPを入れる"
 $statusFile = Join-Path $DriveDir "配信状況.txt"
 $logFile = Join-Path $PSScriptRoot "publish.log"
 $protectedDirs = @(".git", ".github", ".godot", "ci", "tools", "docs")
@@ -91,9 +92,9 @@ function Get-TopBlock([string]$file) {
 	return ($lines -join "`n")
 }
 
-# Puts a ZIP of the current project into Drive "最新版" so the other developer always starts from the newest copy.
+# Puts a ZIP of the current project into Drive "最新版(読むだけ)" so the other developer always starts from the newest copy.
 function Update-LatestZip {
-	$latestDir = Join-Path $DriveDir "最新版"
+	$latestDir = Join-Path $DriveDir "最新版(読むだけ)"
 	if (-not (Test-Path $latestDir)) { New-Item -ItemType Directory $latestDir | Out-Null }
 	$stage = Join-Path $env:TEMP ("dopagaki_latest_" + [guid]::NewGuid().ToString("N"))
 	$inner = Join-Path $stage "DOPAGAKI"
@@ -125,7 +126,9 @@ if (-not (Test-Path $DriveDir)) {
 	Fail "Drive folder not found: $DriveDir  (Is Google Drive running?)"
 }
 if ($RefreshLatestOnly) { Update-LatestZip; exit 0 }
-$zips = @(Get-ChildItem -LiteralPath $DriveDir -Filter *.zip -File | Sort-Object LastWriteTime -Descending)
+# Uploads go into the inbox folder; ZIPs dropped directly into the Drive folder are still accepted.
+if (-not (Test-Path -LiteralPath $inboxDir)) { New-Item -ItemType Directory $inboxDir | Out-Null }
+$zips = @(@(Get-ChildItem -LiteralPath $inboxDir -Filter *.zip -File) + @(Get-ChildItem -LiteralPath $DriveDir -Filter *.zip -File) | Sort-Object LastWriteTime -Descending)
 if ($zips.Count -eq 0) {
 	if (-not $Auto) { Write-Host "No ZIP file in the Drive folder. Nothing to publish." }
 	exit 0
