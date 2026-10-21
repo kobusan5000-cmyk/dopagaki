@@ -3719,6 +3719,3 @@ func _draw() -> void:
 	draw_rect(Rect2(player + Vector2(-38, -62), Vector2(76, 10)), Color("d2e6e9"), false, 1.0)
 	if state != "playing":
 		draw_rect(ARENA, Color(0.02, 0.04, 0.09, 0.67))
-
-func broken_on_purpose(:
-	pass
