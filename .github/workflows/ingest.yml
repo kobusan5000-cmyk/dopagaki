@@ -1,0 +1,165 @@
+name: ingest
+
+# Cloud version of tools/publish.ps1: takes a project ZIP from the shared Google Drive folder,
+# merges it into the repo, pushes, and runs the build. Started by the Apps Script in tools/cloud/
+# (works while the PC is off). The final "RESULT: ..." step tells the Apps Script what to do with the ZIP.
+on:
+  workflow_dispatch:
+    inputs:
+      file_id:
+        description: "Google Drive file id of the ZIP"
+        required: true
+      file_name:
+        description: "File name of the ZIP (for messages)"
+        required: true
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: ingest
+  cancel-in-progress: false
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  FILE_ID: ${{ inputs.file_id }}
+  FILE_NAME: ${{ inputs.file_name }}
+  DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download the ZIP from Drive
+        run: |
+          if ! [[ "$FILE_ID" =~ ^[A-Za-z0-9_-]+$ ]]; then echo "::error::bad file id"; exit 1; fi
+          curl -fsSL -o "$RUNNER_TEMP/in.zip" "https://drive.usercontent.google.com/download?id=${FILE_ID}&export=download&confirm=t"
+          unzip -tq "$RUNNER_TEMP/in.zip" > /dev/null || { echo "::error::The download is not a valid ZIP (is the file shared by link?)"; exit 1; }
+          ls -l "$RUNNER_TEMP/in.zip"
+
+      - name: Compare with the current version
+        id: an
+        run: |
+          set -e
+          mkdir -p "$RUNNER_TEMP/in" && unzip -q "$RUNNER_TEMP/in.zip" -d "$RUNNER_TEMP/in"
+          mapfile -t projects < <(find "$RUNNER_TEMP/in" -name project.godot -not -path '*/.godot/*' -not -path '*/tools/*')
+          if [ "${#projects[@]}" -eq 0 ]; then echo "::error::project.godot was not found inside the ZIP."; exit 1; fi
+          if [ "${#projects[@]}" -gt 1 ]; then echo "::error::The ZIP contains more than one project.godot (nested projects?)."; exit 1; fi
+          src=$(dirname "${projects[0]}")
+          echo "$src" > "$RUNNER_TEMP/src.txt"
+          # Line endings must not count as changes
+          find "$src" -type f \( -name '*.gd' -o -name '*.tscn' -o -name '*.tres' -o -name '*.txt' -o -name '*.godot' -o -name '*.cfg' -o -name '*.gdshader' \) -exec sed -i 's/\r$//' {} +
+
+          cat > "$RUNNER_TEMP/excl.txt" <<'EOF'
+          /.git
+          /.github
+          /.godot
+          /ci
+          /tools
+          /docs
+          /README.md
+          /.gitignore
+          /export_presets.cfg
+          EOF
+          sed -i 's/^ *//' "$RUNNER_TEMP/excl.txt"
+          rsync -rcn --delete --itemize-changes --exclude-from="$RUNNER_TEMP/excl.txt" "$src/" ./ | grep -v '/$' > "$RUNNER_TEMP/diff.txt" || true
+          cat "$RUNNER_TEMP/diff.txt"
+          added=$(grep -c '^>f+++++++++' "$RUNNER_TEMP/diff.txt" || true)
+          removed=$(grep -c '^\*deleting' "$RUNNER_TEMP/diff.txt" || true)
+          total=$(wc -l < "$RUNNER_TEMP/diff.txt")
+          suspicious=$(grep '^\*deleting' "$RUNNER_TEMP/diff.txt" | grep -vE '\.(import|uid)$' || true)
+          echo "added=$added removed=$removed total=$total"
+          if [ "$total" -eq 0 ]; then
+            echo "result=nochange" >> "$GITHUB_OUTPUT"
+          elif [ -n "$suspicious" ]; then
+            n=$(echo "$suspicious" | wc -l)
+            echo "result=held" >> "$GITHUB_OUTPUT"
+            echo "msg=${FILE_NAME} は ${n} 個のファイルを削除する内容のため、公開を保留しました" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=go" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Merge, push and build
+        id: pub
+        if: steps.an.outputs.result == 'go'
+        run: |
+          set -e
+          src=$(cat "$RUNNER_TEMP/src.txt")
+          top_block() { tr -d '\r' < "$1" | sed '1s/^\xEF\xBB\xBF//' | awk 'NF==0 { if (n) exit; else next } { n=1; print }'; }
+
+          # Per-version notes from the other developer: use the newest one as release notes when it is not on top of CHANGELOG.txt.
+          prepend=""
+          newest=$(ls "$src"/CHANGELOG_v*.txt 2>/dev/null | sed -E 's#.*/CHANGELOG_v(.*)\.txt#\1 &#' | sort -V | tail -1 | cut -d' ' -f2- || true)
+          if [ -n "$newest" ]; then
+            lines=$(tr -d '\r' < "$newest" | sed '1s/^\xEF\xBB\xBF//' | awk 'NF>0' | head -25)
+            first=$(echo "$lines" | head -1)
+            cur=""; [ -f "$src/CHANGELOG.txt" ] && cur=$(top_block "$src/CHANGELOG.txt")
+            if [ -n "$first" ] && [[ "$cur" != "$first"* ]]; then prepend="$lines"; fi
+          fi
+
+          rsync -a --checksum --delete --exclude-from="$RUNNER_TEMP/excl.txt" "$src/" ./
+          if [ -n "$prepend" ]; then
+            { printf '%s\n\n' "$prepend"; cat CHANGELOG.txt 2>/dev/null || true; } > "$RUNNER_TEMP/cl.txt"
+            mv "$RUNNER_TEMP/cl.txt" CHANGELOG.txt
+          fi
+          notes=$(top_block CHANGELOG.txt | head -8)
+          { echo "notes<<EOF"; echo "$notes"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+
+          git add -A
+          if git diff --cached --quiet; then
+            echo "result=nochange" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          git -c user.name=kouta -c user.email=kobusan5000-cmyk@users.noreply.github.com commit -q -m "Drive upload: ${FILE_NAME}"
+          git pull -q --rebase origin main
+          git push -q origin main
+          sha=$(git rev-parse HEAD)
+
+          # Pushes made with GITHUB_TOKEN do not start other workflows, so start the build explicitly.
+          gh workflow run build.yml --ref main
+          run=""
+          for i in $(seq 1 60); do
+            run=$(gh run list --workflow build.yml --event workflow_dispatch --limit 10 --json databaseId,headSha -q "map(select(.headSha==\"$sha\"))[0].databaseId" || true)
+            [ -n "$run" ] && [ "$run" != "null" ] && break
+            sleep 3
+          done
+          if [ -z "$run" ] || [ "$run" = "null" ]; then echo "::error::GitHub did not start a build."; exit 1; fi
+          gh run watch "$run" --exit-status --interval 5 > /dev/null
+          tag=$(gh release list --limit 1 --json tagName -q '.[0].tagName')
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "result=published" >> "$GITHUB_OUTPUT"
+
+      - name: Tell Discord (optional)
+        if: always() && env.DISCORD_WEBHOOK != ''
+        env:
+          R: ${{ steps.pub.outputs.result || steps.an.outputs.result }}
+          TAG: ${{ steps.pub.outputs.tag }}
+          NOTES: ${{ steps.pub.outputs.notes }}
+          HELD_MSG: ${{ steps.an.outputs.msg }}
+        run: |
+          case "$R" in
+            published) text="【公開】 ${TAG} をテスターに配信しました"$'\n'"${NOTES}" ;;
+            held)      text="【要確認】 ${HELD_MSG}" ;;
+            nochange)  text="" ;;
+            *)         text="【要確認】 配信に失敗しました: ${FILE_NAME}" ;;
+          esac
+          [ -z "$text" ] && exit 0
+          jq -n --arg c "${text:0:1900}" '{username:"DOPAGAKI", content:$c}' | curl -fsS -H 'Content-Type: application/json' -d @- "$DISCORD_WEBHOOK" || true
+
+      # The Apps Script reads which of these steps ran (conclusion "success") to decide where to move the ZIP.
+      - name: "RESULT: published"
+        if: steps.pub.outputs.result == 'published'
+        run: echo "published ${{ steps.pub.outputs.tag }}"
+      - name: "RESULT: nochange"
+        if: steps.an.outputs.result == 'nochange' || steps.pub.outputs.result == 'nochange'
+        run: echo "nochange"
+      - name: "RESULT: held"
+        if: steps.an.outputs.result == 'held'
+        run: echo "held"
+      - name: "RESULT: failed"
+        if: failure()
+        run: echo "failed"
