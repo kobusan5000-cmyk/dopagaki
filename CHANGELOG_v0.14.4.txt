@@ -1,4 +1,5 @@
-DOPAGAKI v0.14.4 — 体力表示を見やすく
-・主人公・ミントの体力表示の文字を黒に変更（白い縁取り付きで、緑・黄・赤の体力ゲージ上でも読みやすい）
-※オンライン4人プレイ・セーブ機能は未実装
-
+DOPAGAKI v0.14.4
+- Rest BGM now uses kk_celtic15_loop.ogg
+- Wave/combat BGM now uses kk_celtic5_loop.ogg
+- Cooking screen now shows illustrated meal icons and clearer recipe rows.
+- Bag/inventory UI shows a bag icon and empty armor slots keep visible part icons.
