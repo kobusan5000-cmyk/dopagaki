@@ -1471,6 +1471,8 @@ func item_icon(item: Dictionary) -> Texture2D:
 		return ARMOR_ICONS[clampi(int(item.get("slot", 0)), 0, ARMOR_ICONS.size() - 1)]
 	if int(item.get("kind", 0)) == 2:
 		return sword_art_for_rarity(int(item.get("rarity", 0)))
+	if int(item.get("kind", 0)) == 3:
+		return greatsword_art_for_rarity(int(item.get("rarity", 0)))
 	return WEAPON_ICONS[clampi(int(item.get("kind", 0)), 0, WEAPON_ICONS.size() - 1)]
 
 func toggle_merchant() -> void:
@@ -4293,7 +4295,7 @@ func _draw() -> void:
 			2:
 				draw_equipped_sword(player_center + Vector2(0, walk_bob - jump_height), rarity, fighting)
 			3:
-				draw_line(player + Vector2(0, 0), player + Vector2.RIGHT.rotated(aim_angle) * 65.0, color, 9.0)
+				draw_equipped_greatsword(player_center + Vector2(0, walk_bob - jump_height), rarity, fighting)
 			7:
 				var tip: Vector2 = player + Vector2.RIGHT.rotated(aim_angle) * (61.0 if fighting else 45.0)
 				draw_line(player + Vector2(0, -7), tip, Color("abb2cc"), 4.0)
