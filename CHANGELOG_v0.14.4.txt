@@ -1,0 +1,5 @@
+DOPAGAKI v0.14.4
+- Rest BGM now uses kk_celtic15_loop.ogg
+- Wave/combat BGM now uses kk_celtic5_loop.ogg
+- Cooking screen now shows illustrated meal icons and clearer recipe rows.
+- Bag/inventory UI shows a bag icon and empty armor slots keep visible part icons.
