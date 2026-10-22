@@ -811,6 +811,32 @@ func build_ui() -> void:
 	close_button.pressed.connect(toggle_inventory)
 	inv_box.add_child(close_button)
 	inventory_panel.hide()
+
+	# Controls reference: its own screen, opened with [C], instead of a long line on the HUD.
+	controls_panel = make_panel(Vector2(256, 70), Vector2(640, 500), Color("8fd3a6"))
+	layer.add_child(controls_panel)
+	var ctl_padding: MarginContainer = controls_panel.get_child(0)
+	ctl_padding.add_theme_constant_override("margin_top", 14)
+	ctl_padding.add_theme_constant_override("margin_bottom", 14)
+	var ctl_box := VBoxContainer.new()
+	ctl_box.add_theme_constant_override("separation", 5)
+	ctl_padding.add_child(ctl_box)
+	ctl_box.add_child(make_label("操作方法", 26, Color("b8ffd0"), true))
+	var ctl_grid := GridContainer.new()
+	ctl_grid.columns = 2
+	ctl_grid.add_theme_constant_override("h_separation", 22)
+	ctl_grid.add_theme_constant_override("v_separation", 4)
+	ctl_box.add_child(ctl_grid)
+	for row in CONTROLS_HELP:
+		var key_label := make_label(row[0], 16, Color("ffe69c"))
+		key_label.custom_minimum_size = Vector2(150, 0)
+		ctl_grid.add_child(key_label)
+		ctl_grid.add_child(make_label(row[1], 16, Color("dbe9f7")))
+	var ctl_close := make_button("閉じる [C / Esc]", Color("8fd3a6"), Vector2(0, 34))
+	ctl_close.add_theme_font_size_override("font_size", 14)
+	ctl_close.pressed.connect(toggle_controls)
+	ctl_box.add_child(ctl_close)
+	controls_panel.hide()
 	# Persistent gear chest. Stored equipment survives deaths and F5 relaunches.
 	stash_panel = make_panel(Vector2(218, 35), Vector2(710, 565), Color("cba977"))
 	layer.add_child(stash_panel)
@@ -1678,6 +1704,12 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			reset_game()
 		return
 	if state == "playing":
+		if controls_open:
+			if event.keycode == KEY_C or event.keycode == KEY_ESCAPE:
+				toggle_controls()
+			return
+		if event.keycode == KEY_C and not (rabbit_menu_open or merchant_open or slot_open or cooking_open or inventory_open):
+			toggle_controls()
 		if upgrade_open:
 			if event.keycode == KEY_P or event.keycode == KEY_ESCAPE:
 				toggle_upgrade_menu()
@@ -2294,6 +2326,8 @@ func companion_take_damage(amount: float) -> void:
 func player_died() -> void:
 	state = "dead"
 	dead_panel.show()
+	controls_open = false
+	controls_panel.hide()
 	dead_label.text = "Wave %d  討伐 %d  レベル%d → 次回LV1\n持ち物・装備は失うが倉庫の%d個は保存済み" % [wave, kills, level, stash_items.size()]
 
 func generate_scenery() -> void:
@@ -2671,8 +2705,8 @@ func update_projectiles(delta: float) -> void:
 						exhausted = true
 						break
 		if not exhausted and str(bullet.get("owner", "")) == "hero" and wanderer_hp > 0.0 and not is_in_safe_camp(wanderer) and wanderer.distance_to(bullet["pos"]) <= 25.0 + float(bullet["radius"]):
-		damage_wanderer(float(bullet["dmg"]))
-		exhausted = true
+			damage_wanderer(float(bullet["dmg"]))
+			exhausted = true
 		if exhausted:
 			projectiles.remove_at(i)
 
@@ -3082,7 +3116,7 @@ func refresh_inventory_ui() -> void:
 		inventory_buttons[i].add_theme_color_override("font_color", c)
 	for i in range(ARMOR_SLOTS.size()):
 		var item: Dictionary = armor_equipped[i]
-		armor_buttons[i].text = "%s: %s" % [ARMOR_SLOTS[i], "-- 空き --" if item.is_empty() else item_description(item)]
+		fit_item_button(armor_buttons[i], "%s: %s" % [ARMOR_SLOTS[i], "-- 空き --" if item.is_empty() else item_description(item)], 414.0)
 		armor_buttons[i].icon = ARMOR_ICONS[i] if item.is_empty() else item_icon(item)
 		armor_buttons[i].expand_icon = true
 		armor_buttons[i].disabled = item.is_empty()
@@ -3504,7 +3538,7 @@ func update_hud() -> void:
 	mp_text.text += effects
 	skill_text.text = "[Q] %s %s" % [SKILL_NAMES[class_id], ("強化" if level >= 10 else "習得済") if level >= 5 else "LV5で習得"]
 	var guard_status: String = "パリィ受付!" if guard_active and guard_parry_clock > 0.0 else ("ガード中" if guard_active else ("ガード待ち %.1f秒" % guard_restart_clock if guard_restart_clock > 0.0 else "ガード可"))
-	help.text = "WASD移動 左クリック攻撃 右クリックガード[%s]  SPACE回避 E操作 Iバッグ P能力 Tちゅぶら" % guard_status
+	help.text = "WASD移動 左クリック攻撃 右クリックガード[%s]  SPACE回避 E操作 Iバッグ P能力 Tちゅぶら C操作方法" % guard_status
 	hotbar_container.visible = state == "playing" or state == "upgrade"
 	hotbar_currency.visible = state == "playing" or state == "upgrade"
 
