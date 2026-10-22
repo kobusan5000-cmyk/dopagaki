@@ -83,6 +83,17 @@ const SWORD_RARITY_ART := [
 	preload("res://assets/visual_v016/sword_legendary_polished.png")
 ]
 
+# Greatsword (kind=3) tier art. MYTHIC shares the legendary sprite, like the sword.
+const GREATSWORD_RARITY_ART := [
+	preload("res://assets/visual_v016/greatsword_common.png"),
+	preload("res://assets/visual_v016/greatsword_rare.png"),
+	preload("res://assets/visual_v016/greatsword_epic.png"),
+	preload("res://assets/visual_v016/greatsword_legendary.png")
+]
+
+func greatsword_art_for_rarity(rarity: int) -> Texture2D:
+	return GREATSWORD_RARITY_ART[clampi(rarity, 0, 3)]
+
 func sword_art_for_rarity(rarity: int) -> Texture2D:
 	# Explicit mapping so EPIC always resolves to the custom purple sword art.
 	match clampi(rarity, 0, 4):
@@ -3713,6 +3724,27 @@ func draw_equipped_sword(sword_origin: Vector2, rarity: int, attacking: bool) ->
 		draw_line(hand_pos, blade_world, Color(rarity_tint, 0.16), 15.0)
 	if rarity == 4:
 		draw_circle(blade_world, 28.0, Color("ff91d9", 0.18))
+	draw_set_transform(hand_pos, sword_rotation, Vector2(sword_scale, sword_scale))
+	draw_texture_rect(sword_art, Rect2(Vector2(-sword_size.x * 0.5, -sword_size.y + 5.0), sword_size), false)
+	draw_set_transform(Vector2.ZERO)
+
+func draw_equipped_greatsword(sword_origin: Vector2, rarity: int, attacking: bool) -> void:
+	# Same pose as draw_equipped_sword with the greatsword art, a little larger.
+	var sword_art: Texture2D = greatsword_art_for_rarity(rarity)
+	var attack_progress: float = clampf(1.0 - attack_clock / maxf(attack_duration, 0.01), 0.0, 1.0)
+	var swing: float = (attack_progress - 0.5) * 1.2 if attacking else 0.0
+	var sword_rotation: float = aim_angle + PI * 0.5 + swing
+	var hand_pos: Vector2 = sword_origin + Vector2.RIGHT.rotated(aim_angle) * 22.0
+	var sword_size: Vector2 = sword_art.get_size()
+	var sword_scale: float = 1.9
+	var rarity_tint: Color = RARITY_COLORS[rarity]
+	var blade_world: Vector2 = hand_pos + Vector2.RIGHT.rotated(aim_angle) * 52.0
+	if rarity >= 1:
+		draw_circle(blade_world, 27.0 + 2.0 * sin(elapsed * 5.0), Color(rarity_tint, 0.10 if rarity < 3 else 0.24))
+	if attacking:
+		draw_line(hand_pos, blade_world, Color(rarity_tint, 0.16), 19.0)
+	if rarity == 4:
+		draw_circle(blade_world, 32.0, Color("ff91d9", 0.18))
 	draw_set_transform(hand_pos, sword_rotation, Vector2(sword_scale, sword_scale))
 	draw_texture_rect(sword_art, Rect2(Vector2(-sword_size.x * 0.5, -sword_size.y + 5.0), sword_size), false)
 	draw_set_transform(Vector2.ZERO)
