@@ -77,10 +77,10 @@ const WEAPON_ICONS := [
 # Original pixel art provided by the game creator. Sword kind=2 uses tier-specific art.
 # MYTHIC currently shares the legendary sprite with a unique magenta aura.
 const SWORD_RARITY_ART := [
-	preload("res://assets/item_icons/sword_common.png"),
-	preload("res://assets/item_icons/sword_rare.png"),
-	preload("res://assets/item_icons/sword_epic.png"),
-	preload("res://assets/item_icons/sword_legendary.png")
+	preload("res://assets/visual_v016/sword_common_polished.png"),
+	preload("res://assets/visual_v016/sword_rare_polished.png"),
+	preload("res://assets/visual_v016/sword_epic_polished.png"),
+	preload("res://assets/visual_v016/sword_legendary_polished.png")
 ]
 
 func sword_art_for_rarity(rarity: int) -> Texture2D:
@@ -124,6 +124,15 @@ const MEAL_ICONS := [
 	preload("res://assets/ui_icons/juice.png"),
 	preload("res://assets/ui_icons/parfait.png")
 ]
+const FOREST_FLOOR: Texture2D = preload("res://assets/visual_v016/forest_floor.png")
+const CAMP_FLOOR: Texture2D = preload("res://assets/visual_v016/camp_cobblestone.png")
+const CAMP_LANTERN: Texture2D = preload("res://assets/visual_v016/camp_lantern.png")
+const LOOT_FRAME: Texture2D = preload("res://assets/visual_v016/loot_frame.png")
+const STASH_ART: Texture2D = preload("res://assets/visual_v016/stash_chest.png")
+const SLOT_ART: Texture2D = preload("res://assets/visual_v016/slot_machine.png")
+const COOK_ART: Texture2D = preload("res://assets/visual_v016/campfire_pot.png")
+const MERCHANT_ART: Texture2D = preload("res://assets/visual_v016/merchant_stall.png")
+const VISUALS_REVISION := "v0.16 見た目強化"
 const RARITY_COLORS := [Color("d0e2f1"), Color("59cdff"), Color("d493ff"), Color("ffd568"), Color("ff91d9")]
 const RARITY_DAMAGE := [1.0, 1.38, 1.88, 2.85, 4.4]
 const RARITY_RATE := [1.0, 1.06, 1.13, 1.22, 1.33]
@@ -430,6 +439,7 @@ func make_style(fill: Color, border: Color, radius: int = 14) -> StyleBoxFlat:
 	style.border_color = border
 	style.set_border_width_all(2)
 	style.set_corner_radius_all(radius)
+	style.corner_detail = 7
 	return style
 
 func make_label(value: String, font_size: int, tint: Color, center: bool = false) -> Label:
@@ -446,7 +456,11 @@ func make_panel(pos: Vector2, min_size: Vector2, border: Color) -> PanelContaine
 	var panel := PanelContainer.new()
 	panel.position = pos
 	panel.custom_minimum_size = min_size
-	panel.add_theme_stylebox_override("panel", make_style(Color("111d31"), border))
+	var panel_style: StyleBoxFlat = make_style(Color("111827"), border, 13)
+	panel_style.shadow_size = 10
+	panel_style.shadow_color = Color(0.01, 0.02, 0.04, 0.65)
+	panel_style.content_margin_top = 1.0
+	panel.add_theme_stylebox_override("panel", panel_style)
 	var padding := MarginContainer.new()
 	padding.add_theme_constant_override("margin_left", 25)
 	padding.add_theme_constant_override("margin_right", 25)
@@ -462,9 +476,9 @@ func make_button(text_value: String, color: Color, min_size: Vector2) -> Button:
 	b.add_theme_font_override("font", ui_font)
 	b.add_theme_font_size_override("font_size", 19)
 	b.add_theme_color_override("font_color", Color("f4faff"))
-	b.add_theme_stylebox_override("normal", make_style(Color("21324c"), color, 9))
-	b.add_theme_stylebox_override("hover", make_style(Color("344a68"), Color.WHITE, 9))
-	b.add_theme_stylebox_override("pressed", make_style(Color("44627e"), color, 9))
+	b.add_theme_stylebox_override("normal", make_style(Color("203047"), color.darkened(0.18), 8))
+	b.add_theme_stylebox_override("hover", make_style(Color("344763"), color.lightened(0.22), 8))
+	b.add_theme_stylebox_override("pressed", make_style(Color("475775"), color, 8))
 	return b
 
 func make_health_bar(pos: Vector2, dims: Vector2, fill_color: Color) -> ProgressBar:
@@ -482,6 +496,16 @@ func make_health_bar(pos: Vector2, dims: Vector2, fill_color: Color) -> Progress
 func build_ui() -> void:
 	var layer := CanvasLayer.new()
 	add_child(layer)
+	var status_back := Panel.new()
+	status_back.position = Vector2.ZERO
+	status_back.size = Vector2(SIZE.x, 113.0)
+	status_back.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var status_style := make_style(Color(0.055, 0.078, 0.13, 0.88), Color(0.57, 0.46, 0.29, 0.60), 0)
+	status_style.border_width_top = 0
+	status_style.border_width_left = 0
+	status_style.border_width_right = 0
+	layer.add_child(status_back)
+	status_back.add_theme_stylebox_override("panel", status_style)
 	hud = make_label("", 15, Color("eaf6ff"))
 	hud.position = Vector2(48, 8)
 	layer.add_child(hud)
@@ -551,7 +575,7 @@ func build_ui() -> void:
 	choose_box.add_theme_constant_override("separation", 7)
 	choose_panel.get_child(0).add_child(choose_box)
 	choose_box.add_child(make_label("DOPAGAKI  /  キャラクター作成", 29, Color("7de9f0"), true))
-	choose_box.add_child(make_label("v0.14.2  |  ガード・ジャストパリィ・黒うさぎ『ちゅぶら』", 14, Color("d0dcf3"), true))
+	choose_box.add_child(make_label("森の遺跡・ビジュアル強化  |  ガード・パリィ・黒うさぎ『ちゅぶら』", 14, Color("d0dcf3"), true))
 	var name_row := HBoxContainer.new()
 	name_row.add_theme_constant_override("separation", 13)
 	choose_box.add_child(name_row)
@@ -591,22 +615,40 @@ func build_ui() -> void:
 	var cook_box := VBoxContainer.new()
 	cook_box.add_theme_constant_override("separation", 5)
 	cooking_panel.get_child(0).add_child(cook_box)
-	cook_box.add_child(make_label("キャンプの料理", 28, Color("ffd5a0"), true))
+	var cook_header := HBoxContainer.new()
+	cook_header.add_theme_constant_override("separation", 10)
+	var cook_symbol := TextureRect.new()
+	cook_symbol.texture = preload("res://assets/ui_icons/cookpot.png")
+	cook_symbol.custom_minimum_size = Vector2(32, 32)
+	cook_symbol.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	cook_symbol.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	cook_symbol.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	cook_header.add_child(cook_symbol)
+	cook_header.add_child(make_label("キャンプの料理", 28, Color("ffd5a0"), true))
+	cook_box.add_child(cook_header)
 	cooking_info = make_label("", 18, Color("b6e8ce"), true)
 	cook_box.add_child(cooking_info)
 	var soup := make_button("[1] ニンジンシチュー（ニンジン2）  HP+40 [H]", Color("ffd39f"), Vector2(461, 50))
+	soup.icon = preload("res://assets/ui_icons/stew.png")
+	soup.expand_icon = true
 	soup.pressed.connect(cook_recipe.bind(0))
 	cook_box.add_child(soup)
 	var broth := make_button("[2] ハンタースープ（ニンジン1・キノコ1）\nHP+25 / 30秒間移動速度アップ [J]", Color("ffd39f"), Vector2(461, 70))
 	broth.add_theme_font_size_override("font_size", 15)
+	broth.icon = preload("res://assets/ui_icons/soup.png")
+	broth.expand_icon = true
 	broth.pressed.connect(cook_recipe.bind(1))
 	cook_box.add_child(broth)
 	var melon_button := make_button("[3] メロンジュース（メロン1）  HP+30 / MP+25 [K]", Color("c1e88d"), Vector2(461, 43))
 	melon_button.add_theme_font_size_override("font_size", 15)
+	melon_button.icon = preload("res://assets/ui_icons/juice.png")
+	melon_button.expand_icon = true
 	melon_button.pressed.connect(cook_recipe.bind(2))
 	cook_box.add_child(melon_button)
 	var watermelon_button := make_button("[4] スイカパフェ（スイカ1）  HP+60 [L]", Color("a3e7c4"), Vector2(461, 43))
 	watermelon_button.add_theme_font_size_override("font_size", 15)
+	watermelon_button.icon = preload("res://assets/ui_icons/parfait.png")
+	watermelon_button.expand_icon = true
 	watermelon_button.pressed.connect(cook_recipe.bind(3))
 	cook_box.add_child(watermelon_button)
 	cook_box.add_child(make_label("完成した料理をキャンプの展示台に飾れるよ！", 15, Color("a8ffe1"), true))
@@ -3626,9 +3668,10 @@ func draw_loot(d: Dictionary) -> void:
 	var center: Vector2 = pos + Vector2(0, -sin(phase_value) * 4.0)
 	var icon: Texture2D = item_icon(d)
 	draw_circle(pos + Vector2(0, 16), 20, Color(0, 0, 0, 0.32))
-	draw_circle(center, 25.0 + sin(phase_value * 2.0) * 2.0, Color(c, 0.22))
-	draw_rect(Rect2(center - Vector2(22, 22), Vector2(44, 44)), Color("142234"))
-	draw_rect(Rect2(center - Vector2(22, 22), Vector2(44, 44)), c, false, 3.0)
+	draw_circle(center, 33.0 + sin(phase_value * 2.0) * 2.0, Color(c, 0.10 if rarity < 3 else 0.22))
+	draw_circle(center + Vector2(0, 18), 25.0, Color(c, 0.12))
+	draw_texture_rect(LOOT_FRAME, Rect2(center - Vector2(32, 32), Vector2(64, 64)), false)
+	draw_rect(Rect2(center - Vector2(26, 26), Vector2(52, 52)), Color(c, 0.16 if rarity < 3 else 0.34), false, 2.0)
 	# Preserve the original pixel-art proportions, especially the tall legendary sword.
 	var icon_size: Vector2 = icon.get_size()
 	var icon_scale: float = minf(42.0 / icon_size.x, 46.0 / icon_size.y)
@@ -3659,9 +3702,15 @@ func draw_equipped_sword(sword_origin: Vector2, rarity: int, attacking: bool) ->
 	var sword_rotation: float = aim_angle + PI * 0.5 + swing
 	var hand_pos: Vector2 = sword_origin + Vector2.RIGHT.rotated(aim_angle) * 22.0
 	var sword_size: Vector2 = sword_art.get_size()
-	var sword_scale: float = 2.35 if rarity >= 3 else 2.65
+	var sword_scale: float = 1.62 if rarity >= 3 else 1.73
+	var rarity_tint: Color = RARITY_COLORS[rarity]
+	var blade_world: Vector2 = hand_pos + Vector2.RIGHT.rotated(aim_angle) * 43.0
+	if rarity >= 1:
+		draw_circle(blade_world, 23.0 + 2.0 * sin(elapsed * 5.0), Color(rarity_tint, 0.10 if rarity < 3 else 0.24))
+	if attacking:
+		draw_line(hand_pos, blade_world, Color(rarity_tint, 0.16), 15.0)
 	if rarity == 4:
-		draw_circle(hand_pos + Vector2.RIGHT.rotated(aim_angle) * 28.0, 27.0, Color("ff91d9", 0.18))
+		draw_circle(blade_world, 28.0, Color("ff91d9", 0.18))
 	draw_set_transform(hand_pos, sword_rotation, Vector2(sword_scale, sword_scale))
 	draw_texture_rect(sword_art, Rect2(Vector2(-sword_size.x * 0.5, -sword_size.y + 5.0), sword_size), false)
 	draw_set_transform(Vector2.ZERO)
@@ -3702,17 +3751,9 @@ func draw_revive_shrine() -> void:
 
 func draw_slot_machine() -> void:
 	var c: Vector2 = SLOT_POS
-	draw_circle(c + Vector2(0, 24), 42, Color(0, 0, 0, 0.35))
-	draw_rect(Rect2(c + Vector2(-36, -45), Vector2(72, 77)), Color("17283c"))
-	draw_rect(Rect2(c + Vector2(-36, -45), Vector2(72, 77)), Color("ffd276"), false, 4.0)
-	draw_rect(Rect2(c + Vector2(-30, -36), Vector2(60, 17)), Color("ed82ae"))
-	draw_string(ui_font, c + Vector2(-27, -23), "SLOT", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color("fff6d9"))
-	for i in range(3):
-		draw_rect(Rect2(c + Vector2(-27 + i * 19, -13), Vector2(16, 25)), Color("fff1d3"))
-		draw_string(ui_font, c + Vector2(-25 + i * 19, 5), "7", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color("d95a86"))
-	draw_line(c + Vector2(39, -18), c + Vector2(48, -30), Color("b7d6e4"), 5.0)
-	draw_circle(c + Vector2(48, -34), 7, Color("ff778b"))
-	draw_string(ui_font, c + Vector2(-65, 61), "スロット [E] 25G", HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color("ffe2a0"))
+	draw_circle(c + Vector2(0, -20), 76.0, Color("eac578", 0.065))
+	draw_texture_rect(SLOT_ART, Rect2(c - Vector2(55.0, 99.0), Vector2(110.0, 146.0)), false)
+	draw_string(ui_font, c + Vector2(-62, 67), "スロット [E] 25G", HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color("ffe2a0"))
 
 func draw_crop_seed(seed_drop: Dictionary) -> void:
 	var p: Vector2 = seed_drop["pos"]
@@ -3726,23 +3767,9 @@ func draw_crop_seed(seed_drop: Dictionary) -> void:
 
 func draw_merchant() -> void:
 	var p: Vector2 = MERCHANT_POS
-	# Fantasy merchant stall and an original small hooded trader silhouette.
-	draw_circle(p + Vector2(0, 24), 58.0, Color(0, 0, 0, 0.28))
-	draw_rect(Rect2(p + Vector2(-58, -30), Vector2(116, 71)), Color("4c3a49"))
-	draw_rect(Rect2(p + Vector2(-58, -30), Vector2(116, 71)), Color("c3d7a2"), false, 4.0)
-	draw_colored_polygon(PackedVector2Array([p + Vector2(-72, -29), p + Vector2(0, -92), p + Vector2(72, -29)]), Color("426f72"))
-	draw_line(p + Vector2(-72, -29), p + Vector2(0, -92), Color("d5f4c8"), 4.0)
-	draw_line(p + Vector2(0, -92), p + Vector2(72, -29), Color("d5f4c8"), 4.0)
-	draw_circle(p + Vector2(0, -5), 21.0, Color("b7a8df"))
-	draw_circle(p + Vector2(0, -17), 15.0, Color("f6d5ad"))
-	draw_colored_polygon(PackedVector2Array([p + Vector2(-24, -16), p + Vector2(0, -50), p + Vector2(24, -16)]), Color("5d468b"))
-	draw_circle(p + Vector2(-5, -18), 2.0, Color("273246"))
-	draw_circle(p + Vector2(5, -18), 2.0, Color("273246"))
-	for i in range(3):
-		draw_circle(p + Vector2(-35 + 35 * i, 26), 9.0, RARITY_COLORS[mini(4, i + 1)])
-	draw_string(ui_font, p + Vector2(-85, -110), "旅の商人 ルーン [E]", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color("d8ffb9"))
-	draw_arc(p, 105.0, 0.0, TAU, 45, Color("c6f7ba", 0.18), 2.0)
-
+	draw_circle(p + Vector2(0, 20), 108.0, Color("9ddbb1", 0.045))
+	draw_texture_rect(MERCHANT_ART, Rect2(p - Vector2(83.0, 99.0), Vector2(166.0, 159.0)), false)
+	draw_string(ui_font, p + Vector2(-85, -114), "旅の商人 ルーン [E]", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color("d8ffb9"))
 
 func draw_farm_and_kitchen() -> void:
 	# All coordinates are in world-space. Farm plots work without inventories or UI scenes.
@@ -3770,13 +3797,11 @@ func draw_farm_and_kitchen() -> void:
 				draw_arc(center, 34, 0.0, TAU, 24, Color("ffdd8e"), 2.0)
 	for station in CAMP_STATIONS:
 		var f: Vector2 = station
-		draw_circle(f + Vector2(0, 11), 28.0, Color("101821"))
-		for k in range(9):
-			var a := TAU * float(k) / 9.0
-			draw_circle(f + Vector2.RIGHT.rotated(a) * 21.0, 7.0, Color("87949a"))
-		draw_colored_polygon(PackedVector2Array([f + Vector2(-13, 8), f + Vector2(-5, -24), f + Vector2(4, -10), f + Vector2(10, -29), f + Vector2(17, 11)]), Color("ff963e"))
-		draw_circle(f + Vector2(0, 3), 9.0, Color("ffeb9e"))
-		draw_string(ui_font, f + Vector2(-43, 49), "料理 [E]", HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color("ffdda4"))
+		var flame_glow: float = 1.0 + 0.08 * sin(elapsed * 7.4)
+		draw_circle(f + Vector2(0, 9), 85.0 * flame_glow, Color("ffc478", 0.042))
+		draw_circle(f + Vector2(0, 5), 45.0 * flame_glow, Color("ffb26d", 0.09))
+		draw_texture_rect(COOK_ART, Rect2(f - Vector2(62.0, 80.0), Vector2(124.0, 116.0)), false)
+		draw_string(ui_font, f + Vector2(-43, 55), "料理 [E]", HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color("ffdda4"))
 	draw_string(ui_font, Vector2(1390, 675), "農場 [E/F]", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color("b8f1ba"))
 	draw_string(ui_font, Vector2(2230, 1032), "農場 [E/F]", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color("b8f1ba"))
 	draw_string(ui_font, Vector2(1710, 1110), "森の畑 [E/F]", HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color("b8f1ba"))
@@ -4059,12 +4084,9 @@ func draw_wanderer() -> void:
 
 func draw_stash_chest() -> void:
 	var p: Vector2 = STASH_POS
-	draw_circle(p + Vector2(0, 19), 46.0, Color(0, 0, 0, 0.3))
-	draw_rect(Rect2(p + Vector2(-40, -26), Vector2(80, 54)), Color("77543b"))
-	draw_rect(Rect2(p + Vector2(-40, -26), Vector2(80, 54)), Color("f2d6a4"), false, 3.0)
-	draw_rect(Rect2(p + Vector2(-40, -26), Vector2(80, 17)), Color("ae8554"))
-	draw_rect(Rect2(p + Vector2(-6, -12), Vector2(12, 20)), Color("ffdd93"))
-	draw_string(ui_font, p + Vector2(-88, 55), "永続倉庫 [E]  /  生還可", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color("ffe5ae"))
+	draw_circle(p + Vector2(0, 16), 53.0, Color(0.0, 0.0, 0.0, 0.12))
+	draw_texture_rect(STASH_ART, Rect2(p - Vector2(56.0, 51.0), Vector2(112.0, 86.0)), false)
+	draw_string(ui_font, p + Vector2(-86, 58), "永続倉庫 [E]  /  生還可", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color("ffe5ae"))
 
 func draw_accessory(pos: Vector2) -> void:
 	var c := Color("ffdc81")
@@ -4079,41 +4101,55 @@ func draw_accessory(pos: Vector2) -> void:
 			var a := float(i) * TAU / 5.0 + elapsed * 1.4
 			draw_circle(pos + Vector2.RIGHT.rotated(a) * 43.0, 3.0, Color("a4dfff"))
 
-func _draw() -> void:
-	draw_rect(ARENA.grow(120.0), Color("0a1020"))
-	draw_rect(ARENA, Color("172c35"))
-	# A distant violet-blue arcane grove and teal moonlit clearing.
-	for i in range(7):
-		draw_circle(Vector2(2780, 700), 430.0 - float(i) * 55.0, Color("7d6cb8", 0.020))
-		draw_circle(Vector2(530, 1980), 370.0 - float(i) * 46.0, Color("62c4bb", 0.020))
-	# Subtle ground pattern, not item-like sparkles or crystals.
-	for x in range(int(ARENA.position.x) + 14, int(ARENA.end.x), 128):
-		draw_line(Vector2(x, ARENA.position.y), Vector2(x, ARENA.end.y), Color("284448", 0.12), 1.0)
-	for y in range(int(ARENA.position.y) + 12, int(ARENA.end.y), 128):
-		draw_line(Vector2(ARENA.position.x, y), Vector2(ARENA.end.x, y), Color("284448", 0.12), 1.0)
+func draw_fantasy_ground() -> void:
+	# Texture tiles only near the camera; unlike a full-screen image, this stays playable as the map expands.
+	draw_rect(ARENA.grow(120.0), Color("0b1420"))
+	var tile_size := 256.0
+	var left_tile := int(floor((player.x - 870.0) / tile_size))
+	var right_tile := int(ceil((player.x + 870.0) / tile_size))
+	var top_tile := int(floor((player.y - 560.0) / tile_size))
+	var bottom_tile := int(ceil((player.y + 560.0) / tile_size))
+	for tx in range(left_tile, right_tile + 1):
+		for ty in range(top_tile, bottom_tile + 1):
+			var dest := Rect2(float(tx) * tile_size, float(ty) * tile_size, tile_size, tile_size)
+			if dest.intersects(ARENA):
+				draw_texture_rect(FOREST_FLOOR, dest, false)
+	# Ground stays matte, so equipment and drop beams remain unmistakable.
 	for prop in scenery:
 		var p: Vector2 = prop["pos"]
 		if p.distance_to(player) > 850.0:
 			continue
 		var rad: float = 18.0 * float(prop["size"])
 		if int(prop["kind"]) == 0:
-			# Flat moss shrub, no item sparkle or glow.
-			draw_circle(p, rad + 4.0, Color("294b40", 0.80))
-			draw_circle(p + Vector2(-6, -4), rad * 0.66, Color("3c6752", 0.86))
+			draw_circle(p + Vector2(2, 7), rad + 5.0, Color("142d2d", 0.55))
+			draw_circle(p, rad + 1.0, Color("1d4439"))
+			for dx in [-8.0, 0.0, 8.0]:
+				draw_circle(p + Vector2(dx, -5.0 + absf(dx) * 0.13), rad * 0.49, Color("47745b", 0.83))
 		elif int(prop["kind"]) == 1:
-			# Plain, wide slate-colored stone.
-			draw_circle(p, rad * 0.82, Color("465b60", 0.82))
-			draw_circle(p + Vector2(-4, -3), rad * 0.38, Color("708185", 0.65))
+			var pts := PackedVector2Array([p + Vector2(-rad, rad * 0.3), p + Vector2(-rad * 0.58, -rad * 0.7), p + Vector2(rad * 0.25, -rad), p + Vector2(rad, -rad * 0.2), p + Vector2(rad * 0.65, rad * 0.55), p + Vector2(-rad * 0.3, rad * 0.75)])
+			draw_colored_polygon(pts, Color("415459"))
+			draw_line(p + Vector2(-rad * 0.48, -rad * 0.56), p + Vector2(rad * 0.18, -rad * 0.80), Color("79938b", 0.70), 3.0)
 		else:
-			# Low grasses that cannot be mistaken for collectible equipment.
-			for blade in range(3):
-				var px := float(blade - 1) * 6.0
-				draw_line(p + Vector2(px, 4), p + Vector2(px * 1.3, -8 - blade * 2), Color("3d7765", 0.70), 2.0)
+			for blade in range(5):
+				var px := float(blade - 2) * 4.0
+				draw_line(p + Vector2(px, 5), p + Vector2(px * 1.30, -10.0 - float(blade % 2) * 5.0), Color("639469", 0.70), 2.0)
 	for station in CAMP_STATIONS:
-		draw_circle(station, CAMP_RADIUS, Color("a3eac4", 0.11 if phase == "combat" else 0.19))
-		draw_arc(station, CAMP_RADIUS, 0.0, TAU, 80, Color("86ffb5", 0.85), 4.0)
-		draw_string(ui_font, station + Vector2(-77, -CAMP_RADIUS - 14), "安全キャンプ / 攻撃不可", HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color("b6ffd1"))
-	draw_rect(ARENA, Color("5d8798"), false, 5.0)
+		# Cobblestone, warm inlaid runes and cozy lamps instead of a flat green circle.
+		draw_texture_rect(CAMP_FLOOR, Rect2(station - Vector2(384.0, 384.0), Vector2(768.0, 768.0)), false)
+		draw_circle(station, CAMP_RADIUS, Color("a3eac4", 0.025 if phase == "combat" else 0.060))
+		draw_arc(station, CAMP_RADIUS - 14.0, 0.0, TAU, 80, Color("b8e8a7", 0.68), 3.0)
+		for i in range(8):
+			var angle := TAU * float(i) / 8.0 + PI / 8.0
+			var lp: Vector2 = station + Vector2.RIGHT.rotated(angle) * 304.0
+			var flicker: float = 0.90 + 0.10 * sin(elapsed * 8.0 + float(i))
+			draw_circle(lp + Vector2(0, -28), 53.0 * flicker, Color("ffd78a", 0.055))
+			draw_circle(lp + Vector2(0, -28), 26.0 * flicker, Color("ffc681", 0.09))
+			draw_texture_rect(CAMP_LANTERN, Rect2(lp - Vector2(20.0, 73.0), Vector2(40.0, 78.0)), false)
+		draw_string(ui_font, station + Vector2(-87, -CAMP_RADIUS - 15), "✦ 安全キャンプ / 武器使用不可", HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color("f5e2b6"))
+	draw_rect(ARENA, Color("637d82"), false, 4.0)
+
+func _draw() -> void:
+	draw_fantasy_ground()
 	draw_farm_and_kitchen()
 	draw_stash_chest()
 	draw_meal_displays()
