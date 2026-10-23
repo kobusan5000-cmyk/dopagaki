@@ -5,3 +5,5 @@ build/
 tools/publish.log
 tools/.latest-sha
 tools/cloud-ingest.on
+*.import
+*.uid

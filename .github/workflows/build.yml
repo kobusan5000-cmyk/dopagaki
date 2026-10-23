@@ -9,6 +9,8 @@ on:
       - "docs/**"
       - "tools/cloud/**"
       - "tools/make-zip.ps1"
+      - "tools/check.ps1"
+      - ".gitignore"
       - "tools/publish.ps1"
       - "ci/ingest-merge.sh"
       - "ci/test-ingest-merge.sh"

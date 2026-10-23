@@ -2,7 +2,8 @@
 
 ## Project
 - Godot game, almost everything in `scripts/main.gd` (~4400 lines). Public repo `kobusan5000-cmyk/dopagaki`, branch `main`.
-- Two developers: the owner (uses git) and dev2 "keita" (no git, delivers project ZIPs via Google Drive).
+- Developers: the owner (git), dev2 "keita" (GitHub account `keitakeitam2-creator`, Write access invited; works with git directly, see `docs/Gitで作業する.md`; the Drive ZIP flow still works), and `buchinu` (Write, invited).
+- Before any push of game changes run `powershell -File tools\check.ps1` (headless start, prints OK / NG). `*.import` / `*.uid` are in `.gitignore`.
 - Reply to the owner in Japanese, plain language.
 
 ## Delivery pipeline (all in the cloud, the PC does not need to be on)
