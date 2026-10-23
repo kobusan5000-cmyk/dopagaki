@@ -30,6 +30,9 @@ Drive `DOPA/ここにZIPを入れる` -> Apps Script (`tools/cloud/drive-ingest.
 - Before opening or updating a PR, `git fetch origin` and check `git rev-list --left-right --count origin/main...HEAD` (or `git merge-base --is-ancestor origin/main HEAD`). If `origin/main` moved (another developer merged), bring the branch up to date first (`git rebase origin/main`, or merge it), resolve conflicts hunk by hunk, re-run `tools\check.ps1`, and only then push/open the PR.
 - Never force-push over someone else's work; use `--force-with-lease` only on your own branch. If `CHANGELOG.txt` conflicts, keep the newest block on top (see below).
 
+## Merging (owner's rule)
+- Claude never merges to `main` on its own and never pushes game/doc changes directly to `main`. Always: branch -> PR, then stop. The owner's PRs are merged by keita (`keitakeitam2-creator`), not by the owner and not by Claude. Do not use `gh pr merge`, auto-merge, or admin overrides, and do not change branch protection unless the owner explicitly asks.
+
 ## Launcher "更新内容" (what testers see)
 - The launcher's first screen shows the release notes = the FIRST block of `CHANGELOG.txt` (up to the first blank line). Every implementation or fix must add a new block at the very top of `CHANGELOG.txt`: `# DOPAGAKI vX.Y — <title> (date)` then `- ` lines for what was added / fixed, in Japanese, followed by a blank line. Never leave an old block above it.
 
