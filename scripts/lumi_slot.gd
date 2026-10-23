@@ -9,9 +9,12 @@ signal close_requested
 
 const BET_GOLD := 25
 const SYMBOLS := ["7", "BAR", "🍉", "🍒", "🍇", "↻"]
-const BIG_ODDS := [273.1, 270.8, 266.4, 254.0, 240.1, 229.1]
-const REG_ODDS := [409.6, 385.5, 336.1, 290.0, 268.6, 229.1]
-const ROLE_PAYOUT := {"BIG": 240, "REG": 96, "GRAPE": 8, "CHERRY": 2, "REPLAY": 0, "MISS": 0}
+# BIG + REG is roughly one win in five spins. Setting 4 combines to ~1/4.9.
+# Fantasy game rates (not real-world slot machine probabilities).
+const BIG_ODDS := [22.0, 21.0, 20.0, 19.0, 18.0, 17.0]
+const REG_ODDS := [7.2, 7.0, 6.8, 6.6, 6.4, 6.2]
+# Balanced against a 25G entry cost and much more frequent gear drops.
+const ROLE_PAYOUT := {"BIG": 160, "REG": 60, "GRAPE": 8, "CHERRY": 2, "REPLAY": 0, "MISS": 0}
 const RESULT_NAMES := {"BIG": "BIG BONUS!!", "REG": "REG BONUS!", "GRAPE": "🍇 ぶどう", "CHERRY": "🍒 チェリー", "REPLAY": "↻ リプレイ！", "MISS": "はずれ…"}
 
 var wallet := 0
@@ -245,7 +248,7 @@ func _update_info() -> void:
 	var b: float = BIG_ODDS[setting_index]
 	var r: float = REG_ODDS[setting_index]
 	var comb: float = 1.0 / (1.0 / b + 1.0 / r)
-	odds_label.text = "BIG 1/%.1f　 REG 1/%.1f　 合算 1/%.1f" % [b, r, comb]
+	odds_label.text = "BIG 1/%.1f　 REG 1/%.1f　 合算 1/%.1f (約1/5)" % [b, r, comb]
 	var balance: int = medals_out - medals_in
 	stats_label.text = "G数 %d　 BIG %d　 REG %d　 差枚 %s枚　ぶどう%d / チェリー%d / リプレイ%d" % [games, big_count, reg_count, ("+" if balance > 0 else "") + str(balance), grape_count, cherry_count, replay_count]
 	var points := ""
