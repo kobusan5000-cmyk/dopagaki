@@ -9,16 +9,16 @@ signal close_requested
 
 const BET_GOLD := 25
 const SYMBOLS := ["7", "BAR", "🍉", "🍒", "🍇", "↻"]
-# BIG + REG is roughly one win in five spins. Setting 4 combines to ~1/4.9.
+# BIG + REG is about one win in 4.5 spins, permanently fixed to setting 6.
 # Fantasy game rates (not real-world slot machine probabilities).
-const BIG_ODDS := [22.0, 21.0, 20.0, 19.0, 18.0, 17.0]
-const REG_ODDS := [7.2, 7.0, 6.8, 6.6, 6.4, 6.2]
+# Setting 6 is permanently active; no player-adjustable odds.
+const BIG_ODDS := 17.0
+const REG_ODDS := 6.2
 # Balanced against a 25G entry cost and much more frequent gear drops.
 const ROLE_PAYOUT := {"BIG": 160, "REG": 60, "GRAPE": 8, "CHERRY": 2, "REPLAY": 0, "MISS": 0}
 const RESULT_NAMES := {"BIG": "BIG BONUS!!", "REG": "REG BONUS!", "GRAPE": "🍇 ぶどう", "CHERRY": "🍒 チェリー", "REPLAY": "↻ リプレイ！", "MISS": "はずれ…"}
 
 var wallet := 0
-var setting_index := 3
 var replay_pending := false
 var auto_play := false
 var spinning := false
@@ -31,7 +31,6 @@ var center_symbols: Array[String] = ["7", "🍇", "BAR"]
 var reel_tiles: Array = []
 var _miss_result: Array[String] = ["7", "🍉", "BAR"]
 var stop_buttons: Array[Button] = []
-var setting_buttons: Array[Button] = []
 var balance_label: Label
 var prize_label: Label
 var info_label: Label
@@ -151,16 +150,6 @@ func _ready() -> void:
 	spin_row.add_child(auto_button)
 	body.add_child(spin_row)
 
-	var setting_row := HBoxContainer.new()
-	setting_row.add_theme_constant_override("separation", 5)
-	setting_row.add_child(_label("設定", 13, Color("b6adc6")))
-	for i in range(6):
-		var b := _button(str(i + 1), Color("9c80d5"), 13)
-		b.custom_minimum_size = Vector2(43, 32)
-		b.pressed.connect(_set_setting.bind(i))
-		setting_row.add_child(b)
-		setting_buttons.append(b)
-	body.add_child(setting_row)
 	odds_label = _label("", 12, Color("a9e5e0"), true)
 	body.add_child(odds_label)
 	stats_label = _label("", 13, Color("f4e3cc"), true)
@@ -242,13 +231,8 @@ func _update_info() -> void:
 	close_button.disabled = spinning
 	auto_button.text = "自動 ON" if auto_play else "自動 OFF"
 	auto_button.disabled = spinning and not auto_play
-	for i in range(setting_buttons.size()):
-		setting_buttons[i].disabled = spinning or auto_play
-		setting_buttons[i].add_theme_color_override("font_color", Color("ffdd8a") if i == setting_index else Color("b9b4cc"))
-	var b: float = BIG_ODDS[setting_index]
-	var r: float = REG_ODDS[setting_index]
-	var comb: float = 1.0 / (1.0 / b + 1.0 / r)
-	odds_label.text = "BIG 1/%.1f　 REG 1/%.1f　 合算 1/%.1f (約1/5)" % [b, r, comb]
+	var comb: float = 1.0 / (1.0 / BIG_ODDS + 1.0 / REG_ODDS)
+	odds_label.text = "BIG 1/%.1f　 REG 1/%.1f　 合算 1/%.1f" % [BIG_ODDS, REG_ODDS, comb]
 	var balance: int = medals_out - medals_in
 	stats_label.text = "G数 %d　 BIG %d　 REG %d　 差枚 %s枚　ぶどう%d / チェリー%d / リプレイ%d" % [games, big_count, reg_count, ("+" if balance > 0 else "") + str(balance), grape_count, cherry_count, replay_count]
 	var points := ""
@@ -257,12 +241,6 @@ func _update_info() -> void:
 		var index: int = clampi(3 + int(float(value) / 35.0), 0, 7)
 		points += "▁▂▃▄▅▆▇█".substr(index, 1)
 	graph_label.text = "差枚の推移　" + points
-
-func _set_setting(index: int) -> void:
-	if spinning or auto_play:
-		return
-	setting_index = clampi(index, 0, 5)
-	_update_info()
 
 func _request_wager() -> void:
 	if spinning:
@@ -298,8 +276,8 @@ func begin_spin() -> void:
 
 func _draw_outcome() -> String:
 	var roll: float = rng.randf()
-	var big_chance: float = 1.0 / float(BIG_ODDS[setting_index])
-	var reg_chance: float = 1.0 / float(REG_ODDS[setting_index])
+	var big_chance: float = 1.0 / BIG_ODDS
+	var reg_chance: float = 1.0 / REG_ODDS
 	if roll < big_chance:
 		return "BIG"
 	if roll < big_chance + reg_chance:
