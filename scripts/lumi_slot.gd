@@ -7,13 +7,11 @@ signal spin_resolved(outcome: String, payout: int)
 signal reel_stopped(index: int)
 signal close_requested
 
+const SLOT_ODDS = preload("res://scripts/lumi_slot_odds.gd")
 const BET_GOLD := 25
 const SYMBOLS := ["7", "BAR", "🍉", "🍒", "🍇", "↻"]
-# BIG + REG is about one win in 4.5 spins, permanently fixed to setting 6.
-# Fantasy game rates (not real-world slot machine probabilities).
+# Bonus odds and rarity cutoffs are shared with the prize dispenser and regression tests.
 # Setting 6 is permanently active; no player-adjustable odds.
-const BIG_ODDS := 17.0
-const REG_ODDS := 6.2
 # Balanced against a 25G entry cost and much more frequent gear drops.
 const ROLE_PAYOUT := {"BIG": 160, "REG": 60, "GRAPE": 8, "CHERRY": 2, "REPLAY": 0, "MISS": 0}
 const RESULT_NAMES := {"BIG": "BIG BONUS!!", "REG": "REG BONUS!", "GRAPE": "🍇 ぶどう", "CHERRY": "🍒 チェリー", "REPLAY": "↻ リプレイ！", "MISS": "はずれ…"}
@@ -231,8 +229,8 @@ func _update_info() -> void:
 	close_button.disabled = spinning
 	auto_button.text = "自動 ON" if auto_play else "自動 OFF"
 	auto_button.disabled = spinning and not auto_play
-	var comb: float = 1.0 / (1.0 / BIG_ODDS + 1.0 / REG_ODDS)
-	odds_label.text = "BIG 1/%.1f　 REG 1/%.1f　 合算 1/%.1f" % [BIG_ODDS, REG_ODDS, comb]
+	var comb: float = 1.0 / (1.0 / SLOT_ODDS.BIG_ODDS + 1.0 / SLOT_ODDS.REG_ODDS)
+	odds_label.text = "BIG 1/%.1f　 REG 1/%.1f　 合算 1/%.1f" % [SLOT_ODDS.BIG_ODDS, SLOT_ODDS.REG_ODDS, comb]
 	var balance: int = medals_out - medals_in
 	stats_label.text = "G数 %d　 BIG %d　 REG %d　 差枚 %s枚　ぶどう%d / チェリー%d / リプレイ%d" % [games, big_count, reg_count, ("+" if balance > 0 else "") + str(balance), grape_count, cherry_count, replay_count]
 	var points := ""
@@ -276,13 +274,10 @@ func begin_spin() -> void:
 
 func _draw_outcome() -> String:
 	var roll: float = rng.randf()
-	var big_chance: float = 1.0 / BIG_ODDS
-	var reg_chance: float = 1.0 / REG_ODDS
-	if roll < big_chance:
-		return "BIG"
-	if roll < big_chance + reg_chance:
-		return "REG"
-	var cut: float = big_chance + reg_chance
+	var bonus: String = SLOT_ODDS.bonus_outcome(roll)
+	if not bonus.is_empty():
+		return bonus
+	var cut: float = 1.0 / SLOT_ODDS.BIG_ODDS + 1.0 / SLOT_ODDS.REG_ODDS
 	for result in ["GRAPE", "CHERRY", "REPLAY"]:
 		var odds: float = 1.0 / (6.0 if result == "GRAPE" else (35.0 if result == "CHERRY" else 7.3))
 		cut += odds

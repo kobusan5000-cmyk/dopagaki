@@ -56,6 +56,7 @@ const ARMOR_RARITY_MULT := [1.0, 1.6, 2.3, 3.5, 5.0]
 const BAG_CAPACITY := 5
 const SLOT_COST := 25
 const LUMI_SLOT_SCRIPT = preload("res://scripts/lumi_slot.gd")
+const LUMI_SLOT_ODDS = preload("res://scripts/lumi_slot_odds.gd")
 const SLOT_POS := Vector2(865, 895)
 const REVIVE_SHRINE := Vector2(3060, 1860)
 const MERCHANT_POS := Vector2(1780, 985)
@@ -1670,14 +1671,14 @@ func lumi_slot_reward(outcome: String, payout: int) -> void:
 		"BIG":
 			# Always an epic-or-better weapon: EPIC 74%, LEGENDARY 23%, MYTHIC 3%.
 			var big_roll: float = rng.randf()
-			var jackpot_rarity: int = 2 if big_roll < 0.74 else (3 if big_roll < 0.97 else 4)
+			var jackpot_rarity: int = LUMI_SLOT_ODDS.prize_rarity("BIG", big_roll)
 			spawn_drop(prize_pos, jackpot_rarity)
 			gear_won = true
 			trigger_camera_shake(0.25, 10.0)
 		"REG":
 			# Mostly ordinary equipment: COMMON 75%, RARE 22%, EPIC 3%.
 			var reg_roll: float = rng.randf()
-			var reg_rarity: int = 0 if reg_roll < 0.75 else (1 if reg_roll < 0.97 else 2)
+			var reg_rarity: int = LUMI_SLOT_ODDS.prize_rarity("REG", reg_roll)
 			if rng.randf() < 0.55:
 				spawn_drop(prize_pos, reg_rarity)
 			else:
