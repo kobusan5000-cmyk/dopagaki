@@ -1,6 +1,6 @@
 extends Node2D
 
-# DOPAGAKI v0.17 — Moonlit Forest Visual Overhaul (Drive published base b36).
+# DOPAGAKI v0.18 — Moonlit Sanctuary & Combat Readability (Drive published base b37).
 # Solo prototype; network/4-player functionality is NOT implemented.
 # Compatible with Godot 4.3–4.7; one runnable Node2D scene.
 
@@ -164,7 +164,17 @@ const STASH_ART: Texture2D = preload("res://assets/visual_v016/stash_chest.png")
 const SLOT_ART: Texture2D = preload("res://assets/visual_v016/slot_machine.png")
 const COOK_ART: Texture2D = preload("res://assets/visual_v016/campfire_pot.png")
 const MERCHANT_ART: Texture2D = preload("res://assets/visual_v016/merchant_stall.png")
-const VISUALS_REVISION := "v0.17 翡翠の森・夜光キャンプ"
+# v0.18: extra painterly sprites; gameplay/world hitboxes unchanged.
+const V018_TENT: Texture2D = preload("res://assets/visual_v018/camp_tent_deluxe.png")
+const V018_LAMP: Texture2D = preload("res://assets/visual_v018/camp_lamp_deluxe.png")
+const V018_LAMP_STRING: Texture2D = preload("res://assets/visual_v018/camp_lantern_string.png")
+const V018_ARCH: Texture2D = preload("res://assets/visual_v018/moon_ruin_arch.png")
+const V018_FLOWERS: Texture2D = preload("res://assets/visual_v018/forest_wildflowers.png")
+const V018_CRYSTALS: Texture2D = preload("res://assets/visual_v018/moon_crystal_cluster.png")
+const V018_PATH: Texture2D = preload("res://assets/visual_v018/stone_winding_path.png")
+const V018_SHRINE_CIRCLE: Texture2D = preload("res://assets/visual_v018/shrine_moss_circle.png")
+const V018_MIST: Texture2D = preload("res://assets/visual_v018/moon_mist.png")
+const VISUALS_REVISION := "v0.18 月光の聖域・演出強化"
 const RARITY_COLORS := [Color("d0e2f1"), Color("59cdff"), Color("d493ff"), Color("ffd568"), Color("ff91d9")]
 const RARITY_DAMAGE := [1.0, 1.38, 1.88, 2.85, 4.4]
 const RARITY_RATE := [1.0, 1.06, 1.13, 1.22, 1.33]
@@ -3778,6 +3788,18 @@ func draw_loot(d: Dictionary) -> void:
 		draw_line(center + Vector2(-16, 13), center + Vector2(-4, 13), rune_color, 3.0)
 	var short_name: String = WEAPON_SHORT[int(d["kind"])] if str(d["type"]) == "weapon" else ARMOR_SHORT[int(d["slot"])]
 	draw_string(ui_font, center + Vector2(-17, 37), short_name, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, c)
+	if rarity >= 2:
+		var pulse: float = 0.5 + 0.5 * sin(elapsed * 3.7 + phase_value)
+		draw_arc(center, 40.0 + pulse * 4.0, 0.0, TAU, 40, Color(c, 0.26 + pulse * 0.21), 2.3)
+		for glint_idx in range(4):
+			var glint_theta: float = elapsed * 0.65 + float(glint_idx) * TAU / 4.0
+			var glint_pos: Vector2 = center + Vector2.RIGHT.rotated(glint_theta) * 44.0
+			draw_circle(glint_pos, 1.4 + pulse, Color(c, 0.58))
+	if player.distance_to(pos) < 97.0 and rarity >= 2:
+		var stat_string: String = "威力 x%.2f" % float(d.get("bonus", 1.0)) if str(d["type"]) == "weapon" else "防御 +%d" % int(d.get("defense", 0))
+		draw_rect(Rect2(center + Vector2(-68, -82), Vector2(136, 36)), Color("0e1824", 0.91))
+		draw_rect(Rect2(center + Vector2(-68, -82), Vector2(136, 36)), Color(c, 0.83), false, 2.0)
+		draw_string(ui_font, center + Vector2(-59, -60), "%s   %s" % [RARITIES[rarity], stat_string], HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color("f4e7cf"))
 	if rarity >= 3:
 		draw_line(center + Vector2(0, -132), center + Vector2(0, -30), Color(c, 0.32), 14.0)
 		draw_line(center + Vector2(0, -132), center + Vector2(0, -30), Color(c, 0.84), 3.0)
@@ -3851,6 +3873,7 @@ func draw_mint_heart(center: Vector2, scale_factor: float = 1.0) -> void:
 
 func draw_revive_shrine() -> void:
 	var c: Vector2 = REVIVE_SHRINE
+	draw_texture_rect(V018_SHRINE_CIRCLE, Rect2(c - Vector2(70, 67), Vector2(140, 136)), false, Color(0.91, 0.99, 0.96, 0.74))
 	draw_circle(c + Vector2(0, 11), 37, Color("14283d"))
 	draw_arc(c, 35, 0.0, TAU, 32, Color("ffb4d6"), 4.0)
 	draw_rect(Rect2(c + Vector2(-19, -9), Vector2(38, 25)), Color("8495aa"))
@@ -4219,6 +4242,41 @@ func draw_accessory(pos: Vector2) -> void:
 func draw_v017_glow(at: Vector2, texture: Texture2D, diameter: float, alpha: float = 1.0) -> void:
 	draw_texture_rect(texture, Rect2(at - Vector2.ONE * diameter * 0.5, Vector2.ONE * diameter), false, Color(1.0, 1.0, 1.0, alpha))
 
+func draw_v018_forest_atmosphere() -> void:
+	# Subtle drifting ground-mist only, so it cannot hide item labels or enemies.
+	for k in range(6):
+		var shift_x: float = fposmod(elapsed * (8.0 + float(k % 3) * 5.0) + float(k) * 173.0, 1250.0) - 625.0
+		var shift_y: float = float((k * 191) % 730) - 365.0
+		var mist_center: Vector2 = player + Vector2(shift_x, shift_y)
+		draw_texture_rect(V018_MIST, Rect2(mist_center - Vector2(145.0, 72.0), Vector2(290.0, 144.0)), false, Color(0.78, 0.94, 1.0, 0.65))
+	# Sparse falling petals in the forest, without collision or loot-like highlights.
+	for k in range(18):
+		var leaf_x: float = fposmod(float(k * 271 + 31) + elapsed * (13.0 + float(k % 4) * 3.0), 1550.0) - 775.0
+		var leaf_y: float = fposmod(float(k * 151 + 47) + elapsed * (6.0 + float(k % 5) * 2.0), 1020.0) - 510.0
+		var leaf_center: Vector2 = player + Vector2(leaf_x, leaf_y)
+		var leaf_color: Color = Color("8ea786", 0.18) if k % 3 == 0 else Color("96b9ac", 0.13)
+		draw_line(leaf_center - Vector2(3, 1), leaf_center + Vector2(3, -1), leaf_color, 1.8)
+
+func draw_v018_slash_trail(origin: Vector2, heading: float, kind: int, opacity: float, rarity: int) -> void:
+	# Decorative slash trail follows the existing melee hitbox; damage values unchanged.
+	var reach: float = 117.0 if kind == 2 else 159.0
+	var width: float = 0.94 if kind == 2 else 1.20
+	var tint: Color = RARITY_COLORS[clampi(rarity, 0, 4)]
+	var alpha: float = clampf(opacity, 0.0, 1.0)
+	if alpha <= 0.0:
+		return
+	var start_angle: float = heading - width
+	var end_angle: float = heading + width
+	# Outer bloom, high-contrast core, then scattered blade glints.
+	draw_arc(origin, reach + 16.0, start_angle, end_angle, 30, Color(tint, 0.12 * alpha), 28.0)
+	draw_arc(origin, reach + 6.0, start_angle, end_angle, 34, Color(tint, 0.44 * alpha), 10.0)
+	draw_arc(origin, reach, start_angle + 0.06, end_angle - 0.06, 34, Color("ecfcff", 0.85 * alpha), 3.0)
+	for k in range(4):
+		var angle: float = start_angle + float(k + 1) * (end_angle - start_angle) / 5.0
+		var glint: Vector2 = origin + Vector2.RIGHT.rotated(angle) * (reach + 12.0)
+		draw_line(glint - Vector2(6, 0), glint + Vector2(6, 0), Color(tint, alpha * 0.7), 2.0)
+		draw_line(glint - Vector2(0, 7), glint + Vector2(0, 7), Color("fff8eb", alpha * 0.45), 1.7)
+
 func draw_fantasy_ground() -> void:
 	# A painterly pixel forest: four varied tiles keep the huge arena from looking stamped.
 	draw_rect(ARENA.grow(120.0), Color("0a151c"))
@@ -4233,6 +4291,7 @@ func draw_fantasy_ground() -> void:
 			if dest.intersects(ARENA):
 				var variant: int = posmod(tx * 19 + ty * 13 + tx * ty, FOREST_VARIANTS.size())
 				draw_texture_rect(FOREST_VARIANTS[variant], dest, false)
+	draw_v018_forest_atmosphere()
 	# Decorative foliage is intentionally subdued: loot and usable objects remain bright.
 	for prop in scenery:
 		var p: Vector2 = prop["pos"]
@@ -4255,11 +4314,18 @@ func draw_fantasy_ground() -> void:
 			continue
 		draw_v017_glow(station + Vector2(0, -100), GLOW_AMBER_V017, 760.0, 0.75)
 		draw_texture_rect(CAMP_GROUND_V017, Rect2(station - Vector2(384, 384), Vector2(768, 768)), false)
+		# Uneven walkways visually connect the tent, kitchen and chest.
+		draw_texture_rect(V018_PATH, Rect2(station + Vector2(-258, 48), Vector2(274, 92)), false, Color(0.92, 0.94, 0.91, 0.85))
+		draw_texture_rect(V018_PATH, Rect2(station + Vector2(24, 80), Vector2(236, 82)), false, Color(0.92, 0.96, 0.92, 0.71))
 		draw_circle(station, CAMP_RADIUS, Color("a3eac4", 0.020 if phase == "combat" else 0.035))
 		draw_arc(station, CAMP_RADIUS - 12.0, 0.0, TAU, 80, Color("b4cea8", 0.32), 2.0)
 		# Cozy embroidered tent, woodland banner, supplies, and wood fences.
 		var tent_center: Vector2 = station + Vector2(-170, -168)
-		draw_texture_rect(TENT_V017, Rect2(tent_center - Vector2(114, 91), Vector2(226, 172)), false)
+		draw_texture_rect(V018_TENT, Rect2(tent_center - Vector2(114, 91), Vector2(226, 172)), false)
+		# Warm festival lanterns suspended over the shelter.
+		draw_v017_glow(station + Vector2(-168, -130), GLOW_AMBER_V017, 245.0, 0.46)
+		draw_texture_rect(V018_LAMP_STRING, Rect2(station + Vector2(-286, -228), Vector2(240, 80)), false)
+
 		draw_texture_rect(BARRELS_V017, Rect2(station + Vector2(-252, 115), Vector2(88, 70)), false)
 		draw_texture_rect(BANNER_V017, Rect2(station + Vector2(122, -298), Vector2(64, 168)), false)
 		draw_texture_rect(FENCE_V017, Rect2(station + Vector2(-35, 270), Vector2(190, 53)), false)
@@ -4268,8 +4334,13 @@ func draw_fantasy_ground() -> void:
 			var lp: Vector2 = station + Vector2.RIGHT.rotated(angle) * 318.0
 			var flicker: float = 0.96 + 0.04 * sin(elapsed * 7.0 + float(i))
 			draw_v017_glow(lp + Vector2(0, -57), GLOW_AMBER_V017, 230.0 * flicker, 0.70)
-			draw_texture_rect(CAMP_LANTERN, Rect2(lp - Vector2(16.0, 71.0), Vector2(32.0, 65.0)), false)
+			draw_texture_rect(V018_LAMP, Rect2(lp - Vector2(20.0, 70.0), Vector2(40.0, 70.0)), false)
 			draw_circle(lp + Vector2(0, -57), 3.0 * flicker, Color("fff3b1", 0.93))
+		# Low, pastel foliage adds detail but cannot be mistaken for a loot icon.
+		for flora_i in range(5):
+			var flower_angle: float = 0.25 + TAU * float(flora_i) / 5.0
+			var flower_pos: Vector2 = station + Vector2.RIGHT.rotated(flower_angle) * 302.0
+			draw_texture_rect(V018_FLOWERS, Rect2(flower_pos - Vector2(48.0, 40.0), Vector2(96.0, 67.0)), false, Color(0.85, 0.90, 0.89, 0.76))
 		# fireflies slowly orbit away from interaction labels
 		for j in range(15):
 			var theta: float = float(j) * 2.39996 + elapsed * (0.10 if j % 2 == 0 else -0.06)
@@ -4283,6 +4354,14 @@ func draw_fantasy_ground() -> void:
 	for tree_pos in grove:
 		if tree_pos.distance_to(player) < 850.0:
 			draw_texture_rect(FOREST_TREE_V017, Rect2(tree_pos - Vector2(95, 170), Vector2(190, 191)), false)
+	# Moonstone arches and crystalline outcrops mark distant fantasy landmarks.
+	for arch_pos in [Vector2(850, 1570), Vector2(2650, 1530), Vector2(3320, 900)]:
+		if arch_pos.distance_to(player) < 850.0:
+			draw_texture_rect(V018_ARCH, Rect2(arch_pos - Vector2(73.0, 152.0), Vector2(146.0, 165.0)), false, Color(0.84, 0.93, 0.98, 0.87))
+	for crystal_pos in [Vector2(510, 670), Vector2(1710, 1720), Vector2(2840, 2130), Vector2(3180, 1200)]:
+		if crystal_pos.distance_to(player) < 800.0:
+			draw_v017_glow(crystal_pos - Vector2(0, 36), GLOW_MOON_V017, 170.0, 0.23)
+			draw_texture_rect(V018_CRYSTALS, Rect2(crystal_pos - Vector2(40, 78), Vector2(80, 86)), false, Color(0.84, 0.94, 0.99, 0.75))
 	for rune_pos in [Vector2(1640, 760), Vector2(1940, 1720), Vector2(2650, 1050), Vector2(2950, 1670)]:
 		if rune_pos.distance_to(player) < 800.0:
 			draw_v017_glow(rune_pos - Vector2(0, 30), GLOW_MOON_V017, 195.0, 0.32)
@@ -4383,7 +4462,9 @@ func _draw() -> void:
 		var is_critical: bool = bool(dmg_popup["critical"])
 		var popup_color: Color = dmg_popup["tint"]
 		var popup_size := 32 if is_critical else 18
-		draw_string(ui_font, popup_pos + Vector2(-22, 0), ("CRIT! " if is_critical else "") + str(roundi(float(dmg_popup["amount"]))), HORIZONTAL_ALIGNMENT_LEFT, -1, popup_size, popup_color)
+		var popup_value: String = ("★ CRIT! " if is_critical else "") + str(roundi(float(dmg_popup["amount"])))
+		draw_string(ui_font, popup_pos + Vector2(-20, 2), popup_value, HORIZONTAL_ALIGNMENT_LEFT, -1, popup_size, Color("12212b", 0.92))
+		draw_string(ui_font, popup_pos + Vector2(-22, 0), popup_value, HORIZONTAL_ALIGNMENT_LEFT, -1, popup_size, popup_color)
 	for p in particles:
 		var alpha := clampf(float(p["life"]) / float(p["total"]), 0.0, 1.0)
 		draw_circle(p["pos"], 2.0 + 3.0 * alpha, Color(p["color"], alpha))
@@ -4450,6 +4531,10 @@ func _draw() -> void:
 			var tip_a := aim_angle + sweep
 			var tip := player + Vector2.RIGHT.rotated(tip_a) * radius
 			draw_line(tip, tip + Vector2.RIGHT.rotated(tip_a + 0.9) * 24.0, Color("ffffff", opacity), 3.0)
+	if fighting and state == "playing" and (int(equipped["kind"]) == 2 or int(equipped["kind"]) == 3):
+		var melee_type: int = int(equipped["kind"])
+		var fade: float = clampf(attack_clock / maxf(attack_duration, 0.01), 0.0, 1.0)
+		draw_v018_slash_trail(player, aim_angle, melee_type, fade, int(equipped["rarity"]))
 	# Shield and parry visual, facing the mouse.
 	if guard_active:
 		var shield_color: Color = Color("ffe59a") if guard_parry_clock > 0.0 else Color("7bd7ff")
