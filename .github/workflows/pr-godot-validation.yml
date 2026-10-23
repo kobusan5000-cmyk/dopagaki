@@ -1,0 +1,103 @@
+name: PR Godot Validation
+
+# Validate contributions before they can enter main. This workflow never publishes a release
+# and never pushes changes. It uses the same Godot version as build.yml.
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-godot-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  godot-smoke:
+    name: Godot headless smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GODOT_VERSION: 4.7.2-stable
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout proposed changes
+        uses: actions/checkout@v4
+
+      - name: Check project layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f project.godot
+          test -f scenes/main.tscn
+          count=$(find . -name project.godot -not -path './tools/*' -not -path './.git/*' | wc -l)
+          if [ "$count" -ne 1 ]; then
+            echo "::error::Expected exactly one main project.godot; found $count"
+            exit 1
+          fi
+
+      - name: Cache Godot binary
+        id: godot-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/dopagaki-godot
+          key: dopagaki-pr-godot-${{ runner.os }}-${{ env.GODOT_VERSION }}
+
+      - name: Download Godot
+        if: steps.godot-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.cache/dopagaki-godot"
+          cd "$RUNNER_TEMP"
+          gh release download "$GODOT_VERSION" -R godotengine/godot \
+            -p "Godot_v${GODOT_VERSION}_linux.x86_64.zip"
+          unzip -q "Godot_v${GODOT_VERSION}_linux.x86_64.zip"
+          mv "Godot_v${GODOT_VERSION}_linux.x86_64" "$HOME/.cache/dopagaki-godot/godot"
+
+      - name: Import Godot project
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot="$HOME/.cache/dopagaki-godot/godot"
+          chmod +x "$godot"
+          timeout 180 "$godot" --headless --path . --import > godot-import.log 2>&1 || {
+            cat godot-import.log
+            echo "::error::Godot project import failed"
+            exit 1
+          }
+          cat godot-import.log
+          if grep -Ei 'SCRIPT ERROR|Parse Error|Failed to load script|Failed to compile' godot-import.log; then
+            echo "::error::Godot reported script/import errors"
+            exit 1
+          fi
+
+      - name: Launch Godot and smoke-test main scene
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot="$HOME/.cache/dopagaki-godot/godot"
+          timeout 150 "$godot" --headless --path . --quit-after 300 > godot-run.log 2>&1 || {
+            cat godot-run.log
+            echo "::error::Godot main scene did not exit successfully"
+            exit 1
+          }
+          cat godot-run.log
+          if grep -Ei 'SCRIPT ERROR|Parse Error|Failed to load script|Failed to compile' godot-run.log; then
+            echo "::error::Godot reported game script errors"
+            exit 1
+          fi
+
+      - name: Save diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-pr-logs
+          path: |
+            godot-import.log
+            godot-run.log
+          if-no-files-found: ignore
+          retention-days: 7
