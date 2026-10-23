@@ -388,7 +388,6 @@ var audio_players: Array[AudioStreamPlayer] = []
 var audio_index := 0
 
 var hud: Label
-var help: Label
 var controls_panel: PanelContainer
 var controls_open := false
 var player_hp_bar: ProgressBar
@@ -622,9 +621,6 @@ func build_ui() -> void:
 	direction_label.position = Vector2(787, 88)
 	direction_label.custom_minimum_size = Vector2(345, 25)
 	layer.add_child(direction_label)
-	help = make_label("", 13, Color("aac6e3"))
-	help.position = Vector2(48, 89)
-	layer.add_child(help)
 	pickup_hint = make_label("", 18, Color("ffe998"), true)
 	pickup_hint.position = Vector2(245, 508)
 	pickup_hint.custom_minimum_size = Vector2(664, 40)
@@ -954,7 +950,7 @@ func build_ui() -> void:
 	inventory_panel.hide()
 
 	# Controls reference: its own screen, opened with [C], instead of a long line on the HUD.
-	controls_panel = make_panel(Vector2(256, 70), Vector2(640, 500), Color("8fd3a6"))
+	controls_panel = make_panel(Vector2(256, 44), Vector2(640, 560), Color("8fd3a6"))
 	layer.add_child(controls_panel)
 	var ctl_padding: MarginContainer = controls_panel.get_child(0)
 	ctl_padding.add_theme_constant_override("margin_top", 14)
@@ -3132,11 +3128,13 @@ func show_status(message: String, color: Color = Color("ffe998")) -> void:
 const CONTROLS_HELP := [
 	["WASD / 矢印キー", "移動"],
 	["マウス左ボタン", "攻撃（戦闘中、カーソルの方向へ）"],
+	["マウス右ボタン（長押し）", "ガード（押した直後ならパリィ）"],
 	["SPACE", "回避"],
 	["E", "調べる（拾う・畑・料理・商人・スロット）"],
 	["Q", "クラススキル（LV5で習得）"],
 	["1 - 5", "バッグの装備をすばやく切り替え"],
 	["I", "バッグを開く / 閉じる"],
+	["P", "能力ポイントを割り振る"],
 	["F", "作物の切り替え"],
 	["T", "ちゅぶらのお世話メニュー"],
 	["H / J", "シチュー / スープを食べる"],
@@ -3680,8 +3678,6 @@ func update_hud() -> void:
 	if freeze_clock > 0.0: effects += " [凍結%d秒]" % ceili(freeze_clock)
 	mp_text.text += effects
 	skill_text.text = "[Q] %s %s" % [SKILL_NAMES[class_id], ("強化" if level >= 10 else "習得済") if level >= 5 else "LV5で習得"]
-	var guard_status: String = "パリィ受付!" if guard_active and guard_parry_clock > 0.0 else ("ガード中" if guard_active else ("ガード待ち %.1f秒" % guard_restart_clock if guard_restart_clock > 0.0 else "ガード可"))
-	help.text = "WASD移動 左クリック攻撃 右クリックガード[%s]  SPACE回避 E操作 Iバッグ P能力 Tちゅぶら C操作方法" % guard_status
 	hotbar_container.visible = state == "playing" or state == "upgrade"
 	hotbar_currency.visible = state == "playing" or state == "upgrade"
 	minimap_panel.visible = state == "playing" or state == "upgrade"
