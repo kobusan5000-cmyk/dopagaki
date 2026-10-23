@@ -91,6 +91,22 @@ jobs:
             exit 1
           fi
 
+      - name: Run LUMI SLOT probability regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot="$HOME/.cache/dopagaki-godot/godot"
+          timeout 90 "$godot" --headless --path . --script res://tests/test_lumi_slot_odds.gd > godot-slot-test.log 2>&1 || {
+            cat godot-slot-test.log
+            echo "::error::LUMI SLOT regression test failed"
+            exit 1
+          }
+          cat godot-slot-test.log
+          if grep -Ei 'SCRIPT ERROR|Parse Error|Failed to load script|Failed to compile|LUMI SLOT REGRESSION:' godot-slot-test.log; then
+            echo "::error::Godot reported LUMI SLOT test errors"
+            exit 1
+          fi
+
       - name: Save diagnostic logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -99,5 +115,6 @@ jobs:
           path: |
             godot-import.log
             godot-run.log
+            godot-slot-test.log
           if-no-files-found: ignore
           retention-days: 7
