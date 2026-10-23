@@ -25,6 +25,9 @@ const GUARD_RESTART_DELAY := 0.28
 const WOLF_WALK: Texture2D = preload("res://assets/ookami_walk.png")
 const WOLF_ATTACK: Texture2D = preload("res://assets/ookami_attack.png")
 const PIERO_WALK: Texture2D = preload("res://assets/piero_walk.png")
+# 48px frames in the order idle / walk / skill-or-dash / hit.
+const HIHI_ART: Texture2D = preload("res://assets/characters/hihi_actions.png")
+const HEALER_ART: Texture2D = preload("res://assets/characters/healer_actions.png")
 const STORM_BRUTE: Texture2D = preload("res://assets/storm_brute_walk.png")
 const NIGHT_REAPER: Texture2D = preload("res://assets/night_reaper_walk.png")
 const MINT_SPRITE: Texture2D = preload("res://assets/mint_companion_walk.png")
@@ -339,6 +342,7 @@ var farm_plots: Array[Dictionary] = []
 var cooking_open := false
 var food_buff_clock := 0.0
 var heal_spell_clock := 0.0
+var healer_cast_visual_clock := 0.0
 var player := Vector2(1208, 870)
 var hp := 100.0
 var max_hp := 100.0
@@ -700,6 +704,12 @@ func build_ui() -> void:
 	for i in range(CLASS_NAMES.size()):
 		var btn := make_button("%d  %s\n%s" % [i + 1, CLASS_NAMES[i], CLASS_DESC[i]], Color("45cad3"), Vector2(269, 64))
 		btn.add_theme_font_size_override("font_size", 15)
+		if i == 5:
+			var healer_icon := AtlasTexture.new()
+			healer_icon.atlas = HEALER_ART
+			healer_icon.region = Rect2(0, 0, 48, 48)
+			btn.icon = healer_icon
+			btn.expand_icon = true
 		btn.pressed.connect(select_class.bind(i))
 		grid.add_child(btn)
 		class_buttons.append(btn)
@@ -1018,6 +1028,7 @@ func build_ui() -> void:
 func reset_game() -> void:
 	state = "choose"
 	class_id = 0
+	healer_cast_visual_clock = 0.0
 	player = Vector2(1208, 870)
 	camera.position = player
 	coins = 0
@@ -2059,6 +2070,7 @@ func _process(delta: float) -> void:
 	food_buff_clock = maxf(0.0, food_buff_clock - delta)
 	skill_buff_clock = maxf(0.0, skill_buff_clock - delta)
 	skill_guard_clock = maxf(0.0, skill_guard_clock - delta)
+	healer_cast_visual_clock = maxf(0.0, healer_cast_visual_clock - delta)
 	shadow_clone_clock = maxf(0.0, shadow_clone_clock - delta)
 	mp = minf(max_mp, mp + (1.6 + float(hero_stats[3]) * 0.3) * delta)
 	heal_spell_clock = maxf(0.0, heal_spell_clock - delta)
@@ -2625,7 +2637,9 @@ func spawn_enemy() -> void:
 	# Elemental ranged enemies unlock gradually and telegraph with distinct colors.
 	var roll: float = rng.randf()
 	var kind := "grunt"
-	if wave >= 6 and roll < 0.11:
+	if wave >= 2 and roll < 0.14:
+		kind = "hihi"
+	elif wave >= 6 and roll < 0.25:
 		kind = "ember"
 	elif wave >= 5 and roll < 0.23:
 		kind = "frost"
@@ -2642,6 +2656,9 @@ func spawn_enemy() -> void:
 	var base_hp := 8.5
 	var base_speed := 106.0
 	match kind:
+		"hihi":
+			base_hp = 7.2
+			base_speed = 205.0
 		"runner":
 			base_hp = 6.0
 			base_speed = 181.0
@@ -2667,7 +2684,7 @@ func spawn_enemy() -> void:
 	var speed_growth := 1.0 + minf(0.24, float(maxi(0, wave - 1)) * 0.02)
 	enemy_serial += 1
 	enemies.append({"id": enemy_serial, "pos": random_spawn_edge(), "hp": total_hp, "max_hp": total_hp,
-		"speed": base_speed * speed_growth, "kind": kind, "fast": kind == "runner" or kind == "zigzag", "elite": false, "boss": false,
+		"speed": base_speed * speed_growth, "kind": kind, "fast": kind == "runner" or kind == "zigzag" or kind == "hihi", "elite": false, "boss": false,
 		"touch": 0.0, "hurt": 0.0, "walk": rng.randf() * 4.0, "target_ally": rng.randf() < 0.28,
 		"windup": 0.0, "charge": 0.0, "charge_cd": 0.0, "charge_dir": Vector2.ZERO, "orb_cd": rng.randf_range(0.7, 2.1), "poison": 0.0, "burn": 0.0, "freeze": 0.0, "status_tick": 1.0})
 
@@ -2761,7 +2778,24 @@ func update_enemies(delta: float) -> void:
 			enemy["walk"] = float(enemy["walk"]) + delta * 6.0
 		else:
 			var kind := str(enemy.get("kind", "grunt"))
-			if kind in ["spitter", "venom", "frost", "ember"]:
+			if kind == "hihi":
+				# A small blue trickster: warns briefly, then rushes the player.
+				var dash_time: float = float(enemy["charge"])
+				var prep_time: float = float(enemy["windup"])
+				if dash_time > 0.0:
+					enemy["charge"] = maxf(0.0, dash_time - delta)
+					enemy["pos"] = (enemy["pos"] as Vector2) + (enemy["charge_dir"] as Vector2) * 405.0 * movement_multiplier * delta
+				elif prep_time > 0.0:
+					enemy["windup"] = maxf(0.0, prep_time - delta)
+					if float(enemy["windup"]) <= 0.0:
+						enemy["charge"] = 0.23
+				elif toward.length() < 240.0 and toward.length_squared() > 0.1 and float(enemy["charge_cd"]) <= 0.0:
+					enemy["windup"] = 0.26
+					enemy["charge_dir"] = toward.normalized()
+					enemy["charge_cd"] = 2.55
+				elif toward.length_squared() > 0.1:
+					enemy["pos"] = (enemy["pos"] as Vector2) + toward.normalized() * float(enemy["speed"]) * movement_multiplier * delta
+			elif kind in ["spitter", "venom", "frost", "ember"]:
 				# Ranged enemy tries to keep distance, then spits purple projectiles.
 				if toward.length() > 290.0:
 					enemy["pos"] = (enemy["pos"] as Vector2) + toward.normalized() * float(enemy["speed"]) * movement_multiplier * delta
@@ -2785,6 +2819,7 @@ func update_enemies(delta: float) -> void:
 		var normal_touch := 9.0
 		match str(enemy.get("kind", "grunt")):
 			"runner": normal_touch = 8.0
+			"hihi": normal_touch = 9.0
 			"tank": normal_touch = 16.0
 			"spitter": normal_touch = 7.0
 			"zigzag": normal_touch = 10.0
@@ -3420,8 +3455,9 @@ func activate_class_skill() -> void:
 			var amount := (70.0 if enhanced else 42.0) * (1.0 + float(hero_stats[5]) * 0.06)
 			hp = minf(max_hp, hp + amount)
 			companion_hp = minf(companion_max_hp, companion_hp + amount)
-			burst(player, Color("a4ffe0"), 38)
-			burst(companion, Color("a4ffe0"), 25)
+			healer_cast_visual_clock = 0.65
+			burst(player, Color("9fe8ff"), 38)
+			burst(companion, Color("bcecff"), 25)
 		6: # Ninja: shadow clones independently throw kunai at nearby enemies.
 			shadow_clone_clock = 12.0 if enhanced else 8.0
 			shadow_clone_fire = 0.1
@@ -4374,6 +4410,17 @@ func _draw() -> void:
 		draw_circle(pos + Vector2(4, 13), 17.0, Color(0, 0, 0, 0.28))
 		var facing_right: bool = (player.x - pos.x) > 0.0
 		var kind := str(enemy.get("kind", "grunt"))
+		if kind == "hihi":
+			var hihi_frame: int = 3 if float(enemy["hurt"]) > 0.0 else (2 if float(enemy["charge"]) > 0.0 or float(enemy["windup"]) > 0.0 else (1 if int(float(enemy["walk"])) % 2 == 1 else 0))
+			var hihi_tint := Color("ffdbdf") if float(enemy["hurt"]) > 0.0 else Color.WHITE
+			# The sprite source is 4 x 48px frames. Keep feet aligned to world collision position.
+			draw_set_transform(pos, 0.0, Vector2(1.0 if facing_right else -1.0, 1.0))
+			draw_texture_rect_region(HIHI_ART, Rect2(-43.0, -69.0, 86.0, 86.0), Rect2(hihi_frame * 48, 0, 48, 48), hihi_tint)
+			draw_set_transform(Vector2.ZERO)
+			var hihi_health_width := 44.0
+			draw_rect(Rect2(pos + Vector2(-hihi_health_width * 0.5, -67), Vector2(hihi_health_width, 5)), Color("3e344a"))
+			draw_rect(Rect2(pos + Vector2(-hihi_health_width * 0.5, -67), Vector2(hihi_health_width * maxf(0.0, float(enemy["hp"]) / float(enemy["max_hp"])), 5)), Color("8af4a2"))
+			continue
 		var tint := Color.WHITE
 		match kind:
 			"runner": tint = Color("ff9898")
@@ -4467,7 +4514,14 @@ func _draw() -> void:
 	draw_circle(player + Vector2(3, 15), 21.0 + jump_height * 0.16, Color(0, 0, 0, 0.30 - jump_height * 0.003))
 	if is_player_airborne():
 		draw_arc(player, 35.0, 0.0, TAU, 24, Color("a8eaff", 0.6), 2.0)
-	draw_player_with_armor(sprite, player_center + Vector2(0, walk_bob - jump_height), character_frame, cos(aim_angle) > 0.0, 1.82, Color("ff8585") if hurt_clock > 0.0 else WOLF_PALETTES[palette_id], lean)
+	if class_id == 5:
+		# Unique healer class silhouette. Existing stats, equipment and attacks still work.
+		var healer_frame: int = 2 if healer_cast_visual_clock > 0.0 else (3 if hurt_clock > 0.0 else (1 if walk_clock > 0.0 and int(walk_clock) % 2 == 1 else 0))
+		draw_set_transform(player_center + Vector2(0, walk_bob - jump_height), 0.0, Vector2(1.0 if cos(aim_angle) > 0.0 else -1.0, 1.0))
+		draw_texture_rect_region(HEALER_ART, Rect2(-41.0, -75.0, 82.0, 82.0), Rect2(healer_frame * 48, 0, 48, 48), Color("ff9999") if hurt_clock > 0.0 else Color.WHITE)
+		draw_set_transform(Vector2.ZERO)
+	else:
+		draw_player_with_armor(sprite, player_center + Vector2(0, walk_bob - jump_height), character_frame, cos(aim_angle) > 0.0, 1.82, Color("ff8585") if hurt_clock > 0.0 else WOLF_PALETTES[palette_id], lean)
 	if class_id == 6:
 		# Ninja mask and headband, layered over the hero's existing sprite.
 		draw_rect(Rect2(player_center + Vector2(-19, -35 - jump_height), Vector2(38, 16)), Color("28233f"))
@@ -4475,7 +4529,8 @@ func _draw() -> void:
 	if freeze_lock_clock > 0.0:
 		draw_colored_polygon(PackedVector2Array([player + Vector2(-32, 21), player + Vector2(-39, -40), player + Vector2(-6, -72), player + Vector2(37, -43), player + Vector2(33, 23)]), Color("8be8ff", 0.20))
 		draw_arc(player + Vector2(0, -16), 42.0, 0.0, TAU, 28, Color("b7f2ff", 0.82), 3.0)
-	draw_accessory(player_center + Vector2(0, walk_bob - jump_height))
+	if class_id != 5:
+		draw_accessory(player_center + Vector2(0, walk_bob - jump_height))
 	if state == "playing":
 		var muzzle := player + Vector2.RIGHT.rotated(aim_angle) * 39.0
 		var wtype: int = int(equipped["kind"])
