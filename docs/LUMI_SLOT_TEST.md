@@ -9,8 +9,11 @@ Implementation: `scripts/lumi_slot.gd`, Godot 4 native port of the user-supplied
 - **1/2/3** or **STOP 1/2/3**: stop reels in any order. Middle line only is valid.
 - **E/Esc**: close, after all reels are stopped. Use settings 1–6 or toggle auto mode in the modal.
 - Outcomes are drawn when starting the reel spin, not affected by stop timing.
-- BIG: 240G plus LEGENDARY (10% of BIG outcomes upgrade to MYTHIC); REG: 96G plus EPIC.
+- Bonus draw (fantasy game odds): BIG + REG occurs about **1 in 5 spins**. Settings 1–6 tune the combined rate from around 1/5.4 to 1/4.5; default setting 4 is about 1/4.9 (BIG 1/19, REG 1/6.6).
+- BIG: **160G + guaranteed EPIC-or-better weapon**. EPIC 74%, LEGENDARY 23%, MYTHIC 3% of BIG wins.
+- REG: **60G + one equipment drop**. COMMON 75%, RARE 22%, EPIC 3% of REG wins; 55% weapons / 45% armor.
 - Grapes: 8G and 14% chance of RARE weapon; Cherry: 2G and 20% RARE armor chance; Replay: next spin free.
+- The 25G entry fee remains unchanged. Bonus cash payouts were reduced from the original simulator to keep in-game gold generation controlled now that bonuses are much more common.
 - Gear appears at the existing machine's prize collection platform, ready for E pick-up.
 - Entirely fictional in-game currency: no buying G with cash, cash-out or redemption.
 
