@@ -50,6 +50,7 @@ const ARMOR_PREFIX := ["WORN", "GUARDED", "ENCHANTED", "MYTHIC", "DIVINE"]
 const ARMOR_RARITY_MULT := [1.0, 1.6, 2.3, 3.5, 5.0]
 const BAG_CAPACITY := 5
 const SLOT_COST := 25
+const LUMI_SLOT_SCRIPT = preload("res://scripts/lumi_slot.gd")
 const SLOT_POS := Vector2(865, 895)
 const REVIVE_SHRINE := Vector2(3060, 1860)
 const MERCHANT_POS := Vector2(1780, 985)
@@ -846,33 +847,16 @@ func build_ui() -> void:
 	hotbar_currency = make_label("所持金 0G", 18, Color("ffe6a0"))
 	hotbar_currency.position = Vector2(878, 572)
 	layer.add_child(hotbar_currency)
-	# The slot machine uses only coins earned from enemies; no real-money features.
-	slot_panel = make_panel(Vector2(300, 123), Vector2(552, 400), Color("ffd36e"))
+	# Native Godot port of the supplied LUMI SLOT web minigame.
+	# Three independently stoppable reels; no browser and no real-money access.
+	slot_panel = LUMI_SLOT_SCRIPT.new()
+	slot_panel.position = Vector2(217, 22)
+	slot_panel.custom_minimum_size = Vector2(718, 595)
 	layer.add_child(slot_panel)
-	var slot_box := VBoxContainer.new()
-	slot_box.add_theme_constant_override("separation", 12)
-	slot_panel.get_child(0).add_child(slot_box)
-	slot_box.add_child(make_label("★ キャンプのスロット ★", 28, Color("ffe3a0"), true))
-	slot_box.add_child(make_label("敵が落とすゲーム内コインのみ使用・換金なし", 14, Color("b8d3e7"), true))
-	slot_info = make_label("", 18, Color("fff1bb"), true)
-	slot_box.add_child(slot_info)
-	slot_result = make_label("◆  ◇  ◆\n超レア MYTHIC 1% / LEGENDARY 5%", 21, Color("ffc6e9"), true)
-	slot_box.add_child(slot_result)
-	# Slot results preview the ACTUAL awarded equipment art, including sword rarity.
-	slot_prize_icon = TextureRect.new()
-	slot_prize_icon.custom_minimum_size = Vector2(72, 72)
-	slot_prize_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	slot_prize_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	slot_prize_icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	slot_prize_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	slot_prize_icon.hide()
-	slot_box.add_child(slot_prize_icon)
-	slot_spin_button = make_button("[25G] 回す", Color("ffd36e"), Vector2(480, 51))
-	slot_spin_button.pressed.connect(spin_slot)
-	slot_box.add_child(slot_spin_button)
-	var slot_exit := make_button("閉じる [E / Esc]", Color("b4a4ed"), Vector2(480, 37))
-	slot_exit.pressed.connect(toggle_slot)
-	slot_box.add_child(slot_exit)
+	slot_panel.connect("wager_requested", Callable(self, "lumi_slot_wager"))
+	slot_panel.connect("spin_resolved", Callable(self, "lumi_slot_reward"))
+	slot_panel.connect("reel_stopped", Callable(self, "lumi_slot_reel_stopped"))
+	slot_panel.connect("close_requested", Callable(self, "toggle_slot"))
 	slot_panel.hide()
 
 	merchant_panel = make_panel(Vector2(278, 92), Vector2(596, 466), Color("b4f1bd"))
@@ -1046,6 +1030,7 @@ func reset_game() -> void:
 	slot_roll = 0.0
 	slot_reel_step = 0.0
 	slot_panel.hide()
+	slot_panel.call("prepare_new_game")
 	jump_clock = 0.0
 	jump_cooldown = 0.0
 	jump_direction = Vector2.RIGHT
@@ -1625,6 +1610,9 @@ func toggle_slot() -> void:
 	if not slot_open and player.distance_to(SLOT_POS) > 105.0:
 		show_status("スロットマシンの近くでEキーを押してね", Color("ffe3a1"))
 		return
+	# Keep the game modal open until all three reels have been stopped.
+	if slot_open and bool(slot_panel.get("spinning")):
+		return
 	slot_open = not slot_open
 	slot_panel.visible = slot_open
 	if slot_open:
@@ -1635,62 +1623,57 @@ func toggle_slot() -> void:
 		refresh_slot_ui()
 
 func refresh_slot_ui() -> void:
-	slot_info.text = "所持金 %dG  /  1回 %dG" % [coins, SLOT_COST]
-	slot_spin_button.disabled = coins < SLOT_COST or slot_spin_clock > 0.0
+	if slot_panel != null:
+		slot_panel.call("set_wallet", coins)
 
-func spin_slot() -> void:
-	if state != "playing" or not slot_open or slot_spin_clock > 0.0:
+func lumi_slot_wager(cost: int) -> void:
+	if state != "playing" or not slot_open or coins < cost:
+		refresh_slot_ui()
 		return
-	if coins < SLOT_COST:
-		show_status("コインが足りません！ 敵を倒して集めよう", Color("ffbaad"))
-		return
-	coins -= SLOT_COST
-	slot_roll = rng.randf()
-	slot_spin_clock = 1.6
-	slot_reel_step = 0.0
-	slot_result.text = "◆  ◇  ★  回転中..."
-	slot_prize_icon.texture = null
-	slot_prize_icon.hide()
+	coins -= cost
+	slot_panel.call("set_wallet", coins)
+	slot_panel.call("begin_spin")
+	refresh_hotbar()
+	play_sound(AUDIO_PICKUP, -15.0, 1.4)
+
+func lumi_slot_reel_stopped(_index: int) -> void:
+	play_sound(AUDIO_PICKUP, -24.0, 1.7)
+
+func lumi_slot_reward(outcome: String, payout: int) -> void:
+	# The Godot reels decide the outcome before the STOP buttons animate it.
+	# Payment and loot are awarded here, never by browser-side scripts.
+	coins += maxi(0, payout)
+	var prize_pos: Vector2 = SLOT_POS + Vector2(130, 145)
+	var gear_won := false
+	match outcome:
+		"BIG":
+			var jackpot_rarity: int = 4 if rng.randf() < 0.10 else 3
+			spawn_drop(prize_pos, jackpot_rarity)
+			gear_won = true
+			play_sound(AUDIO_LEGEND, -5.0)
+			trigger_camera_shake(0.25, 10.0)
+		"REG":
+			spawn_drop(prize_pos, 2)
+			gear_won = true
+			play_sound(AUDIO_EPIC, -12.0)
+		"GRAPE":
+			if rng.randf() < 0.14:
+				spawn_drop(prize_pos, 1)
+				gear_won = true
+		"CHERRY":
+			if rng.randf() < 0.20:
+				spawn_armor_drop(prize_pos, 1)
+				gear_won = true
+	if gear_won:
+		show_status("LUMI SLOT %s！ 景品はスロット右下の受け取り台へ" % outcome, Color("ffe19b"))
+	elif outcome == "REPLAY":
+		show_status("リプレイ！ 次回のスロットは無料", Color("a4eaff"))
+	elif payout > 0:
+		show_status("LUMI SLOT %s：%dG獲得" % [outcome, payout], Color("a7ffcb"))
+	else:
+		show_status("LUMI SLOT はずれ…", Color("d4bfd9"))
 	refresh_slot_ui()
 	refresh_hotbar()
-	play_sound(AUDIO_PICKUP, -12.0, 1.5)
-
-func resolve_slot_spin() -> void:
-	var prize_pos: Vector2 = SLOT_POS + Vector2(130, 145)
-	var won_equipment := false
-	if slot_roll < 0.01:
-		slot_result.text = "★ ★ ★  神話級 MYTHIC 大当たり！"
-		spawn_drop(prize_pos, 4)
-		won_equipment = true
-		play_sound(AUDIO_LEGEND, -4.0)
-	elif slot_roll < 0.06:
-		slot_result.text = "★ ★ ★  LEGENDARY 当たり！"
-		spawn_drop(prize_pos, 3)
-		won_equipment = true
-	elif slot_roll < 0.20:
-		slot_result.text = "◆ ◆ ◆  EPIC 装備！"
-		spawn_drop(prize_pos, 2)
-		won_equipment = true
-	elif slot_roll < 0.48:
-		slot_result.text = "◇ ◇ ◇  RARE 装備！"
-		if rng.randf() < 0.5:
-			spawn_armor_drop(prize_pos, 1)
-			won_equipment = true
-		else:
-			spawn_drop(prize_pos, 1)
-			won_equipment = true
-	else:
-		seeds += 2
-		slot_result.text = "◇ ◆ ◇  はずれ… おまけで種+2"
-		play_sound(AUDIO_IMPACT, -21.0)
-	if won_equipment and not drops.is_empty():
-		slot_prize_icon.texture = item_icon(drops.back())
-		slot_prize_icon.show()
-	else:
-		slot_prize_icon.texture = null
-		slot_prize_icon.hide()
-	refresh_slot_ui()
-	show_status("スロット結果：%s  （装備はマシン右下の景品台）" % slot_result.text, Color("ffe0a1"))
 
 func revive_mint() -> void:
 	if not mint_soul_carried:
@@ -1881,6 +1864,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		if slot_open:
 			if event.keycode == KEY_ESCAPE or event.keycode == KEY_E:
 				toggle_slot()
+			else:
+				slot_panel.call("handle_slot_key", event.keycode)
 			return
 		if cooking_open:
 			if event.keycode == KEY_ESCAPE or event.keycode == KEY_E:
@@ -2038,15 +2023,6 @@ func _process(delta: float) -> void:
 	jump_cooldown = maxf(0.0, jump_cooldown - delta)
 	jump_clock = maxf(0.0, jump_clock - delta)
 	update_guard_state(delta)
-	if slot_spin_clock > 0.0:
-		slot_spin_clock = maxf(0.0, slot_spin_clock - delta)
-		slot_reel_step -= delta
-		if slot_reel_step <= 0.0:
-			slot_reel_step = 0.09
-			var reels := ["★", "◆", "◇", "7"]
-			slot_result.text = "%s  %s  %s  回転中..." % [reels[rng.randi_range(0, 3)], reels[rng.randi_range(0, 3)], reels[rng.randi_range(0, 3)]]
-		if slot_spin_clock <= 0.0:
-			resolve_slot_spin()
 	enemy_sound_cooldown = maxf(0.0, enemy_sound_cooldown - delta)
 	if state != "playing" or inventory_open or cooking_open or slot_open or merchant_open or rabbit_menu_open or upgrade_open or stash_open:
 		update_hud()
