@@ -1,6 +1,6 @@
 extends Node2D
 
-# DOPAGAKI v0.14.4 — custom rest/battle OGG BGM plus illustrated bag/cooking UI.
+# DOPAGAKI v0.17 — Moonlit Forest Visual Overhaul (Drive published base b36).
 # Solo prototype; network/4-player functionality is NOT implemented.
 # Compatible with Godot 4.3–4.7; one runnable Node2D scene.
 
@@ -136,6 +136,27 @@ const MEAL_ICONS := [
 	preload("res://assets/ui_icons/parfait.png")
 ]
 const FOREST_FLOOR: Texture2D = preload("res://assets/visual_v016/forest_floor.png")
+const FOREST_VARIANTS := [
+	preload("res://assets/visual_v017/forest_0.png"),
+	preload("res://assets/visual_v017/forest_1.png"),
+	preload("res://assets/visual_v017/forest_2.png"),
+	preload("res://assets/visual_v017/forest_3.png")
+]
+const CAMP_GROUND_V017: Texture2D = preload("res://assets/visual_v017/camp_organic.png")
+const FOREST_TREE_V017: Texture2D = preload("res://assets/visual_v017/forest_tree.png")
+const TENT_V017: Texture2D = preload("res://assets/visual_v017/canvas_tent.png")
+const BARRELS_V017: Texture2D = preload("res://assets/visual_v017/barrel_stack.png")
+const RUNE_V017: Texture2D = preload("res://assets/visual_v017/rune_stone.png")
+const BANNER_V017: Texture2D = preload("res://assets/visual_v017/banner_celtic.png")
+const FENCE_V017: Texture2D = preload("res://assets/visual_v017/forest_fence.png")
+const FERN_V017: Texture2D = preload("res://assets/visual_v017/fern.png")
+const ROCK_V017: Texture2D = preload("res://assets/visual_v017/boulder.png")
+const GLOW_AMBER_V017: Texture2D = preload("res://assets/visual_v017/glow_amber.png")
+const GLOW_MOON_V017: Texture2D = preload("res://assets/visual_v017/glow_moon.png")
+const GLOW_GREEN_V017: Texture2D = preload("res://assets/visual_v017/glow_emerald.png")
+const MINI_BACKGROUND_V017: Texture2D = preload("res://assets/visual_v017/minimap_bg.png")
+const HERO_BADGE_V017: Texture2D = preload("res://assets/visual_v017/hero_portrait.png")
+const BUNNY_BADGE_V017: Texture2D = preload("res://assets/visual_v017/bunny_portrait.png")
 const CAMP_FLOOR: Texture2D = preload("res://assets/visual_v016/camp_cobblestone.png")
 const CAMP_LANTERN: Texture2D = preload("res://assets/visual_v016/camp_lantern.png")
 const LOOT_FRAME: Texture2D = preload("res://assets/visual_v016/loot_frame.png")
@@ -143,7 +164,7 @@ const STASH_ART: Texture2D = preload("res://assets/visual_v016/stash_chest.png")
 const SLOT_ART: Texture2D = preload("res://assets/visual_v016/slot_machine.png")
 const COOK_ART: Texture2D = preload("res://assets/visual_v016/campfire_pot.png")
 const MERCHANT_ART: Texture2D = preload("res://assets/visual_v016/merchant_stall.png")
-const VISUALS_REVISION := "v0.16 見た目強化"
+const VISUALS_REVISION := "v0.17 翡翠の森・夜光キャンプ"
 const RARITY_COLORS := [Color("d0e2f1"), Color("59cdff"), Color("d493ff"), Color("ffd568"), Color("ff91d9")]
 const RARITY_DAMAGE := [1.0, 1.38, 1.88, 2.85, 4.4]
 const RARITY_RATE := [1.0, 1.06, 1.13, 1.22, 1.33]
@@ -411,6 +432,8 @@ var cooking_buttons: Array[Button] = []
 var meal_display_buttons: Array[Button] = []
 var defense_label: Label
 var inventory_status: Label
+var minimap_panel: Control
+var minimap_marker: Panel
 
 func _ready() -> void:
 	rng.randomize()
@@ -451,6 +474,8 @@ func make_style(fill: Color, border: Color, radius: int = 14) -> StyleBoxFlat:
 	style.set_border_width_all(2)
 	style.set_corner_radius_all(radius)
 	style.corner_detail = 7
+	style.shadow_size = 3
+	style.shadow_color = Color("050a12", 0.55)
 	return style
 
 func make_label(value: String, font_size: int, tint: Color, center: bool = false) -> Label:
@@ -467,9 +492,11 @@ func make_panel(pos: Vector2, min_size: Vector2, border: Color) -> PanelContaine
 	var panel := PanelContainer.new()
 	panel.position = pos
 	panel.custom_minimum_size = min_size
-	var panel_style: StyleBoxFlat = make_style(Color("111827"), border, 13)
-	panel_style.shadow_size = 10
-	panel_style.shadow_color = Color(0.01, 0.02, 0.04, 0.65)
+	var panel_style: StyleBoxFlat = make_style(Color("111b27"), border.darkened(0.23), 10)
+	panel_style.set_border_width_all(3)
+	panel_style.shadow_size = 16
+	panel_style.shadow_offset = Vector2(0, 6)
+	panel_style.shadow_color = Color(0.01, 0.02, 0.04, 0.84)
 	panel_style.content_margin_top = 1.0
 	panel.add_theme_stylebox_override("panel", panel_style)
 	var padding := MarginContainer.new()
@@ -487,9 +514,9 @@ func make_button(text_value: String, color: Color, min_size: Vector2) -> Button:
 	b.add_theme_font_override("font", ui_font)
 	b.add_theme_font_size_override("font_size", 19)
 	b.add_theme_color_override("font_color", Color("f4faff"))
-	b.add_theme_stylebox_override("normal", make_style(Color("203047"), color.darkened(0.18), 8))
-	b.add_theme_stylebox_override("hover", make_style(Color("344763"), color.lightened(0.22), 8))
-	b.add_theme_stylebox_override("pressed", make_style(Color("475775"), color, 8))
+	b.add_theme_stylebox_override("normal", make_style(Color("1c2b39"), color.darkened(0.19), 8))
+	b.add_theme_stylebox_override("hover", make_style(Color("314352"), color.lightened(0.14), 8))
+	b.add_theme_stylebox_override("pressed", make_style(Color("3d4f60"), color, 8))
 	return b
 
 func make_health_bar(pos: Vector2, dims: Vector2, fill_color: Color) -> ProgressBar:
@@ -511,12 +538,30 @@ func build_ui() -> void:
 	status_back.position = Vector2.ZERO
 	status_back.size = Vector2(SIZE.x, 113.0)
 	status_back.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var status_style := make_style(Color(0.055, 0.078, 0.13, 0.88), Color(0.57, 0.46, 0.29, 0.60), 0)
+	var status_style := make_style(Color(0.055, 0.075, 0.107, 0.94), Color(0.69, 0.51, 0.27, 0.72), 0)
 	status_style.border_width_top = 0
 	status_style.border_width_left = 0
 	status_style.border_width_right = 0
 	layer.add_child(status_back)
 	status_back.add_theme_stylebox_override("panel", status_style)
+	var hero_medallion := TextureRect.new()
+	hero_medallion.texture = HERO_BADGE_V017
+	hero_medallion.position = Vector2(3, 9)
+	hero_medallion.size = Vector2(42, 42)
+	hero_medallion.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	hero_medallion.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	hero_medallion.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	hero_medallion.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(hero_medallion)
+	var bunny_medallion := TextureRect.new()
+	bunny_medallion.texture = BUNNY_BADGE_V017
+	bunny_medallion.position = Vector2(338, 40)
+	bunny_medallion.size = Vector2(23, 23)
+	bunny_medallion.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	bunny_medallion.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	bunny_medallion.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	bunny_medallion.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(bunny_medallion)
 	hud = make_label("", 15, Color("eaf6ff"))
 	hud.position = Vector2(48, 8)
 	layer.add_child(hud)
@@ -579,6 +624,39 @@ func build_ui() -> void:
 	banner.custom_minimum_size = Vector2(860, 64)
 	layer.add_child(banner)
 
+	# Compact live-position map. Markers use the real ARENA / player coordinates,
+	# not a fake static screenshot.
+	minimap_panel = Control.new()
+	minimap_panel.position = Vector2(969, 128)
+	minimap_panel.custom_minimum_size = Vector2(168, 140)
+	minimap_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(minimap_panel)
+	var mini_art := TextureRect.new()
+	mini_art.texture = MINI_BACKGROUND_V017
+	mini_art.size = Vector2(168, 140)
+	mini_art.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	mini_art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	minimap_panel.add_child(mini_art)
+	for camp_location in CAMP_STATIONS:
+		var camp_dot := Label.new()
+		camp_dot.text = "◆"
+		camp_dot.position = Vector2(4, 0) + Vector2((camp_location.x - ARENA.position.x) / ARENA.size.x * 150.0, (camp_location.y - ARENA.position.y) / ARENA.size.y * 121.0)
+		camp_dot.add_theme_font_size_override("font_size", 13)
+		camp_dot.add_theme_color_override("font_color", Color("f3c67a"))
+		camp_dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		minimap_panel.add_child(camp_dot)
+	minimap_marker = Panel.new()
+	minimap_marker.size = Vector2(9, 9)
+	minimap_marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var marker_style := make_style(Color("d5edfc"), Color("62cfff"), 5)
+	marker_style.set_border_width_all(2)
+	minimap_marker.add_theme_stylebox_override("panel", marker_style)
+	minimap_panel.add_child(minimap_marker)
+	var map_caption := make_label("翡翠の森 · 現在地", 12, Color("d1e9d6"), true)
+	map_caption.position = Vector2(-1, -21)
+	map_caption.custom_minimum_size = Vector2(168, 19)
+	minimap_panel.add_child(map_caption)
+	minimap_panel.hide()
 	# Character creation is intentionally a single menu, with six class archetypes.
 	choose_panel = make_panel(Vector2(112, 32), Vector2(928, 552), Color("42cfd5"))
 	layer.add_child(choose_panel)
@@ -1467,14 +1545,14 @@ func refresh_hotbar() -> void:
 			btn.text = "%d  空き" % (i + 1)
 			btn.icon = null
 			btn.tooltip_text = "空きスロット"
-			btn.add_theme_stylebox_override("normal", make_style(Color("1d2b3d"), Color("536a85"), 8))
+			btn.add_theme_stylebox_override("normal", make_style(Color("15232c"), Color("6b665a"), 7))
 		else:
 			var rarity: int = int(item["rarity"])
 			btn.icon = item_icon(item)
 			var short_name: String = WEAPON_SHORT[int(item["kind"])] if str(item["type"]) == "weapon" else ARMOR_SHORT[int(item["slot"])]
 			btn.text = "%d %s" % [i + 1, short_name]
 			btn.tooltip_text = item_description(item) + "\nクリック / 数字キーで装備"
-			btn.add_theme_stylebox_override("normal", make_style(Color("253349"), RARITY_COLORS[rarity], 8))
+			btn.add_theme_stylebox_override("normal", make_style(Color("152430"), RARITY_COLORS[rarity], 7))
 	hotbar_currency.text = "所持金 %dG\n種:人参%d/メロン%d/スイカ%d" % [coins, seeds, melon_seeds, watermelon_seeds]
 
 func item_icon(item: Dictionary) -> Texture2D:
@@ -3596,6 +3674,8 @@ func update_hud() -> void:
 	help.text = "WASD移動 左クリック攻撃 右クリックガード[%s]  SPACE回避 E操作 Iバッグ P能力 Tちゅぶら C操作方法" % guard_status
 	hotbar_container.visible = state == "playing" or state == "upgrade"
 	hotbar_currency.visible = state == "playing" or state == "upgrade"
+	minimap_panel.visible = state == "playing" or state == "upgrade"
+	minimap_marker.position = Vector2(5.0 + clampf((player.x - ARENA.position.x) / ARENA.size.x, 0.0, 1.0) * 150.0, 6.0 + clampf((player.y - ARENA.position.y) / ARENA.size.y, 0.0, 1.0) * 121.0)
 
 func draw_character(sheet: Texture2D, pos: Vector2, frame: int, right_side: bool, scale_factor: float, tint: Color, tilt: float = 0.0) -> void:
 	# Original art faces left. Mirroring horizontally lets the character face the aim.
@@ -3832,8 +3912,9 @@ func draw_farm_and_kitchen() -> void:
 	for station in CAMP_STATIONS:
 		var f: Vector2 = station
 		var flame_glow: float = 1.0 + 0.08 * sin(elapsed * 7.4)
-		draw_circle(f + Vector2(0, 9), 85.0 * flame_glow, Color("ffc478", 0.042))
-		draw_circle(f + Vector2(0, 5), 45.0 * flame_glow, Color("ffb26d", 0.09))
+		draw_v017_glow(f + Vector2(0, -10), GLOW_AMBER_V017, 370.0 * flame_glow, 0.85)
+		draw_circle(f + Vector2(0, 9), 85.0 * flame_glow, Color("ffc478", 0.055))
+		draw_circle(f + Vector2(0, 5), 45.0 * flame_glow, Color("ffb26d", 0.12))
 		draw_texture_rect(COOK_ART, Rect2(f - Vector2(62.0, 80.0), Vector2(124.0, 116.0)), false)
 		draw_string(ui_font, f + Vector2(-43, 55), "料理 [E]", HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color("ffdda4"))
 	draw_string(ui_font, Vector2(1390, 675), "農場 [E/F]", HORIZONTAL_ALIGNMENT_LEFT, -1, 18, Color("b8f1ba"))
@@ -4135,52 +4216,78 @@ func draw_accessory(pos: Vector2) -> void:
 			var a := float(i) * TAU / 5.0 + elapsed * 1.4
 			draw_circle(pos + Vector2.RIGHT.rotated(a) * 43.0, 3.0, Color("a4dfff"))
 
+func draw_v017_glow(at: Vector2, texture: Texture2D, diameter: float, alpha: float = 1.0) -> void:
+	draw_texture_rect(texture, Rect2(at - Vector2.ONE * diameter * 0.5, Vector2.ONE * diameter), false, Color(1.0, 1.0, 1.0, alpha))
+
 func draw_fantasy_ground() -> void:
-	# Texture tiles only near the camera; unlike a full-screen image, this stays playable as the map expands.
-	draw_rect(ARENA.grow(120.0), Color("0b1420"))
-	var tile_size := 256.0
-	var left_tile := int(floor((player.x - 870.0) / tile_size))
-	var right_tile := int(ceil((player.x + 870.0) / tile_size))
-	var top_tile := int(floor((player.y - 560.0) / tile_size))
-	var bottom_tile := int(ceil((player.y + 560.0) / tile_size))
+	# A painterly pixel forest: four varied tiles keep the huge arena from looking stamped.
+	draw_rect(ARENA.grow(120.0), Color("0a151c"))
+	var tile_size: float = 256.0
+	var left_tile: int = int(floor((player.x - 870.0) / tile_size))
+	var right_tile: int = int(ceil((player.x + 870.0) / tile_size))
+	var top_tile: int = int(floor((player.y - 560.0) / tile_size))
+	var bottom_tile: int = int(ceil((player.y + 560.0) / tile_size))
 	for tx in range(left_tile, right_tile + 1):
 		for ty in range(top_tile, bottom_tile + 1):
 			var dest := Rect2(float(tx) * tile_size, float(ty) * tile_size, tile_size, tile_size)
 			if dest.intersects(ARENA):
-				draw_texture_rect(FOREST_FLOOR, dest, false)
-	# Ground stays matte, so equipment and drop beams remain unmistakable.
+				var variant: int = posmod(tx * 19 + ty * 13 + tx * ty, FOREST_VARIANTS.size())
+				draw_texture_rect(FOREST_VARIANTS[variant], dest, false)
+	# Decorative foliage is intentionally subdued: loot and usable objects remain bright.
 	for prop in scenery:
 		var p: Vector2 = prop["pos"]
-		if p.distance_to(player) > 850.0:
+		if p.distance_to(player) > 825.0:
 			continue
-		var rad: float = 18.0 * float(prop["size"])
-		if int(prop["kind"]) == 0:
-			draw_circle(p + Vector2(2, 7), rad + 5.0, Color("142d2d", 0.55))
-			draw_circle(p, rad + 1.0, Color("1d4439"))
-			for dx in [-8.0, 0.0, 8.0]:
-				draw_circle(p + Vector2(dx, -5.0 + absf(dx) * 0.13), rad * 0.49, Color("47745b", 0.83))
-		elif int(prop["kind"]) == 1:
-			var pts := PackedVector2Array([p + Vector2(-rad, rad * 0.3), p + Vector2(-rad * 0.58, -rad * 0.7), p + Vector2(rad * 0.25, -rad), p + Vector2(rad, -rad * 0.2), p + Vector2(rad * 0.65, rad * 0.55), p + Vector2(-rad * 0.3, rad * 0.75)])
-			draw_colored_polygon(pts, Color("415459"))
-			draw_line(p + Vector2(-rad * 0.48, -rad * 0.56), p + Vector2(rad * 0.18, -rad * 0.80), Color("79938b", 0.70), 3.0)
-		else:
-			for blade in range(5):
-				var px := float(blade - 2) * 4.0
-				draw_line(p + Vector2(px, 5), p + Vector2(px * 1.30, -10.0 - float(blade % 2) * 5.0), Color("639469", 0.70), 2.0)
+		var scale_size: float = float(prop["size"])
+		match int(prop["kind"]):
+			0:
+				var fsize: Vector2 = Vector2(61, 55) * scale_size
+				draw_texture_rect(FERN_V017, Rect2(p - fsize * 0.5, fsize), false, Color(0.72, 0.81, 0.80, 0.82))
+			1:
+				var rock_size: Vector2 = Vector2(60, 45) * scale_size
+				draw_texture_rect(ROCK_V017, Rect2(p - rock_size * 0.5, rock_size), false, Color(0.77, 0.84, 0.90, 0.78))
+			2:
+				var fsize2: Vector2 = Vector2(38, 39) * scale_size
+				draw_texture_rect(FERN_V017, Rect2(p - fsize2 * 0.5, fsize2), false, Color(0.60, 0.83, 0.77, 0.86))
+	# Organic stone circles replace the previous repetitive square / rigid paving.
 	for station in CAMP_STATIONS:
-		# Cobblestone, warm inlaid runes and cozy lamps instead of a flat green circle.
-		draw_texture_rect(CAMP_FLOOR, Rect2(station - Vector2(384.0, 384.0), Vector2(768.0, 768.0)), false)
-		draw_circle(station, CAMP_RADIUS, Color("a3eac4", 0.025 if phase == "combat" else 0.060))
-		draw_arc(station, CAMP_RADIUS - 14.0, 0.0, TAU, 80, Color("b8e8a7", 0.68), 3.0)
-		for i in range(8):
-			var angle := TAU * float(i) / 8.0 + PI / 8.0
-			var lp: Vector2 = station + Vector2.RIGHT.rotated(angle) * 304.0
-			var flicker: float = 0.90 + 0.10 * sin(elapsed * 8.0 + float(i))
-			draw_circle(lp + Vector2(0, -28), 53.0 * flicker, Color("ffd78a", 0.055))
-			draw_circle(lp + Vector2(0, -28), 26.0 * flicker, Color("ffc681", 0.09))
-			draw_texture_rect(CAMP_LANTERN, Rect2(lp - Vector2(20.0, 73.0), Vector2(40.0, 78.0)), false)
-		draw_string(ui_font, station + Vector2(-87, -CAMP_RADIUS - 15), "✦ 安全キャンプ / 武器使用不可", HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color("f5e2b6"))
-	draw_rect(ARENA, Color("637d82"), false, 4.0)
+		if station.distance_to(player) > 1260.0:
+			continue
+		draw_v017_glow(station + Vector2(0, -100), GLOW_AMBER_V017, 760.0, 0.75)
+		draw_texture_rect(CAMP_GROUND_V017, Rect2(station - Vector2(384, 384), Vector2(768, 768)), false)
+		draw_circle(station, CAMP_RADIUS, Color("a3eac4", 0.020 if phase == "combat" else 0.035))
+		draw_arc(station, CAMP_RADIUS - 12.0, 0.0, TAU, 80, Color("b4cea8", 0.32), 2.0)
+		# Cozy embroidered tent, woodland banner, supplies, and wood fences.
+		var tent_center: Vector2 = station + Vector2(-170, -168)
+		draw_texture_rect(TENT_V017, Rect2(tent_center - Vector2(114, 91), Vector2(226, 172)), false)
+		draw_texture_rect(BARRELS_V017, Rect2(station + Vector2(-252, 115), Vector2(88, 70)), false)
+		draw_texture_rect(BANNER_V017, Rect2(station + Vector2(122, -298), Vector2(64, 168)), false)
+		draw_texture_rect(FENCE_V017, Rect2(station + Vector2(-35, 270), Vector2(190, 53)), false)
+		for i in range(6):
+			var angle: float = TAU * float(i) / 6.0 + PI / 6.0
+			var lp: Vector2 = station + Vector2.RIGHT.rotated(angle) * 318.0
+			var flicker: float = 0.96 + 0.04 * sin(elapsed * 7.0 + float(i))
+			draw_v017_glow(lp + Vector2(0, -57), GLOW_AMBER_V017, 230.0 * flicker, 0.70)
+			draw_texture_rect(CAMP_LANTERN, Rect2(lp - Vector2(16.0, 71.0), Vector2(32.0, 65.0)), false)
+			draw_circle(lp + Vector2(0, -57), 3.0 * flicker, Color("fff3b1", 0.93))
+		# fireflies slowly orbit away from interaction labels
+		for j in range(15):
+			var theta: float = float(j) * 2.39996 + elapsed * (0.10 if j % 2 == 0 else -0.06)
+			var distance: float = 95.0 + float(j % 6) * 35.0
+			var firefly: Vector2 = station + Vector2(cos(theta) * distance, sin(theta) * distance * 0.70 - 29.0)
+			var fade: float = 0.22 + 0.28 * (0.5 + 0.5 * sin(elapsed * 2.7 + float(j) * 3.0))
+			draw_circle(firefly, 2.0, Color("b6fbd4", fade))
+		draw_string(ui_font, station + Vector2(-86, -CAMP_RADIUS - 17), "✦ 月光キャンプ / 安全区域", HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color("f6deb0"))
+	# Trees and ruined rune-stones flank the camp without covering the action or pickups.
+	var grove := [Vector2(700, 485), Vector2(745, 1220), Vector2(1570, 385), Vector2(1570, 1415), Vector2(2060, 620), Vector2(2400, 1455), Vector2(2820, 650), Vector2(3050, 2320)]
+	for tree_pos in grove:
+		if tree_pos.distance_to(player) < 850.0:
+			draw_texture_rect(FOREST_TREE_V017, Rect2(tree_pos - Vector2(95, 170), Vector2(190, 191)), false)
+	for rune_pos in [Vector2(1640, 760), Vector2(1940, 1720), Vector2(2650, 1050), Vector2(2950, 1670)]:
+		if rune_pos.distance_to(player) < 800.0:
+			draw_v017_glow(rune_pos - Vector2(0, 30), GLOW_MOON_V017, 195.0, 0.32)
+			draw_texture_rect(RUNE_V017, Rect2(rune_pos - Vector2(36, 111), Vector2(72, 104)), false)
+	draw_rect(ARENA, Color("5d8584", 0.72), false, 3.0)
 
 func _draw() -> void:
 	draw_fantasy_ground()
@@ -4336,8 +4443,9 @@ func _draw() -> void:
 			var radius := 110.0 if wtype == 2 else 155.0
 			var sweep := 0.95 if wtype == 2 else 1.21
 			var opacity := clampf(attack_clock / attack_duration, 0.0, 1.0)
-			draw_arc(player, radius, aim_angle - sweep, aim_angle + sweep, 35, Color(color, opacity), 11.0 if wtype == 3 else 7.0)
-			draw_arc(player, radius - 12.0, aim_angle - sweep, aim_angle + sweep, 35, Color("ffffff", opacity * 0.6), 2.0)
+			draw_arc(player, radius + 5.0, aim_angle - sweep, aim_angle + sweep, 35, Color(color, opacity * 0.20), 25.0 if wtype == 3 else 17.0)
+			draw_arc(player, radius, aim_angle - sweep, aim_angle + sweep, 35, Color(color, opacity * 0.91), 10.0 if wtype == 3 else 7.0)
+			draw_arc(player, radius - 12.0, aim_angle - sweep, aim_angle + sweep, 35, Color("fff6e3", opacity * 0.75), 2.5)
 			draw_arc(player, radius * 0.86, aim_angle - sweep + 0.18, aim_angle + sweep + 0.18, 35, Color(color, opacity * 0.38), 14.0)
 			var tip_a := aim_angle + sweep
 			var tip := player + Vector2.RIGHT.rotated(tip_a) * radius
