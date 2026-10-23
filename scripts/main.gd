@@ -28,6 +28,8 @@ const PIERO_WALK: Texture2D = preload("res://assets/piero_walk.png")
 # 48px frames in the order idle / walk / skill-or-dash / hit.
 const HIHI_ART: Texture2D = preload("res://assets/characters/hihi_actions.png")
 const HEALER_ART: Texture2D = preload("res://assets/characters/healer_actions.png")
+# New ninja job art: 8 x 48px action frames.
+const NINJA_ART: Texture2D = preload("res://assets/characters/ninja_actions.png")
 const STORM_BRUTE: Texture2D = preload("res://assets/storm_brute_walk.png")
 const NIGHT_REAPER: Texture2D = preload("res://assets/night_reaper_walk.png")
 const MINT_SPRITE: Texture2D = preload("res://assets/mint_companion_walk.png")
@@ -343,6 +345,7 @@ var cooking_open := false
 var food_buff_clock := 0.0
 var heal_spell_clock := 0.0
 var healer_cast_visual_clock := 0.0
+var ninja_cast_visual_clock := 0.0
 var player := Vector2(1208, 870)
 var hp := 100.0
 var max_hp := 100.0
@@ -710,6 +713,12 @@ func build_ui() -> void:
 			healer_icon.region = Rect2(0, 0, 48, 48)
 			btn.icon = healer_icon
 			btn.expand_icon = true
+		elif i == 6:
+			var ninja_icon := AtlasTexture.new()
+			ninja_icon.atlas = NINJA_ART
+			ninja_icon.region = Rect2(0, 0, 48, 48)
+			btn.icon = ninja_icon
+			btn.expand_icon = true
 		btn.pressed.connect(select_class.bind(i))
 		grid.add_child(btn)
 		class_buttons.append(btn)
@@ -1029,6 +1038,7 @@ func reset_game() -> void:
 	state = "choose"
 	class_id = 0
 	healer_cast_visual_clock = 0.0
+	ninja_cast_visual_clock = 0.0
 	player = Vector2(1208, 870)
 	camera.position = player
 	coins = 0
@@ -2071,6 +2081,7 @@ func _process(delta: float) -> void:
 	skill_buff_clock = maxf(0.0, skill_buff_clock - delta)
 	skill_guard_clock = maxf(0.0, skill_guard_clock - delta)
 	healer_cast_visual_clock = maxf(0.0, healer_cast_visual_clock - delta)
+	ninja_cast_visual_clock = maxf(0.0, ninja_cast_visual_clock - delta)
 	shadow_clone_clock = maxf(0.0, shadow_clone_clock - delta)
 	mp = minf(max_mp, mp + (1.6 + float(hero_stats[3]) * 0.3) * delta)
 	heal_spell_clock = maxf(0.0, heal_spell_clock - delta)
@@ -2904,9 +2915,8 @@ func draw_shadow_clones() -> void:
 	for i in range(total):
 		var at: Vector2 = ninja_clone_position(i, total)
 		draw_circle(at + Vector2(0, 17), 18.0, Color("5a3ca0", 0.22))
-		draw_character(WOLF_WALK, at, int(walk_clock) % 4, cos(aim_angle) > 0.0, 1.72, Color(0.67, 0.50, 1.0, 0.61))
-		draw_rect(Rect2(at + Vector2(-12, -36), Vector2(24, 11)), Color("59387a", 0.79))
-		draw_string(ui_font, at + Vector2(-25, -51), "分身", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("d9c9ff"))
+		draw_ninja_sprite(at, 1 if int(elapsed * 6.0) % 2 == 0 else 6, cos(aim_angle) > 0.0, Color(1.0, 0.53, 0.65, 0.62))
+		draw_string(ui_font, at + Vector2(-25, -65), "分身", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("ffc5d4"))
 
 func update_corpses(delta: float) -> void:
 	for i in range(corpses.size() - 1, -1, -1):
@@ -3461,7 +3471,8 @@ func activate_class_skill() -> void:
 		6: # Ninja: shadow clones independently throw kunai at nearby enemies.
 			shadow_clone_clock = 12.0 if enhanced else 8.0
 			shadow_clone_fire = 0.1
-			burst(player, Color("c4a2ff"), 50)
+			ninja_cast_visual_clock = 0.75
+			burst(player, Color("e55365"), 50)
 	show_status("スキル発動！ %s%s" % [SKILL_NAMES[class_id], "・強化版" if enhanced else ""], Color("b6edff"))
 	play_sound(AUDIO_EPIC, -19.0)
 
@@ -3723,6 +3734,12 @@ func draw_player_with_armor(sheet: Texture2D, pos: Vector2, frame: int, right_si
 		var tier := clampi(int(armor["rarity"]), 0, 3)
 		var overlay: Texture2D = ARMOR_VISUALS[slot][tier]
 		draw_texture_rect_region(overlay, Rect2(-16, -25, 32, 40), Rect2(texture_frame * 32, 0, 32, 40), Color.WHITE)
+	draw_set_transform(Vector2.ZERO)
+
+func draw_ninja_sprite(at: Vector2, frame: int, facing_right: bool, tint: Color = Color.WHITE) -> void:
+	# 48px transparent pixel art. Match the footprint of the existing hero sprite.
+	draw_set_transform(at, 0.0, Vector2(-1.0 if facing_right else 1.0, 1.0))
+	draw_texture_rect_region(NINJA_ART, Rect2(-41.0, -75.0, 82.0, 82.0), Rect2(float(clampi(frame, 0, 7) * 48), 0.0, 48.0, 48.0), tint)
 	draw_set_transform(Vector2.ZERO)
 
 func draw_brute(enemy: Dictionary) -> void:
@@ -4520,16 +4537,24 @@ func _draw() -> void:
 		draw_set_transform(player_center + Vector2(0, walk_bob - jump_height), 0.0, Vector2(1.0 if cos(aim_angle) > 0.0 else -1.0, 1.0))
 		draw_texture_rect_region(HEALER_ART, Rect2(-41.0, -75.0, 82.0, 82.0), Rect2(healer_frame * 48, 0, 48, 48), Color("ff9999") if hurt_clock > 0.0 else Color.WHITE)
 		draw_set_transform(Vector2.ZERO)
+	elif class_id == 6:
+		# Black-and-red umbrella ninja. No wolf sprite or old headband overlay.
+		var ninja_frame: int = 4  # Umbrella idle stance
+		if walk_clock > 0.0:
+			ninja_frame = 2 if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP) else (3 if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_LEFT) or Input.is_key_pressed(KEY_RIGHT) else 1)
+		if fighting:
+			ninja_frame = 5  # Umbrella slash
+		if jump_clock > 0.0:
+			ninja_frame = 6  # Dodge/dash
+		if ninja_cast_visual_clock > 0.0:
+			ninja_frame = 7  # Ninjutsu
+		draw_ninja_sprite(player_center + Vector2(0, walk_bob - jump_height), ninja_frame, cos(aim_angle) > 0.0, Color("ffb7b7") if hurt_clock > 0.0 else Color.WHITE)
 	else:
 		draw_player_with_armor(sprite, player_center + Vector2(0, walk_bob - jump_height), character_frame, cos(aim_angle) > 0.0, 1.82, Color("ff8585") if hurt_clock > 0.0 else WOLF_PALETTES[palette_id], lean)
-	if class_id == 6:
-		# Ninja mask and headband, layered over the hero's existing sprite.
-		draw_rect(Rect2(player_center + Vector2(-19, -35 - jump_height), Vector2(38, 16)), Color("28233f"))
-		draw_line(player_center + Vector2(-19, -39 - jump_height), player_center + Vector2(21, -39 - jump_height), Color("a96eff"), 4.0)
 	if freeze_lock_clock > 0.0:
 		draw_colored_polygon(PackedVector2Array([player + Vector2(-32, 21), player + Vector2(-39, -40), player + Vector2(-6, -72), player + Vector2(37, -43), player + Vector2(33, 23)]), Color("8be8ff", 0.20))
 		draw_arc(player + Vector2(0, -16), 42.0, 0.0, TAU, 28, Color("b7f2ff", 0.82), 3.0)
-	if class_id != 5:
+	if class_id != 5 and class_id != 6:
 		draw_accessory(player_center + Vector2(0, walk_bob - jump_height))
 	if state == "playing":
 		var muzzle := player + Vector2.RIGHT.rotated(aim_angle) * 39.0
