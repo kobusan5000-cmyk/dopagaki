@@ -1647,15 +1647,21 @@ func lumi_slot_reward(outcome: String, payout: int) -> void:
 	var gear_won := false
 	match outcome:
 		"BIG":
-			var jackpot_rarity: int = 4 if rng.randf() < 0.10 else 3
+			# Always an epic-or-better weapon: EPIC 74%, LEGENDARY 23%, MYTHIC 3%.
+			var big_roll: float = rng.randf()
+			var jackpot_rarity: int = 2 if big_roll < 0.74 else (3 if big_roll < 0.97 else 4)
 			spawn_drop(prize_pos, jackpot_rarity)
 			gear_won = true
-			play_sound(AUDIO_LEGEND, -5.0)
 			trigger_camera_shake(0.25, 10.0)
 		"REG":
-			spawn_drop(prize_pos, 2)
+			# Mostly ordinary equipment: COMMON 75%, RARE 22%, EPIC 3%.
+			var reg_roll: float = rng.randf()
+			var reg_rarity: int = 0 if reg_roll < 0.75 else (1 if reg_roll < 0.97 else 2)
+			if rng.randf() < 0.55:
+				spawn_drop(prize_pos, reg_rarity)
+			else:
+				spawn_armor_drop(prize_pos, reg_rarity)
 			gear_won = true
-			play_sound(AUDIO_EPIC, -12.0)
 		"GRAPE":
 			if rng.randf() < 0.14:
 				spawn_drop(prize_pos, 1)
