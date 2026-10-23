@@ -7,9 +7,9 @@ Implementation: `scripts/lumi_slot.gd`, Godot 4 native port of the user-supplied
 - Go to camp slot machine and press **E**.
 - **Space** or **レバーON**: spend 25 in-game G. A replay grants the next bet free.
 - **1/2/3** or **STOP 1/2/3**: stop reels in any order. Middle line only is valid.
-- **E/Esc**: close, after all reels are stopped. Use settings 1–6 or toggle auto mode in the modal.
+- **E/Esc**: close, after all reels are stopped. Toggle auto mode in the modal. The slot is permanently locked to setting 6; the player cannot select odds.
 - Outcomes are drawn when starting the reel spin, not affected by stop timing.
-- Bonus draw (fantasy game odds): BIG + REG occurs about **1 in 5 spins**. Settings 1–6 tune the combined rate from around 1/5.4 to 1/4.5; default setting 4 is about 1/4.9 (BIG 1/19, REG 1/6.6).
+- Bonus draw (fantasy game odds): **setting 6 only**, BIG 1/17 and REG 1/6.2; combined about **1/4.54**. No setting selector is displayed.
 - BIG: **160G + guaranteed EPIC-or-better weapon**. EPIC 74%, LEGENDARY 23%, MYTHIC 3% of BIG wins.
 - REG: **60G + one equipment drop**. COMMON 75%, RARE 22%, EPIC 3% of REG wins; 55% weapons / 45% armor.
 - Grapes: 8G and 14% chance of RARE weapon; Cherry: 2G and 20% RARE armor chance; Replay: next spin free.
@@ -23,7 +23,7 @@ Implementation: `scripts/lumi_slot.gd`, Godot 4 native port of the user-supplied
 2. Open camp slot using E. Observe G balance and per-spin cost.
 3. Start a spin and stop reels in any order. Verify outcome displayed after third stop only.
 4. Verify game G is deducted at lever and payout credited once per round; check free replay.
-5. Verify settings 1–6, auto mode, accumulated counts and difference-graph display.
+5. Verify there is **no setting selector**, the bonus display is fixed to BIG 1/17 / REG 1/6.2, and auto mode, accumulated counts and difference-graph display work.
 6. Verify jackpots spawn items at the collection platform rather than under the machine.
 7. Verify game restart cancels an active auto spin and resets modal state.
 
