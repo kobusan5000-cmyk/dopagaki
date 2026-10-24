@@ -75,6 +75,30 @@ jobs:
             exit 1
           fi
 
+      - name: Validate ALL IN rules
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot="$HOME/.cache/dopagaki-godot/godot"
+          timeout 40 "$godot" --headless --path . --script res://tests/test_all_in_rules.gd > godot-all-in-tests.log 2>&1 || {
+            cat godot-all-in-tests.log
+            echo "::error::ALL IN rules regression failed"
+            exit 1
+          }
+          cat godot-all-in-tests.log
+
+      - name: Validate ALL IN gameplay flow
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot="$HOME/.cache/dopagaki-godot/godot"
+          timeout 60 "$godot" --headless --path . --script res://tests/test_all_in_flow.gd > godot-all-in-flow.log 2>&1 || {
+            cat godot-all-in-flow.log
+            echo "::error::ALL IN gameplay flow failed"
+            exit 1
+          }
+          cat godot-all-in-flow.log
+
       - name: Launch Godot and smoke-test main scene
         shell: bash
         run: |
@@ -98,6 +122,8 @@ jobs:
           name: godot-pr-logs
           path: |
             godot-import.log
+            godot-all-in-tests.log
+            godot-all-in-flow.log
             godot-run.log
           if-no-files-found: ignore
           retention-days: 7

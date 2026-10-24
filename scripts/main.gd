@@ -12,6 +12,7 @@ const CAMP_ENEMY_MARGIN := 27.0
 const STASH_POS := Vector2(1390, 1085)
 const STASH_MAX := 16
 const STASH_SAVE := "user://dopagaki_stash_v1.json"
+const BANKED_GOLD_SAVE := "user://dopagaki_all_in_gold_v023.txt"
 const WANDERER_START := Vector2(1650, 850)
 const MAX_ENEMIES := 78
 const REST_PLAYER_HEAL_FRACTION := 0.24
@@ -57,6 +58,7 @@ const ARMOR_RARITY_MULT := [1.0, 1.6, 2.3, 3.5, 5.0]
 const BAG_CAPACITY := 5
 const SLOT_COST := 25
 const LUMI_SLOT_SCRIPT = preload("res://scripts/lumi_slot.gd")
+const ALL_IN_RULES = preload("res://scripts/all_in_rules.gd")
 const SLOT_POS := Vector2(865, 895)
 const REVIVE_SHRINE := Vector2(3060, 1860)
 const MERCHANT_POS := Vector2(1780, 985)
@@ -220,6 +222,7 @@ var accessory_id := 0
 var character_name := "Ookami"
 var base_class_speed := 262.0
 var coins := 0
+var banked_gold := 0  # Secure gold never disappears on death.
 var coin_drops: Array[Dictionary] = []
 var mint_soul_on_ground := false
 var mint_soul_carried := false
@@ -275,7 +278,7 @@ var combo_count := 0
 var combo_clock := 0.0
 var wave_damage_taken := 0.0
 var crit_sound_clock := 0.0
-var phase := "prep" # prep, combat, rest
+var phase := "prep" # prep, combat, rest, all_in
 var phase_clock := PREP_SECONDS
 var first_reaper_spawned := false
 var scenery: Array[Dictionary] = []
@@ -341,6 +344,23 @@ var rabbit_menu_open := false
 var rabbit_menu: PanelContainer
 var rabbit_menu_info: Label
 var rabbit_menu_buttons: Array[Button] = []
+# One in-run build. Power-ups are never carried between runs.
+var all_in_open := false
+var all_in_stage := ""  # decision or upgrade
+var all_in_options: Array[int] = []
+var all_in_stacks: Dictionary = {}
+var all_in_split := 0
+var all_in_pierce := 0
+var all_in_vamp := 0
+var all_in_chain := 0
+var all_in_crit := 0.0
+var all_in_panel: PanelContainer
+var all_in_title: Label
+var all_in_info: Label
+var all_in_perk_buttons: Array[Button] = []
+var all_in_cashout_button: Button
+var all_in_continue_button: Button
+var all_in_back_button: Button
 var upgrade_target := "hero"
 var mp := 30.0
 var max_mp := 30.0
@@ -433,6 +453,7 @@ var upgrade_hero_button: Button
 var upgrade_mint_button: Button
 var stash_panel: PanelContainer
 var stash_title: Label
+var banked_gold_withdraw_button: Button
 var stash_bag_buttons: Array[Button] = []
 var stash_storage_buttons: Array[Button] = []
 var stash_equip_button: Button
@@ -490,6 +511,7 @@ func _ready() -> void:
 	camera.limit_bottom = int(ARENA.end.y)
 	add_child(camera)
 	load_stash()
+	load_banked_gold()
 	reset_game()
 
 func make_style(fill: Color, border: Color, radius: int = 14) -> StyleBoxFlat:
@@ -1013,10 +1035,10 @@ func build_ui() -> void:
 	var exit_chest := make_button("閉じる [E / Esc]", Color("cdb184"), Vector2(250, 38))
 	exit_chest.pressed.connect(toggle_stash)
 	chest_controls.add_child(exit_chest)
-	var leave_btn := make_button("生還して帰還 [V]（持ち物も倉庫へ）", Color("99dfb8"), Vector2(370, 38))
-	leave_btn.add_theme_font_size_override("font_size", 14)
-	leave_btn.pressed.connect(extract_alive)
-	chest_controls.add_child(leave_btn)
+	banked_gold_withdraw_button = make_button("金庫から最大100Gを引き出す", Color("99dfb8"), Vector2(370, 38))
+	banked_gold_withdraw_button.add_theme_font_size_override("font_size", 14)
+	banked_gold_withdraw_button.pressed.connect(withdraw_banked_gold)
+	chest_controls.add_child(banked_gold_withdraw_button)
 	chest_box.add_child(chest_controls)
 	stash_panel.hide()
 	choose_panel.hide()
@@ -1024,6 +1046,37 @@ func build_ui() -> void:
 	rabbit_menu.hide()
 	upgrade_panel.hide()
 	dead_panel.hide()
+	# Created last: always in front of other menus. The world is frozen while shown.
+	all_in_panel = make_panel(Vector2(225, 111), Vector2(700, 418), Color("e8b76d"))
+	layer.add_child(all_in_panel)
+	var all_in_box := VBoxContainer.new()
+	all_in_box.add_theme_constant_override("separation", 9)
+	all_in_panel.get_child(0).add_child(all_in_box)
+	all_in_title = make_label("ALL IN", 32, Color("ffe3a1"), true)
+	all_in_box.add_child(all_in_title)
+	all_in_info = make_label("", 17, Color("e7e3f7"), true)
+	all_in_info.custom_minimum_size = Vector2(600, 72)
+	all_in_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	all_in_box.add_child(all_in_info)
+	for perk_index in range(3):
+		var perk_button := make_button("", Color("8cc8ef"), Vector2(600, 55))
+		perk_button.add_theme_font_size_override("font_size", 17)
+		perk_button.pressed.connect(select_all_in_perk.bind(perk_index))
+		all_in_box.add_child(perk_button)
+		all_in_perk_buttons.append(perk_button)
+	var action_row := HBoxContainer.new()
+	action_row.add_theme_constant_override("separation", 15)
+	all_in_box.add_child(action_row)
+	all_in_cashout_button = make_button("生還する [1]", Color("94edc2"), Vector2(289, 54))
+	all_in_cashout_button.pressed.connect(extract_alive)
+	action_row.add_child(all_in_cashout_button)
+	all_in_continue_button = make_button("ALL IN [2]", Color("ff9e9b"), Vector2(289, 54))
+	all_in_continue_button.pressed.connect(start_all_in_upgrades)
+	action_row.add_child(all_in_continue_button)
+	all_in_back_button = make_button("帰還の選択に戻る", Color("c7b7dc"), Vector2(600, 40))
+	all_in_back_button.pressed.connect(show_all_in_decision)
+	all_in_box.add_child(all_in_back_button)
+	all_in_panel.hide()
 
 func reset_game() -> void:
 	state = "choose"
@@ -1090,6 +1143,16 @@ func reset_game() -> void:
 	crit_sound_clock = 0.0
 	phase = "prep"
 	phase_clock = PREP_SECONDS
+	all_in_open = false
+	all_in_stage = ""
+	all_in_options.clear()
+	all_in_stacks.clear()
+	all_in_split = 0
+	all_in_pierce = 0
+	all_in_vamp = 0
+	all_in_chain = 0
+	all_in_crit = 0.0
+	all_in_panel.hide()
 	first_reaper_spawned = false
 	companion = player + Vector2(-59, 14)
 	companion_level = 1
@@ -1767,7 +1830,9 @@ func collect_coin(index: int) -> void:
 	refresh_hotbar()
 
 func spawn_coins(pos: Vector2, amount: int) -> void:
-	coin_drops.append({"pos": pos + Vector2(rng.randf_range(-22.0, 22.0), rng.randf_range(-20.0, 20.0)), "amount": amount, "life": 65.0, "phase": rng.randf() * TAU})
+	# Coins from enemies scale with the disclosed ALL IN WAVE multiplier.
+	var boosted_amount: int = maxi(1, roundi(float(amount) * ALL_IN_RULES.reward_multiplier(wave)))
+	coin_drops.append({"pos": pos + Vector2(rng.randf_range(-22.0, 22.0), rng.randf_range(-20.0, 20.0)), "amount": boosted_amount, "life": 65.0, "phase": rng.randf() * TAU})
 
 func update_coins(delta: float) -> void:
 	for i in range(coin_drops.size() - 1, -1, -1):
@@ -1892,6 +1957,18 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			reset_game()
 		return
 	if state == "playing":
+		if all_in_open:
+			if all_in_stage == "decision":
+				if event.keycode == KEY_1:
+					extract_alive()
+				elif event.keycode == KEY_2:
+					start_all_in_upgrades()
+			elif all_in_stage == "upgrade":
+				if event.keycode >= KEY_1 and event.keycode <= KEY_3:
+					select_all_in_perk(event.keycode - KEY_1)
+				elif event.keycode == KEY_ESCAPE and wave >= 3:
+					show_all_in_decision()
+			return
 		if controls_open:
 			if event.keycode == KEY_C or event.keycode == KEY_ESCAPE:
 				toggle_controls()
@@ -2090,7 +2167,7 @@ func _process(delta: float) -> void:
 	jump_clock = maxf(0.0, jump_clock - delta)
 	update_guard_state(delta)
 	enemy_sound_cooldown = maxf(0.0, enemy_sound_cooldown - delta)
-	if state != "playing" or inventory_open or cooking_open or slot_open or merchant_open or rabbit_menu_open or upgrade_open or stash_open:
+	if state != "playing" or all_in_open or inventory_open or cooking_open or slot_open or merchant_open or rabbit_menu_open or upgrade_open or stash_open:
 		update_hud()
 		queue_redraw()
 		return
@@ -2215,7 +2292,7 @@ func advance_phase() -> void:
 		countdown_last = -1
 		projectiles.clear()
 		hostile_orbs.clear()
-		var clear_bonus := 5 + wave * 2
+		var clear_bonus := roundi(float(5 + wave * 2) * ALL_IN_RULES.reward_multiplier(wave))
 		if wave_damage_taken <= 0.0:
 			clear_bonus += 12
 			melon_seeds += 1
@@ -2235,8 +2312,12 @@ func advance_phase() -> void:
 		var old_player_hp := hp
 		hp = minf(max_hp, hp + player_rest_heal)
 		burst(player, Color("8effb3"), 24)
-		# Keep the wave-clear celebration on screen; the HUD shows the rest phase.
+		# Keep the wave-clear celebration on screen; choose safety or more power.
 		play_sound(AUDIO_PICKUP, -12.0)
+		if wave >= 3:
+			show_all_in_decision()
+		else:
+			start_all_in_upgrades()
 	else:
 		phase = "combat"
 		wave += 1
@@ -2251,6 +2332,98 @@ func advance_phase() -> void:
 		first_reaper_spawned = false
 		show_status("WAVE %d！ 敵が強くなる / キャンプは安全" % wave, Color("ffb8a0"))
 		play_sound(AUDIO_HEAVY, -20.0)
+
+# The ALL IN overlay is the only place to bank a run after WAVE 3.
+# The game clock is paused while this screen is visible.
+func all_in_collect_gear() -> Array[Dictionary]:
+	var bank: Array[Dictionary] = []
+	for item in backpack:
+		if not item.is_empty():
+			bank.append(item.duplicate(true))
+	for item in armor_equipped:
+		if not item.is_empty():
+			bank.append(item.duplicate(true))
+	var starter_kind: int = CLASS_WEAPONS[class_id]
+	if not (int(equipped.get("kind", -1)) == starter_kind and int(equipped.get("rarity", -1)) == 0 and str(equipped.get("name", "")) == WEAPONS[starter_kind]):
+		bank.append(equipped.duplicate(true))
+	return bank
+
+func show_all_in_decision() -> void:
+	if state != "playing" or wave < 3:
+		return
+	all_in_open = true
+	all_in_stage = "decision"
+	phase = "all_in"
+	phase_clock = REST_SECONDS
+	all_in_panel.show()
+	all_in_title.text = "WAVE %d CLEAR — 生還 or ALL IN" % wave
+	var carried_count: int = all_in_collect_gear().size()
+	var free_slots: int = STASH_MAX - stash_items.size()
+	all_in_info.text = "装備 %d個 / 倉庫の空き %d個　|　冒険 %dG → 金庫 %dG\n今なら装備とGを確保。ALL INすると次のWAVEクリアまで撤退不可。\n次WAVE報酬 ×%.1f、敵の追加強化 ×%.2f。死亡で冒険Gも失う。" % [carried_count, free_slots, coins, banked_gold, ALL_IN_RULES.reward_multiplier(wave + 1), ALL_IN_RULES.danger_multiplier(wave + 1)]
+	for button in all_in_perk_buttons:
+		button.hide()
+	all_in_cashout_button.show()
+	all_in_continue_button.show()
+	all_in_back_button.hide()
+
+func start_all_in_upgrades() -> void:
+	if state != "playing" or (phase != "rest" and phase != "all_in"):
+		return
+	all_in_open = true
+	all_in_stage = "upgrade"
+	phase = "all_in"
+	phase_clock = REST_SECONDS
+	all_in_panel.show()
+	all_in_title.text = "WAVE %d CLEAR — ビルド強化3択" % wave
+	all_in_info.text = "強化を1つ選択。重ねるほど無双ビルドへ成長！\n次のWAVEは%d。強化を確定するまで戦闘は始まらない。" % (wave + 1)
+	all_in_options.clear()
+	var available: Array[int] = []
+	for perk_id in range(ALL_IN_RULES.PERK_NAMES.size()):
+		if int(all_in_stacks.get(perk_id, 0)) < 3:
+			available.append(perk_id)
+	# A very long run may cap every perk. Re-offer the lowest-stacked ones.
+	if available.is_empty():
+		for perk_id in range(ALL_IN_RULES.PERK_NAMES.size()):
+			available.append(perk_id)
+	for i in range(3):
+		var choice: int = rng.randi_range(0, available.size() - 1)
+		var perk_id: int = available[choice]
+		all_in_options.append(perk_id)
+		available.remove_at(choice)
+		var button: Button = all_in_perk_buttons[i]
+		button.text = "[%d] %s  (Lv%d)\n%s" % [i + 1, ALL_IN_RULES.PERK_NAMES[perk_id], int(all_in_stacks.get(perk_id, 0)) + 1, ALL_IN_RULES.PERK_DESCRIPTIONS[perk_id]]
+		button.show()
+	all_in_cashout_button.hide()
+	all_in_continue_button.hide()
+	all_in_back_button.visible = wave >= 3
+
+func select_all_in_perk(index: int) -> void:
+	if not all_in_open or all_in_stage != "upgrade" or index < 0 or index >= all_in_options.size():
+		return
+	var perk_id: int = all_in_options[index]
+	all_in_stacks[perk_id] = int(all_in_stacks.get(perk_id, 0)) + 1
+	match perk_id:
+		0: attack_speed_mult *= 1.18
+		1: damage_mult *= 1.22
+		2:
+			max_hp += 35.0
+			hp += 35.0
+		3: move_speed *= 1.14
+		4: all_in_split += 1
+		5: all_in_pierce += 1
+		6: all_in_vamp += 1
+		7: all_in_chain += 1
+		8: all_in_crit = minf(0.30, all_in_crit + 0.06)
+	all_in_open = false
+	all_in_stage = ""
+	all_in_options.clear()
+	all_in_panel.hide()
+	phase = "rest"
+	phase_clock = 12.0
+	countdown_last = -1
+	burst(player, Color("ffdf9d"), 32)
+	play_sound(AUDIO_EPIC, -15.0)
+	show_status("%s Lv%d！ 12秒後にWAVE%d開始" % [ALL_IN_RULES.PERK_NAMES[perk_id], int(all_in_stacks[perk_id]), wave + 1], Color("ffe5a9"))
 
 func is_in_safe_camp(point: Vector2) -> bool:
 	for station in CAMP_STATIONS:
@@ -2487,7 +2660,7 @@ func update_hostile_orbs(delta: float) -> void:
 		var gone := float(orb["life"]) <= 0.0 or not ARENA.has_point(orb["pos"]) or is_in_safe_camp(orb["pos"])
 		if not gone and not is_in_safe_camp(player) and not is_player_airborne() and player.distance_to(orb["pos"]) < 20.0:
 			# A projectile can be guarded or perfectly parried from the front.
-			receive_enemy_hit(float(orb.get("damage", 14.0)), orb["pos"], str(orb.get("status", "")))
+			receive_enemy_hit(float(orb.get("damage", 14.0)) * ALL_IN_RULES.danger_multiplier(wave), orb["pos"], str(orb.get("status", "")))
 			gone = true
 		if not gone and companion_hp > 0.0 and not is_in_safe_camp(companion) and companion.distance_to(orb["pos"]) < 19.0:
 			companion_take_damage(11.0)
@@ -2531,7 +2704,7 @@ func generate_scenery() -> void:
 		scenery.append({"pos": pos, "kind": decor_rng.randi_range(0, 2), "size": decor_rng.randf_range(0.8, 1.4), "glow": decor_rng.randf_range(0.0, TAU)})
 
 func crit_probability(dexterity: int) -> float:
-	return minf(0.50, 0.05 + float(dexterity) * 0.025)
+	return minf(0.65, 0.05 + float(dexterity) * 0.025 + all_in_crit)
 
 func add_damage_number(at: Vector2, amount: float, is_crit: bool, tint: Color = Color("fff3da")) -> void:
 	damage_numbers.append({"pos": at + Vector2(rng.randf_range(-15.0, 15.0), -42.0), "amount": amount, "critical": is_crit, "tint": tint, "life": 0.9})
@@ -2645,8 +2818,14 @@ func attack() -> void:
 				play_sound(AUDIO_BOW, -19.0, 1.40)
 
 func launch_projectile(angle: float, speed: float, dmg: float, radius: float, pierce: int, tint: Color, kind: String) -> void:
-	var velocity := Vector2.RIGHT.rotated(angle) * speed * projectile_speed_mult
-	projectiles.append({"pos": player + Vector2.RIGHT.rotated(angle) * 37.0, "vel": velocity, "dmg": dmg, "accuracy": hit_chance(int(equipped["kind"])), "radius": radius, "pierce": pierce, "kind": kind, "tint": tint, "life": 1.35, "hit_ids": [], "crit_chance": crit_probability(hero_stats[4]), "trait": int(equipped.get("trait", -1)), "owner": "hero"})
+	# Building "BULLET STORM" means one extra shot per side for each perk stack.
+	var angles: Array[float] = [angle]
+	for side in range(1, all_in_split + 1):
+		angles.append(angle + float(side) * 0.12)
+		angles.append(angle - float(side) * 0.12)
+	for bullet_angle in angles:
+		var velocity := Vector2.RIGHT.rotated(bullet_angle) * speed * projectile_speed_mult
+		projectiles.append({"pos": player + Vector2.RIGHT.rotated(bullet_angle) * 37.0, "vel": velocity, "dmg": dmg, "accuracy": hit_chance(int(equipped["kind"])), "radius": radius, "pierce": pierce + all_in_pierce, "kind": kind, "tint": tint, "life": 1.35, "hit_ids": [], "crit_chance": crit_probability(hero_stats[4]), "trait": int(equipped.get("trait", -1)), "owner": "hero"})
 
 func melee_hit(radius: float, half_angle: float, dmg: float, knockback: float) -> void:
 	var direction := Vector2.RIGHT.rotated(aim_angle)
@@ -2738,7 +2917,7 @@ func spawn_enemy() -> void:
 		"ember":
 			base_hp = 12.0
 			base_speed = 106.0
-	var total_hp := base_hp * (1.0 + float(maxi(0, wave - 1)) * 0.13)
+	var total_hp := base_hp * (1.0 + float(maxi(0, wave - 1)) * 0.13) * ALL_IN_RULES.danger_multiplier(wave)
 	var speed_growth := 1.0 + minf(0.24, float(maxi(0, wave - 1)) * 0.02)
 	enemy_serial += 1
 	enemies.append({"id": enemy_serial, "pos": random_spawn_edge(), "hp": total_hp, "max_hp": total_hp,
@@ -2908,7 +3087,7 @@ func update_enemies(delta: float) -> void:
 			"venom": normal_touch = 8.0
 			"frost": normal_touch = 8.0
 			"ember": normal_touch = 11.0
-		var raw_damage := (24.0 if boss else (18.0 if elite else normal_touch)) * damage_scale
+		var raw_damage := (24.0 if boss else (18.0 if elite else normal_touch)) * damage_scale * ALL_IN_RULES.danger_multiplier(wave)
 		if not is_in_safe_camp(target_pos) and (target_rabbit or target_ally or not is_player_airborne()) and target_pos.distance_to(enemy["pos"]) < hit_radius and float(enemy["touch"]) <= 0.0:
 			if target_rabbit:
 				rabbit_take_damage(raw_damage * 0.75)
@@ -3034,6 +3213,18 @@ func cleanup_defeated_enemies() -> void:
 			emit_impact_sparks(death_spot, Color("ffb1a7"), 9, 185.0)
 			emit_impact_ring(death_spot, Color("ffd1b4"), 50.0, 0.25, 3.5)
 		enemies.remove_at(i)
+		# The kill-triggered perks operate on surviving enemies only and cannot chain
+		# indefinitely through the same cleanup pass.
+		if all_in_vamp > 0:
+			hp = minf(max_hp, hp + float(all_in_vamp) * 3.0)
+			burst(player, Color("b4ffe1"), 3)
+		if all_in_chain > 0:
+			for remaining in enemies:
+				if float(remaining["hp"]) > 0.0 and (remaining["pos"] as Vector2).distance_to(death_spot) < 135.0 + float(all_in_chain) * 12.0:
+					remaining["hp"] = float(remaining["hp"]) - float(all_in_chain) * 7.0
+					remaining["hurt"] = 0.22
+			emit_impact_ring(death_spot, Color("ffb1f1"), 78.0 + float(all_in_chain) * 14.0, 0.30, 4.0)
+			burst(death_spot, Color("ddacff"), 10)
 		kills += 1
 		combo_count += 1
 		combo_clock = 3.5
@@ -3087,9 +3278,10 @@ func cleanup_defeated_enemies() -> void:
 			if rng.randf() < 0.012:
 				spawn_crop_seed(death_spot + Vector2(28, 0), 2)
 			var equipment_roll := rng.randf()
-			if equipment_roll < 0.045:
+			var loot_luck: float = ALL_IN_RULES.loot_chance_multiplier(wave)
+			if equipment_roll < 0.045 * loot_luck:
 				spawn_drop(death_spot, roll_loot_rarity())
-			elif equipment_roll < 0.08:
+			elif equipment_roll < 0.08 * loot_luck:
 				spawn_armor_drop(death_spot, roll_loot_rarity())
 
 func build_drop_name(kind: int, rarity: int) -> String:
@@ -3101,7 +3293,7 @@ func build_drop_name(kind: int, rarity: int) -> String:
 	return WEAPONS[kind]
 
 func roll_loot_rarity() -> int:
-	var roll_value := rng.randf()
+	var roll_value: float = minf(0.999, rng.randf() + float(maxi(0, wave - 3)) * 0.018)
 	if roll_value >= 0.95:
 		return 3
 	if roll_value >= 0.77:
@@ -3624,13 +3816,41 @@ func load_stash() -> void:
 			if typeof(entry) == TYPE_DICTIONARY and str(entry.get("type", "")) in ["weapon", "armor"] and stash_items.size() < STASH_MAX:
 				stash_items.append(entry.duplicate(true))
 
-func save_stash() -> void:
+func save_stash() -> bool:
 	var save_file := FileAccess.open(STASH_SAVE, FileAccess.WRITE)
 	if save_file == null:
 		show_status("倉庫の保存に失敗！ 空き容量・権限を確認", Color("ff9e9e"))
-		return
+		return false
 	save_file.store_string(JSON.stringify(stash_items))
 	save_file.close()
+	return true
+
+func load_banked_gold() -> void:
+	banked_gold = 0
+	if FileAccess.file_exists(BANKED_GOLD_SAVE):
+		banked_gold = maxi(0, FileAccess.get_file_as_string(BANKED_GOLD_SAVE).to_int())
+
+func save_banked_gold() -> bool:
+	var file := FileAccess.open(BANKED_GOLD_SAVE, FileAccess.WRITE)
+	if file == null:
+		show_status("金庫Gの保存に失敗。空き容量や権限を確認", Color("ffadad"))
+		return false
+	file.store_string(str(banked_gold))
+	file.close()
+	return true
+
+func withdraw_banked_gold() -> void:
+	if state != "playing" or not stash_open or wave >= 1 or banked_gold <= 0:
+		return
+	var taken: int = mini(100, banked_gold)
+	banked_gold -= taken
+	if not save_banked_gold():
+		banked_gold += taken
+		return
+	coins += taken
+	refresh_stash_ui()
+	refresh_hotbar()
+	show_status("金庫から%dGを冒険に持ち出した！ 死亡すると失う" % taken, Color("ffe0af"))
 
 func toggle_stash() -> void:
 	if state != "playing":
@@ -3648,7 +3868,9 @@ func toggle_stash() -> void:
 func refresh_stash_ui() -> void:
 	if not stash_open:
 		return
-	stash_title.text = "倉庫 %d/%d  |  死亡後も保持  |  今回のLV%dは死亡で初期化" % [stash_items.size(), STASH_MAX, level]
+	stash_title.text = "倉庫 %d/%d  |  金庫 %dG / 冒険 %dG  |  生還で預入" % [stash_items.size(), STASH_MAX, banked_gold, coins]
+	banked_gold_withdraw_button.disabled = wave >= 1 or banked_gold <= 0
+	banked_gold_withdraw_button.text = "挑戦前：金庫から最大100G引出" if wave == 0 else "挑戦中は引出不可（生還で預入）"
 	for i in range(BAG_CAPACITY):
 		var item: Dictionary = backpack[i]
 		var bag_button: Button = stash_bag_buttons[i]
@@ -3656,8 +3878,8 @@ func refresh_stash_ui() -> void:
 		bag_button.icon = null if item.is_empty() else item_icon(item)
 		bag_button.expand_icon = true
 		bag_button.tooltip_text = "" if item.is_empty() else item_description(item)
-		bag_button.disabled = item.is_empty() or stash_items.size() >= STASH_MAX
-	stash_equip_button.disabled = stash_items.size() >= STASH_MAX
+		bag_button.disabled = item.is_empty() or stash_items.size() >= STASH_MAX or wave >= 1
+	stash_equip_button.disabled = stash_items.size() >= STASH_MAX or wave >= 1
 	for i in range(STASH_MAX):
 		var button: Button = stash_storage_buttons[i]
 		if i < stash_items.size():
@@ -3674,6 +3896,9 @@ func refresh_stash_ui() -> void:
 		button.expand_icon = true
 
 func stash_deposit_backpack(index: int) -> void:
+	if wave >= 1:
+		show_status("挑戦中は預けられない。WAVEをクリアして生還しよう", Color("ffe0ae"))
+		return
 	if not stash_open or index < 0 or index >= BAG_CAPACITY or stash_items.size() >= STASH_MAX or backpack[index].is_empty():
 		return
 	stash_items.append(backpack[index].duplicate(true))
@@ -3684,6 +3909,9 @@ func stash_deposit_backpack(index: int) -> void:
 	show_status("倉庫に預けた！ 次の挑戦でも取り出せます", Color("ffe7a5"))
 
 func stash_deposit_equipped() -> void:
+	if wave >= 1:
+		show_status("挑戦中は預けられない。WAVEをクリアして生還しよう", Color("ffe0ae"))
+		return
 	if not stash_open or stash_items.size() >= STASH_MAX:
 		return
 	stash_items.append(equipped.duplicate(true))
@@ -3708,28 +3936,34 @@ func stash_withdraw(index: int) -> void:
 	show_status("倉庫から装備を取り出した", Color("b9f4e4"))
 
 func extract_alive() -> void:
-	if not stash_open or state != "playing" or player.distance_to(STASH_POS) > 106.0:
+	# Existing stash deposits remain safe, but a run can ONLY be cashed out
+	# from the explicit post-WAVE-3 ALL IN decision.
+	if state != "playing" or not all_in_open or all_in_stage != "decision" or not ALL_IN_RULES.can_extract(wave, phase):
+		show_status("WAVE3以降、クリア時の生還画面で確保してね", Color("ffe0b8"))
 		return
-	# Extracting alive banks the loadout as long as there is enough chest space.
-	var bank: Array[Dictionary] = []
-	for item in backpack:
-		if not item.is_empty():
-			bank.append(item.duplicate(true))
-	for item in armor_equipped:
-		if not item.is_empty():
-			bank.append(item.duplicate(true))
-	# Ignore only the basic unmodified starter weapon.
-	var starter_kind: int = CLASS_WEAPONS[class_id]
-	if not (int(equipped.get("kind", -1)) == starter_kind and int(equipped.get("rarity", -1)) == 0 and str(equipped.get("name", "")) == WEAPONS[starter_kind]):
-		bank.append(equipped.duplicate(true))
+	var bank: Array[Dictionary] = all_in_collect_gear()
 	if stash_items.size() + bank.size() > STASH_MAX:
-		show_status("倉庫の空きが足りない！ 整理してから帰還しよう", Color("ffb9a5"))
+		all_in_info.text = "倉庫の空きが足りない！（戦利品%d個 / 空き%d個）\nALL INするか、次回は倉庫の整理後に挑戦しよう。\n※今は装備を勝手に捨てたり上書きしたりしません。" % [bank.size(), STASH_MAX - stash_items.size()]
+		show_status("倉庫に空きがないため生還できない", Color("ffbca5"))
 		return
+	var saved_size: int = stash_items.size()
 	for item in bank:
 		stash_items.append(item)
-	save_stash()
+	if not save_stash():
+		stash_items.resize(saved_size)
+		return
+	var original_bank: int = banked_gold
+	banked_gold += coins
+	if not save_banked_gold():
+		banked_gold = original_bank
+		stash_items.resize(saved_size)
+		save_stash()  # Roll back the equipment deposit if currency persistence failed.
+		return
+	var brought_count: int = bank.size()
+	var kept_gold: int = coins
+	var result_wave: int = wave
 	reset_game()
-	show_status("無事生還！ 装備%d個を倉庫へ保存。次はLV1から" % bank.size(), Color("a8ffdb"))
+	show_status("生還！ WAVE%d・装備%d個・%dGを金庫へ。次回はLV1から" % [result_wave, brought_count, kept_gold], Color("a8ffdb"))
 
 func count_empty_bag_slots() -> int:
 	var count := 0
@@ -3771,7 +4005,7 @@ func update_hud() -> void:
 	companion_hp_bar.value = maxf(0.0, companion_hp)
 	companion_hp_text.text = "ミント LV%d  %s" % [companion_level, ("復活祭壇へ" if mint_soul_carried else "ハートを回収" if companion_hp <= 0.0 else "%d / %d" % [roundi(companion_hp), roundi(companion_max_hp)])]
 	companion_xp_text.text = "ミントXP %d/%d  |  %s" % [companion_xp, companion_xp_needed, companion_mode]
-	phase_label.text = ("準備 あと%d秒" % ceili(phase_clock)) if phase == "prep" else ("休憩 あと%d秒  |  Wave %d" % [ceili(phase_clock), wave] if phase == "rest" else "Wave %d  討伐 %d/%d  残敵%d" % [wave, maxi(0, wave_spawned - enemies.size()), wave_target, enemies.size()])
+	phase_label.text = ("ALL IN | WAVE %d CLEAR" % wave) if phase == "all_in" else (("準備 あと%d秒" % ceili(phase_clock)) if phase == "prep" else ("休憩 あと%d秒  |  Wave %d" % [ceili(phase_clock), wave] if phase == "rest" else "Wave %d  討伐 %d/%d  残敵%d" % [wave, maxi(0, wave_spawned - enemies.size()), wave_target, enemies.size()]))
 	phase_label.add_theme_color_override("font_color", Color("a1ffc4") if phase != "combat" else Color("ffc39b"))
 	var to_shrine := REVIVE_SHRINE - player
 	var to_shop := MERCHANT_POS - player
