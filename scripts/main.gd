@@ -1826,7 +1826,9 @@ func collect_coin(index: int) -> void:
 	refresh_hotbar()
 
 func spawn_coins(pos: Vector2, amount: int) -> void:
-	coin_drops.append({"pos": pos + Vector2(rng.randf_range(-22.0, 22.0), rng.randf_range(-20.0, 20.0)), "amount": amount, "life": 65.0, "phase": rng.randf() * TAU})
+	# Coins from enemies scale with the disclosed ALL IN WAVE multiplier.
+	var boosted_amount: int = maxi(1, roundi(float(amount) * ALL_IN_RULES.reward_multiplier(wave)))
+	coin_drops.append({"pos": pos + Vector2(rng.randf_range(-22.0, 22.0), rng.randf_range(-20.0, 20.0)), "amount": boosted_amount, "life": 65.0, "phase": rng.randf() * TAU})
 
 func update_coins(delta: float) -> void:
 	for i in range(coin_drops.size() - 1, -1, -1):
@@ -2654,7 +2656,7 @@ func update_hostile_orbs(delta: float) -> void:
 		var gone := float(orb["life"]) <= 0.0 or not ARENA.has_point(orb["pos"]) or is_in_safe_camp(orb["pos"])
 		if not gone and not is_in_safe_camp(player) and not is_player_airborne() and player.distance_to(orb["pos"]) < 20.0:
 			# A projectile can be guarded or perfectly parried from the front.
-			receive_enemy_hit(float(orb.get("damage", 14.0)), orb["pos"], str(orb.get("status", "")))
+			receive_enemy_hit(float(orb.get("damage", 14.0)) * ALL_IN_RULES.danger_multiplier(wave), orb["pos"], str(orb.get("status", "")))
 			gone = true
 		if not gone and companion_hp > 0.0 and not is_in_safe_camp(companion) and companion.distance_to(orb["pos"]) < 19.0:
 			companion_take_damage(11.0)
@@ -2698,7 +2700,7 @@ func generate_scenery() -> void:
 		scenery.append({"pos": pos, "kind": decor_rng.randi_range(0, 2), "size": decor_rng.randf_range(0.8, 1.4), "glow": decor_rng.randf_range(0.0, TAU)})
 
 func crit_probability(dexterity: int) -> float:
-	return minf(0.50, 0.05 + float(dexterity) * 0.025)
+	return minf(0.65, 0.05 + float(dexterity) * 0.025 + all_in_crit)
 
 func add_damage_number(at: Vector2, amount: float, is_crit: bool, tint: Color = Color("fff3da")) -> void:
 	damage_numbers.append({"pos": at + Vector2(rng.randf_range(-15.0, 15.0), -42.0), "amount": amount, "critical": is_crit, "tint": tint, "life": 0.9})
@@ -2812,8 +2814,14 @@ func attack() -> void:
 				play_sound(AUDIO_BOW, -19.0, 1.40)
 
 func launch_projectile(angle: float, speed: float, dmg: float, radius: float, pierce: int, tint: Color, kind: String) -> void:
-	var velocity := Vector2.RIGHT.rotated(angle) * speed * projectile_speed_mult
-	projectiles.append({"pos": player + Vector2.RIGHT.rotated(angle) * 37.0, "vel": velocity, "dmg": dmg, "accuracy": hit_chance(int(equipped["kind"])), "radius": radius, "pierce": pierce, "kind": kind, "tint": tint, "life": 1.35, "hit_ids": [], "crit_chance": crit_probability(hero_stats[4]), "trait": int(equipped.get("trait", -1)), "owner": "hero"})
+	# Building "BULLET STORM" means one extra shot per side for each perk stack.
+	var angles: Array[float] = [angle]
+	for side in range(1, all_in_split + 1):
+		angles.append(angle + float(side) * 0.12)
+		angles.append(angle - float(side) * 0.12)
+	for bullet_angle in angles:
+		var velocity := Vector2.RIGHT.rotated(bullet_angle) * speed * projectile_speed_mult
+		projectiles.append({"pos": player + Vector2.RIGHT.rotated(bullet_angle) * 37.0, "vel": velocity, "dmg": dmg, "accuracy": hit_chance(int(equipped["kind"])), "radius": radius, "pierce": pierce + all_in_pierce, "kind": kind, "tint": tint, "life": 1.35, "hit_ids": [], "crit_chance": crit_probability(hero_stats[4]), "trait": int(equipped.get("trait", -1)), "owner": "hero"})
 
 func melee_hit(radius: float, half_angle: float, dmg: float, knockback: float) -> void:
 	var direction := Vector2.RIGHT.rotated(aim_angle)
@@ -2905,7 +2913,7 @@ func spawn_enemy() -> void:
 		"ember":
 			base_hp = 12.0
 			base_speed = 106.0
-	var total_hp := base_hp * (1.0 + float(maxi(0, wave - 1)) * 0.13)
+	var total_hp := base_hp * (1.0 + float(maxi(0, wave - 1)) * 0.13) * ALL_IN_RULES.danger_multiplier(wave)
 	var speed_growth := 1.0 + minf(0.24, float(maxi(0, wave - 1)) * 0.02)
 	enemy_serial += 1
 	enemies.append({"id": enemy_serial, "pos": random_spawn_edge(), "hp": total_hp, "max_hp": total_hp,
@@ -3075,7 +3083,7 @@ func update_enemies(delta: float) -> void:
 			"venom": normal_touch = 8.0
 			"frost": normal_touch = 8.0
 			"ember": normal_touch = 11.0
-		var raw_damage := (24.0 if boss else (18.0 if elite else normal_touch)) * damage_scale
+		var raw_damage := (24.0 if boss else (18.0 if elite else normal_touch)) * damage_scale * ALL_IN_RULES.danger_multiplier(wave)
 		if not is_in_safe_camp(target_pos) and (target_rabbit or target_ally or not is_player_airborne()) and target_pos.distance_to(enemy["pos"]) < hit_radius and float(enemy["touch"]) <= 0.0:
 			if target_rabbit:
 				rabbit_take_damage(raw_damage * 0.75)
@@ -3201,6 +3209,18 @@ func cleanup_defeated_enemies() -> void:
 			emit_impact_sparks(death_spot, Color("ffb1a7"), 9, 185.0)
 			emit_impact_ring(death_spot, Color("ffd1b4"), 50.0, 0.25, 3.5)
 		enemies.remove_at(i)
+		# The kill-triggered perks operate on surviving enemies only and cannot chain
+		# indefinitely through the same cleanup pass.
+		if all_in_vamp > 0:
+			hp = minf(max_hp, hp + float(all_in_vamp) * 3.0)
+			burst(player, Color("b4ffe1"), 3)
+		if all_in_chain > 0:
+			for remaining in enemies:
+				if float(remaining["hp"]) > 0.0 and (remaining["pos"] as Vector2).distance_to(death_spot) < 135.0 + float(all_in_chain) * 12.0:
+					remaining["hp"] = float(remaining["hp"]) - float(all_in_chain) * 7.0
+					remaining["hurt"] = 0.22
+			emit_impact_ring(death_spot, Color("ffb1f1"), 78.0 + float(all_in_chain) * 14.0, 0.30, 4.0)
+			burst(death_spot, Color("ddacff"), 10)
 		kills += 1
 		combo_count += 1
 		combo_clock = 3.5
@@ -3254,9 +3274,10 @@ func cleanup_defeated_enemies() -> void:
 			if rng.randf() < 0.012:
 				spawn_crop_seed(death_spot + Vector2(28, 0), 2)
 			var equipment_roll := rng.randf()
-			if equipment_roll < 0.045:
+			var loot_luck: float = ALL_IN_RULES.loot_chance_multiplier(wave)
+			if equipment_roll < 0.045 * loot_luck:
 				spawn_drop(death_spot, roll_loot_rarity())
-			elif equipment_roll < 0.08:
+			elif equipment_roll < 0.08 * loot_luck:
 				spawn_armor_drop(death_spot, roll_loot_rarity())
 
 func build_drop_name(kind: int, rarity: int) -> String:
@@ -3268,7 +3289,7 @@ func build_drop_name(kind: int, rarity: int) -> String:
 	return WEAPONS[kind]
 
 func roll_loot_rarity() -> int:
-	var roll_value := rng.randf()
+	var roll_value: float = minf(0.999, rng.randf() + float(maxi(0, wave - 3)) * 0.018)
 	if roll_value >= 0.95:
 		return 3
 	if roll_value >= 0.77:
