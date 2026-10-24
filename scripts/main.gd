@@ -2284,7 +2284,7 @@ func _process(delta: float) -> void:
 	var aim: Vector2 = get_global_mouse_position() - player
 	if aim.length() > 3.0:
 		aim_angle = aim.angle()
-	# The sanctuary is safe, but weapons are disabled inside it to prevent free farming.
+	# Players can fight and parry anywhere on the dangerous expedition map.
 	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not guard_active and freeze_lock_clock <= 0.0 and fire_clock <= 0.0 and jump_clock <= 0.0 and phase == "combat" and not is_in_safe_camp(player):
 		attack()
 	if phase == "combat":
@@ -2487,12 +2487,20 @@ func select_all_in_perk(index: int) -> void:
 	show_status("%s Lv%d！ 12秒後にWAVE%d開始" % [ALL_IN_RULES.PERK_NAMES[perk_id], int(all_in_stacks[perk_id]), wave + 1], Color("ffe5a9"))
 
 func is_in_safe_camp(point: Vector2) -> bool:
+	# A sanctuary exists ONLY in the peaceful hub phase, never in an expedition.
+	# This single gate also controls incoming damage, hostile orb absorption,
+	# AI targets, firing, guard, DoT and friendly combat behavior.
+	if phase != "hub" or expedition_active:
+		return false
 	for station in CAMP_STATIONS:
 		if point.distance_to(station) < CAMP_RADIUS:
 			return true
 	return false
 
 func keep_enemy_out_of_camp(point: Vector2) -> Vector2:
+	# In a raid enemies can cross the former campsite and pursue the player.
+	if expedition_active:
+		return point
 	var safe_pos: Vector2 = point
 	for station in CAMP_STATIONS:
 		# CAMP_STATIONS is an untyped constant Array: cast each entry explicitly.
@@ -2717,7 +2725,7 @@ func update_hostile_orbs(delta: float) -> void:
 		var orb: Dictionary = hostile_orbs[i]
 		orb["pos"] = (orb["pos"] as Vector2) + (orb["vel"] as Vector2) * delta
 		orb["life"] = float(orb["life"]) - delta
-		# Hostile projectiles are absorbed at the sanctuary perimeter.
+		# Only an actual hub (without combat) is safe; no projectile barrier on raids.
 		var gone := float(orb["life"]) <= 0.0 or not ARENA.has_point(orb["pos"]) or is_in_safe_camp(orb["pos"])
 		if not gone and not is_in_safe_camp(player) and not is_player_airborne() and player.distance_to(orb["pos"]) < 20.0:
 			# A projectile can be guarded or perfectly parried from the front.
@@ -3133,7 +3141,7 @@ func update_enemies(delta: float) -> void:
 			elif toward.length_squared() > 0.1:
 				enemy["pos"] = (enemy["pos"] as Vector2) + toward.normalized() * float(enemy["speed"]) * movement_multiplier * delta
 			enemy["walk"] = float(enemy["walk"]) + delta * (12.0 if enemy["fast"] else 8.0)
-		# Enemies cannot enter the green camp ring, even during combat.
+		# Expeditions have no invisible camp walls; the peaceful hub has no enemies.
 		enemy["pos"] = keep_enemy_out_of_camp((enemy["pos"] as Vector2).clamp(ARENA.position + Vector2(22, 40), ARENA.end - Vector2(22, 25)))
 		var hit_radius := 46.0 if boss else (42.0 if elite else 33.0)
 		var damage_scale := 1.0 + minf(0.80, float(maxi(0, wave - 1)) * 0.065)
@@ -3770,8 +3778,8 @@ func activate_class_skill() -> void:
 	if level < 5:
 		show_status("職業スキルはレベル5で習得！", Color("ffc7a2"))
 		return
-	if phase != "combat" or is_in_safe_camp(player):
-		show_status("スキルは戦闘中・キャンプの外で使えます", Color("ffc7a2"))
+	if phase != "combat":
+		show_status("スキルは探索中に使えます", Color("ffc7a2"))
 		return
 	var cost := 18.0 if class_id == 3 or class_id == 5 else 14.0
 	if mp < cost:
@@ -4262,7 +4270,7 @@ func update_expedition(delta: float) -> void:
 	# Ambient danger remains, but enemies no longer arrive in numbered waves.
 	if expedition_spawn_clock <= 0.0:
 		expedition_spawn_clock = 14.0
-		if enemies.size() < 18 and not is_in_safe_camp(player):
+		if enemies.size() < 18:
 			spawn_enemy()
 	if active_exit >= 0 and extraction_clock > 0.0:
 		var exit_point: Vector2 = EXTRACTION_RULES.EXITS[active_exit]
@@ -5051,8 +5059,9 @@ func draw_fantasy_ground() -> void:
 		# Uneven walkways visually connect the tent, kitchen and chest.
 		draw_texture_rect(V018_PATH, Rect2(station + Vector2(-258, 48), Vector2(274, 92)), false, Color(0.92, 0.94, 0.91, 0.85))
 		draw_texture_rect(V018_PATH, Rect2(station + Vector2(24, 80), Vector2(236, 82)), false, Color(0.92, 0.96, 0.92, 0.71))
-		draw_circle(station, CAMP_RADIUS, Color("a3eac4", 0.020 if phase == "combat" else 0.035))
-		draw_arc(station, CAMP_RADIUS - 12.0, 0.0, TAU, 80, Color("b4cea8", 0.32), 2.0)
+		if not expedition_active:
+			draw_circle(station, CAMP_RADIUS, Color("a3eac4", 0.035))
+			draw_arc(station, CAMP_RADIUS - 12.0, 0.0, TAU, 80, Color("b4cea8", 0.32), 2.0)
 		# Cozy embroidered tent, woodland banner, supplies, and wood fences.
 		var tent_center: Vector2 = station + Vector2(-170, -168)
 		draw_texture_rect(V018_TENT, Rect2(tent_center - Vector2(114, 91), Vector2(226, 172)), false)
@@ -5082,7 +5091,7 @@ func draw_fantasy_ground() -> void:
 			var firefly: Vector2 = station + Vector2(cos(theta) * distance, sin(theta) * distance * 0.70 - 29.0)
 			var fade: float = 0.22 + 0.28 * (0.5 + 0.5 * sin(elapsed * 2.7 + float(j) * 3.0))
 			draw_circle(firefly, 2.0, Color("b6fbd4", fade))
-		draw_string(ui_font, station + Vector2(-86, -CAMP_RADIUS - 17), "✦ 月光キャンプ / 安全区域", HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color("f6deb0"))
+		draw_string(ui_font, station + Vector2(-86, -CAMP_RADIUS - 17), "廃キャンプ / 遮蔽なし" if expedition_active else "✦ 月光キャンプ / 拠点", HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color("ffaaa2") if expedition_active else Color("f6deb0"))
 	# Trees and ruined rune-stones flank the camp without covering the action or pickups.
 	var grove := [Vector2(700, 485), Vector2(745, 1220), Vector2(1570, 385), Vector2(1570, 1415), Vector2(2060, 620), Vector2(2400, 1455), Vector2(2820, 650), Vector2(3050, 2320)]
 	for tree_pos in grove:
