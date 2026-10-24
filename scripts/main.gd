@@ -4374,7 +4374,18 @@ func update_hud() -> void:
 	companion_hp_bar.value = maxf(0.0, companion_hp)
 	companion_hp_text.text = "ミント LV%d  %s" % [companion_level, ("復活祭壇へ" if mint_soul_carried else "ハートを回収" if companion_hp <= 0.0 else "%d / %d" % [roundi(companion_hp), roundi(companion_max_hp)])]
 	companion_xp_text.text = "ミントXP %d/%d  |  %s" % [companion_xp, companion_xp_needed, companion_mode]
-	phase_label.text = ("探索中 %d分  |  コンテナ%d/%d  |  脱出地点で[E]" % [int(expedition_elapsed / 60.0), count_open_crates(), search_crates.size()]) if expedition_active else ("安全区域  |  [G] 探索へ出撃" if phase == "hub" else (("出撃 / 生還  |  WAVE %d CLEAR" % wave) if phase == "all_in" else (("準備 あと%d秒" % ceili(phase_clock)) if phase == "prep" else ("休憩 あと%d秒  |  Wave %d" % [ceili(phase_clock), wave] if phase == "rest" else "Wave %d  討伐 %d/%d  残敵%d" % [wave, maxi(0, wave_spawned - enemies.size()), wave_target, enemies.size()])))
+	if expedition_active:
+		phase_label.text = "探索中 %d分  |  コンテナ%d/%d  |  脱出地点で[E]" % [int(expedition_elapsed / 60.0), count_open_crates(), search_crates.size()]
+	elif phase == "hub":
+		phase_label.text = "安全区域  |  [G] 探索へ出撃"
+	elif phase == "all_in":
+		phase_label.text = "出撃 / 生還  |  WAVE %d CLEAR" % wave
+	elif phase == "prep":
+		phase_label.text = "準備 あと%d秒" % ceili(phase_clock)
+	elif phase == "rest":
+		phase_label.text = "休憩 あと%d秒  |  Wave %d" % [ceili(phase_clock), wave]
+	else:
+		phase_label.text = "Wave %d  討伐 %d/%d  残敵%d" % [wave, maxi(0, wave_spawned - enemies.size()), wave_target, enemies.size()]
 	phase_label.add_theme_color_override("font_color", Color("a1ffc4") if phase != "combat" else Color("ffc39b"))
 	var to_shrine := REVIVE_SHRINE - player
 	var to_shop := MERCHANT_POS - player
