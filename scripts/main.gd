@@ -57,6 +57,7 @@ const ARMOR_RARITY_MULT := [1.0, 1.6, 2.3, 3.5, 5.0]
 const BAG_CAPACITY := 5
 const SLOT_COST := 25
 const LUMI_SLOT_SCRIPT = preload("res://scripts/lumi_slot.gd")
+const ALL_IN_RULES = preload("res://scripts/all_in_rules.gd")
 const SLOT_POS := Vector2(865, 895)
 const REVIVE_SHRINE := Vector2(3060, 1860)
 const MERCHANT_POS := Vector2(1780, 985)
@@ -275,7 +276,7 @@ var combo_count := 0
 var combo_clock := 0.0
 var wave_damage_taken := 0.0
 var crit_sound_clock := 0.0
-var phase := "prep" # prep, combat, rest
+var phase := "prep" # prep, combat, rest, all_in
 var phase_clock := PREP_SECONDS
 var first_reaper_spawned := false
 var scenery: Array[Dictionary] = []
@@ -341,6 +342,23 @@ var rabbit_menu_open := false
 var rabbit_menu: PanelContainer
 var rabbit_menu_info: Label
 var rabbit_menu_buttons: Array[Button] = []
+# One in-run build. Power-ups are never carried between runs.
+var all_in_open := false
+var all_in_stage := ""  # decision or upgrade
+var all_in_options: Array[int] = []
+var all_in_stacks: Dictionary = {}
+var all_in_split := 0
+var all_in_pierce := 0
+var all_in_vamp := 0
+var all_in_chain := 0
+var all_in_crit := 0.0
+var all_in_panel: PanelContainer
+var all_in_title: Label
+var all_in_info: Label
+var all_in_perk_buttons: Array[Button] = []
+var all_in_cashout_button: Button
+var all_in_continue_button: Button
+var all_in_back_button: Button
 var upgrade_target := "hero"
 var mp := 30.0
 var max_mp := 30.0
@@ -1024,6 +1042,37 @@ func build_ui() -> void:
 	rabbit_menu.hide()
 	upgrade_panel.hide()
 	dead_panel.hide()
+	# Created last: always in front of other menus. The world is frozen while shown.
+	all_in_panel = make_panel(Vector2(225, 111), Vector2(700, 418), Color("e8b76d"))
+	layer.add_child(all_in_panel)
+	var all_in_box := VBoxContainer.new()
+	all_in_box.add_theme_constant_override("separation", 9)
+	all_in_panel.get_child(0).add_child(all_in_box)
+	all_in_title = make_label("ALL IN", 32, Color("ffe3a1"), true)
+	all_in_box.add_child(all_in_title)
+	all_in_info = make_label("", 17, Color("e7e3f7"), true)
+	all_in_info.custom_minimum_size = Vector2(600, 72)
+	all_in_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	all_in_box.add_child(all_in_info)
+	for perk_index in range(3):
+		var perk_button := make_button("", Color("8cc8ef"), Vector2(600, 55))
+		perk_button.add_theme_font_size_override("font_size", 17)
+		perk_button.pressed.connect(select_all_in_perk.bind(perk_index))
+		all_in_box.add_child(perk_button)
+		all_in_perk_buttons.append(perk_button)
+	var action_row := HBoxContainer.new()
+	action_row.add_theme_constant_override("separation", 15)
+	all_in_box.add_child(action_row)
+	all_in_cashout_button = make_button("生還する [1]", Color("94edc2"), Vector2(289, 54))
+	all_in_cashout_button.pressed.connect(extract_alive)
+	action_row.add_child(all_in_cashout_button)
+	all_in_continue_button = make_button("ALL IN [2]", Color("ff9e9b"), Vector2(289, 54))
+	all_in_continue_button.pressed.connect(start_all_in_upgrades)
+	action_row.add_child(all_in_continue_button)
+	all_in_back_button = make_button("帰還の選択に戻る", Color("c7b7dc"), Vector2(600, 40))
+	all_in_back_button.pressed.connect(show_all_in_decision)
+	all_in_box.add_child(all_in_back_button)
+	all_in_panel.hide()
 
 func reset_game() -> void:
 	state = "choose"
@@ -1090,6 +1139,16 @@ func reset_game() -> void:
 	crit_sound_clock = 0.0
 	phase = "prep"
 	phase_clock = PREP_SECONDS
+	all_in_open = false
+	all_in_stage = ""
+	all_in_options.clear()
+	all_in_stacks.clear()
+	all_in_split = 0
+	all_in_pierce = 0
+	all_in_vamp = 0
+	all_in_chain = 0
+	all_in_crit = 0.0
+	all_in_panel.hide()
 	first_reaper_spawned = false
 	companion = player + Vector2(-59, 14)
 	companion_level = 1
@@ -1892,6 +1951,18 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			reset_game()
 		return
 	if state == "playing":
+		if all_in_open:
+			if all_in_stage == "decision":
+				if event.keycode == KEY_1:
+					extract_alive()
+				elif event.keycode == KEY_2:
+					start_all_in_upgrades()
+			elif all_in_stage == "upgrade":
+				if event.keycode >= KEY_1 and event.keycode <= KEY_3:
+					select_all_in_perk(event.keycode - KEY_1)
+				elif event.keycode == KEY_ESCAPE and wave >= 3:
+					show_all_in_decision()
+			return
 		if controls_open:
 			if event.keycode == KEY_C or event.keycode == KEY_ESCAPE:
 				toggle_controls()
@@ -2090,7 +2161,7 @@ func _process(delta: float) -> void:
 	jump_clock = maxf(0.0, jump_clock - delta)
 	update_guard_state(delta)
 	enemy_sound_cooldown = maxf(0.0, enemy_sound_cooldown - delta)
-	if state != "playing" or inventory_open or cooking_open or slot_open or merchant_open or rabbit_menu_open or upgrade_open or stash_open:
+	if state != "playing" or all_in_open or inventory_open or cooking_open or slot_open or merchant_open or rabbit_menu_open or upgrade_open or stash_open:
 		update_hud()
 		queue_redraw()
 		return
@@ -2215,7 +2286,7 @@ func advance_phase() -> void:
 		countdown_last = -1
 		projectiles.clear()
 		hostile_orbs.clear()
-		var clear_bonus := 5 + wave * 2
+		var clear_bonus := roundi(float(5 + wave * 2) * ALL_IN_RULES.reward_multiplier(wave))
 		if wave_damage_taken <= 0.0:
 			clear_bonus += 12
 			melon_seeds += 1
@@ -2235,8 +2306,12 @@ func advance_phase() -> void:
 		var old_player_hp := hp
 		hp = minf(max_hp, hp + player_rest_heal)
 		burst(player, Color("8effb3"), 24)
-		# Keep the wave-clear celebration on screen; the HUD shows the rest phase.
+		# Keep the wave-clear celebration on screen; choose safety or more power.
 		play_sound(AUDIO_PICKUP, -12.0)
+		if wave >= 3:
+			show_all_in_decision()
+		else:
+			start_all_in_upgrades()
 	else:
 		phase = "combat"
 		wave += 1
@@ -3771,7 +3846,7 @@ func update_hud() -> void:
 	companion_hp_bar.value = maxf(0.0, companion_hp)
 	companion_hp_text.text = "ミント LV%d  %s" % [companion_level, ("復活祭壇へ" if mint_soul_carried else "ハートを回収" if companion_hp <= 0.0 else "%d / %d" % [roundi(companion_hp), roundi(companion_max_hp)])]
 	companion_xp_text.text = "ミントXP %d/%d  |  %s" % [companion_xp, companion_xp_needed, companion_mode]
-	phase_label.text = ("準備 あと%d秒" % ceili(phase_clock)) if phase == "prep" else ("休憩 あと%d秒  |  Wave %d" % [ceili(phase_clock), wave] if phase == "rest" else "Wave %d  討伐 %d/%d  残敵%d" % [wave, maxi(0, wave_spawned - enemies.size()), wave_target, enemies.size()])
+	phase_label.text = ("ALL IN | WAVE %d CLEAR" % wave) if phase == "all_in" else (("準備 あと%d秒" % ceili(phase_clock)) if phase == "prep" else ("休憩 あと%d秒  |  Wave %d" % [ceili(phase_clock), wave] if phase == "rest" else "Wave %d  討伐 %d/%d  残敵%d" % [wave, maxi(0, wave_spawned - enemies.size()), wave_target, enemies.size()]))
 	phase_label.add_theme_color_override("font_color", Color("a1ffc4") if phase != "combat" else Color("ffc39b"))
 	var to_shrine := REVIVE_SHRINE - player
 	var to_shop := MERCHANT_POS - player
