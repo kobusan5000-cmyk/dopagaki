@@ -4228,9 +4228,18 @@ func start_sortie() -> void:
 	search_crates.clear()
 	for box_data in EXTRACTION_RULES.CRATES:
 		search_crates.append({"pos": box_data["pos"], "tier": box_data["tier"], "opened": false})
-	# Roaming guards patrol the world; several powerful sentries guard rare containers.
-	for i in range(9):
-		spawn_enemy()
+	# Guards are placed around specific supply sites, so exploring valuable areas
+	# carries more risk than walking around the entry camp.
+	for box_data in search_crates:
+		var supply_pos: Vector2 = box_data["pos"]
+		var danger_tier: int = int(box_data["tier"])
+		var guard_count: int = 1 + danger_tier
+		for guard_i in range(guard_count):
+			var count_before: int = enemies.size()
+			spawn_enemy()
+			if enemies.size() > count_before:
+				var guard_angle: float = TAU * float(guard_i) / float(guard_count) + 0.45
+				enemies[enemies.size() - 1]["pos"] = keep_enemy_out_of_camp(supply_pos + Vector2.RIGHT.rotated(guard_angle) * 165.0)
 	for position in [Vector2(3210, 765), Vector2(2850, 1860)]:
 		spawn_brute(position)
 	hub_sortie_button.hide()
