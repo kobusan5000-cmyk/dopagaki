@@ -2327,6 +2327,98 @@ func advance_phase() -> void:
 		show_status("WAVE %d！ 敵が強くなる / キャンプは安全" % wave, Color("ffb8a0"))
 		play_sound(AUDIO_HEAVY, -20.0)
 
+# The ALL IN overlay is the only place to bank a run after WAVE 3.
+# The game clock is paused while this screen is visible.
+func all_in_collect_gear() -> Array[Dictionary]:
+	var bank: Array[Dictionary] = []
+	for item in backpack:
+		if not item.is_empty():
+			bank.append(item.duplicate(true))
+	for item in armor_equipped:
+		if not item.is_empty():
+			bank.append(item.duplicate(true))
+	var starter_kind: int = CLASS_WEAPONS[class_id]
+	if not (int(equipped.get("kind", -1)) == starter_kind and int(equipped.get("rarity", -1)) == 0 and str(equipped.get("name", "")) == WEAPONS[starter_kind]):
+		bank.append(equipped.duplicate(true))
+	return bank
+
+func show_all_in_decision() -> void:
+	if state != "playing" or wave < 3:
+		return
+	all_in_open = true
+	all_in_stage = "decision"
+	phase = "all_in"
+	phase_clock = REST_SECONDS
+	all_in_panel.show()
+	all_in_title.text = "WAVE %d CLEAR — 生還 or ALL IN" % wave
+	var carried_count: int = all_in_collect_gear().size()
+	var free_slots: int = STASH_MAX - stash_items.size()
+	all_in_info.text = "持ち帰れる装備 %d個 / 倉庫の空き %d個　|　所持 %dG（今回の冒険用）\n今なら装備を確保。続行すると次のWAVEを突破するまで撤退不可。\n次WAVE報酬 ×%.1f、敵の追加強化 ×%.2f。死亡時は未確保品を失う。" % [carried_count, free_slots, coins, ALL_IN_RULES.reward_multiplier(wave + 1), ALL_IN_RULES.danger_multiplier(wave + 1)]
+	for button in all_in_perk_buttons:
+		button.hide()
+	all_in_cashout_button.show()
+	all_in_continue_button.show()
+	all_in_back_button.hide()
+
+func start_all_in_upgrades() -> void:
+	if state != "playing" or (phase != "rest" and phase != "all_in"):
+		return
+	all_in_open = true
+	all_in_stage = "upgrade"
+	phase = "all_in"
+	phase_clock = REST_SECONDS
+	all_in_panel.show()
+	all_in_title.text = "WAVE %d CLEAR — ビルド強化3択" % wave
+	all_in_info.text = "強化を1つ選択。重ねるほど無双ビルドへ成長！\n次のWAVEは%d。強化を確定するまで戦闘は始まらない。" % (wave + 1)
+	all_in_options.clear()
+	var available: Array[int] = []
+	for perk_id in range(ALL_IN_RULES.PERK_NAMES.size()):
+		if int(all_in_stacks.get(perk_id, 0)) < 3:
+			available.append(perk_id)
+	# A very long run may cap every perk. Re-offer the lowest-stacked ones.
+	if available.is_empty():
+		for perk_id in range(ALL_IN_RULES.PERK_NAMES.size()):
+			available.append(perk_id)
+	for i in range(3):
+		var choice: int = rng.randi_range(0, available.size() - 1)
+		var perk_id: int = available[choice]
+		all_in_options.append(perk_id)
+		available.remove_at(choice)
+		var button: Button = all_in_perk_buttons[i]
+		button.text = "[%d] %s  (Lv%d)\n%s" % [i + 1, ALL_IN_RULES.PERK_NAMES[perk_id], int(all_in_stacks.get(perk_id, 0)) + 1, ALL_IN_RULES.PERK_DESCRIPTIONS[perk_id]]
+		button.show()
+	all_in_cashout_button.hide()
+	all_in_continue_button.hide()
+	all_in_back_button.visible = wave >= 3
+
+func select_all_in_perk(index: int) -> void:
+	if not all_in_open or all_in_stage != "upgrade" or index < 0 or index >= all_in_options.size():
+		return
+	var perk_id: int = all_in_options[index]
+	all_in_stacks[perk_id] = int(all_in_stacks.get(perk_id, 0)) + 1
+	match perk_id:
+		0: attack_speed_mult *= 1.18
+		1: damage_mult *= 1.22
+		2:
+			max_hp += 35.0
+			hp += 35.0
+		3: move_speed *= 1.14
+		4: all_in_split += 1
+		5: all_in_pierce += 1
+		6: all_in_vamp += 1
+		7: all_in_chain += 1
+		8: all_in_crit = minf(0.30, all_in_crit + 0.06)
+	all_in_open = false
+	all_in_stage = ""
+	all_in_options.clear()
+	all_in_panel.hide()
+	phase = "rest"
+	phase_clock = 12.0
+	countdown_last = -1
+	burst(player, Color("ffdf9d"), 32)
+	play_sound(AUDIO_EPIC, -15.0)
+	show_status("%s Lv%d！ 12秒後にWAVE%d開始" % [ALL_IN_RULES.PERK_NAMES[perk_id], int(all_in_stacks[perk_id]), wave + 1], Color("ffe5a9"))
+
 func is_in_safe_camp(point: Vector2) -> bool:
 	for station in CAMP_STATIONS:
 		if point.distance_to(station) < CAMP_RADIUS:
