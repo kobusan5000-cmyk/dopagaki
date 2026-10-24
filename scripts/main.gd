@@ -1399,6 +1399,7 @@ func nearest_plot_index() -> int:
 func interact_nearby() -> void:
 	if expedition_active and interact_expedition_site():
 		return
+	# Combat-zone objects may be looted, but the campsite's economy is unavailable.
 	# Both companions use the same moon shrine. One E can revive both carried souls.
 	if player.distance_to(REVIVE_SHRINE) < 90.0 and (mint_soul_carried or rabbit_soul_carried):
 		if mint_soul_carried:
@@ -1427,13 +1428,13 @@ func interact_nearby() -> void:
 		if player.distance_to(meal_displays[display_index]["pos"]) < 62.0:
 			collect_meal_display(display_index)
 			return
-	if player.distance_to(STASH_POS) < 105.0:
+	if not expedition_active and player.distance_to(STASH_POS) < 105.0:
 		toggle_stash()
 		return
-	if player.distance_to(SLOT_POS) < 105.0:
+	if not expedition_active and player.distance_to(SLOT_POS) < 105.0:
 		toggle_slot()
 		return
-	if player.distance_to(MERCHANT_POS) < 108.0:
+	if not expedition_active and player.distance_to(MERCHANT_POS) < 108.0:
 		toggle_merchant()
 		return
 	for i in range(crop_drops.size() - 1, -1, -1):
@@ -1455,9 +1456,9 @@ func interact_nearby() -> void:
 	var camp_distance := 99999.0 if camp_i < 0 else player.distance_to(CAMP_STATIONS[camp_i])
 	if nearest_loot < 92.0 and nearest_loot <= farm_distance and nearest_loot <= camp_distance:
 		pickup_nearby()
-	elif farm_distance < 75.0 and farm_distance <= camp_distance:
+	elif not expedition_active and farm_distance < 75.0 and farm_distance <= camp_distance:
 		farm_interact()
-	elif camp_distance < 115.0:
+	elif not expedition_active and camp_distance < 115.0:
 		toggle_cooking()
 	elif nearest_loot < 92.0:
 		pickup_nearby()
@@ -1481,6 +1482,9 @@ func cycle_crop() -> void:
 	show_status("植える作物：%s（種%d） / [F]で切替" % [CROP_NAMES[crop_selection], crop_seed_count(crop_selection)], CROP_COLORS[crop_selection])
 
 func farm_interact() -> void:
+	if expedition_active:
+		show_status("出撃中は農業できない。生還後に拠点で育てよう", Color("ffcf9e"))
+		return
 	var plot_i := nearest_plot_index()
 	if plot_i < 0:
 		show_status("畑の近くでEキーを押してください", Color("bbdcc8"))
@@ -1534,6 +1538,9 @@ func update_crop_drops(delta: float) -> void:
 
 func toggle_cooking() -> void:
 	if state != "playing":
+		return
+	if expedition_active:
+		show_status("出撃中は料理を利用できない。脱出して拠点に戻ろう", Color("ffcf9e"))
 		return
 	if not cooking_open and nearest_camp_index() < 0:
 		show_status("焚き火の近くでEキーを押してください", Color("ffd7a2"))
@@ -1699,6 +1706,9 @@ func item_icon(item: Dictionary) -> Texture2D:
 func toggle_merchant() -> void:
 	if state != "playing":
 		return
+	if expedition_active:
+		show_status("出撃中は商人を利用できない。脱出して拠点に戻ろう", Color("ffcf9e"))
+		return
 	if not merchant_open and player.distance_to(MERCHANT_POS) > 108.0:
 		show_status("武器商人の近くでEキーを押してください", Color("caffd8"))
 		return
@@ -1747,6 +1757,9 @@ func buy_merchant_item(index: int) -> void:
 
 func toggle_slot() -> void:
 	if state != "playing":
+		return
+	if expedition_active:
+		show_status("出撃中はスロットを利用できない。脱出して拠点に戻ろう", Color("ffcf9e"))
 		return
 	if not slot_open and player.distance_to(SLOT_POS) > 105.0:
 		show_status("スロットマシンの近くでEキーを押してね", Color("ffe3a1"))
@@ -2224,7 +2237,7 @@ func _process(delta: float) -> void:
 	jump_clock = maxf(0.0, jump_clock - delta)
 	update_guard_state(delta)
 	enemy_sound_cooldown = maxf(0.0, enemy_sound_cooldown - delta)
-	if state != "playing" or all_in_open or inventory_open or cooking_open or slot_open or merchant_open or rabbit_menu_open or upgrade_open or stash_open:
+	if state != "playing" or all_in_open or (not expedition_active and (inventory_open or cooking_open or slot_open or merchant_open or rabbit_menu_open or upgrade_open or stash_open)):
 		update_hud()
 		queue_redraw()
 		return
@@ -2285,7 +2298,7 @@ func _process(delta: float) -> void:
 	if aim.length() > 3.0:
 		aim_angle = aim.angle()
 	# Players can fight and parry anywhere on the dangerous expedition map.
-	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not guard_active and freeze_lock_clock <= 0.0 and fire_clock <= 0.0 and jump_clock <= 0.0 and phase == "combat" and not is_in_safe_camp(player):
+	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not guard_active and freeze_lock_clock <= 0.0 and fire_clock <= 0.0 and jump_clock <= 0.0 and phase == "combat" and not inventory_open and not controls_open and not is_in_safe_camp(player):
 		attack()
 	if phase == "combat":
 		combat_elapsed += delta
@@ -3510,6 +3523,7 @@ const CONTROLS_HELP := [
 func toggle_controls() -> void:
 	if state != "playing":
 		return
+	# Help is accessible during exploration, but no longer pauses combat.
 	controls_open = not controls_open
 	controls_panel.visible = controls_open
 
@@ -3638,9 +3652,9 @@ func update_drops(delta: float) -> void:
 			drops.remove_at(i)
 	pickup_hint.text = ""
 	var nearest := 92.0
-	if nearest_plot_index() >= 0:
+	if not expedition_active and nearest_plot_index() >= 0:
 		pickup_hint.text = "[E] 畑 / [F] 作物切替  %sの種%d" % [CROP_NAMES[crop_selection], crop_seed_count(crop_selection)]
-	if nearest_camp_index() >= 0:
+	if not expedition_active and nearest_camp_index() >= 0:
 		pickup_hint.text = "[E] 料理  |  🥕%d 🍄%d 🍈%d 🍉%d  |  🍲%d 🥣%d 🧃%d 🍨%d" % [carrots, mushrooms, melons, watermelons, stew_meals, broth_meals, melon_meals, watermelon_meals]
 	for d in drops:
 		var dist: float = player.distance_to(d["pos"])
@@ -3652,9 +3666,9 @@ func update_drops(delta: float) -> void:
 			else:
 				pickup_hint.text = "[E] 拾う  %s  |  [I] バッグ" % d["name"]
 			pickup_hint.add_theme_color_override("font_color", RARITY_COLORS[int(d["rarity"])])
-	if player.distance_to(SLOT_POS) < 105.0 and nearest >= 92.0:
+	if not expedition_active and player.distance_to(SLOT_POS) < 105.0 and nearest >= 92.0:
 		pickup_hint.text = "[E] スロット 25G  |  景品は右下の受け取り台へ"
-	if player.distance_to(MERCHANT_POS) < 108.0:
+	if not expedition_active and player.distance_to(MERCHANT_POS) < 108.0:
 		pickup_hint.text = "[E] 武器商人ルーンの店  |  装備・レア作物の種を購入"
 	for meal in meal_displays:
 		if player.distance_to(meal["pos"]) < 62.0:
@@ -3671,7 +3685,7 @@ func update_drops(delta: float) -> void:
 		pickup_hint.text = "[E] ちゅぶらの命を拾う → 南東の月の祭壇へ"
 	if (mint_soul_carried or rabbit_soul_carried) and player.distance_to(REVIVE_SHRINE) < 90.0:
 		pickup_hint.text = "[E] 月の祭壇でミント・ちゅぶらを蘇生"
-	if player.distance_to(STASH_POS) < 106.0:
+	if not expedition_active and player.distance_to(STASH_POS) < 106.0:
 		pickup_hint.text = "[E] 倉庫を開く  |  預けた装備は死亡しても残る"
 	if expedition_active:
 		for box_data in search_crates:
@@ -3953,6 +3967,9 @@ func withdraw_banked_gold() -> void:
 
 func toggle_stash() -> void:
 	if state != "playing":
+		return
+	if expedition_active:
+		show_status("出撃中は倉庫を利用できない。脱出して拠点に戻ろう", Color("ffcf9e"))
 		return
 	if not stash_open and player.distance_to(STASH_POS) > 106.0:
 		show_status("キャンプの倉庫の近くでEキーを押してね", Color("ffe6b5"))
@@ -4690,6 +4707,9 @@ func draw_farm_and_kitchen() -> void:
 
 func toggle_rabbit_menu() -> void:
 	if state != "playing":
+		return
+	if expedition_active:
+		show_status("出撃中はちゅぶらのお世話を利用できない。脱出して拠点に戻ろう", Color("ffcf9e"))
 		return
 	if rabbit_hp <= 0.0:
 		show_status("ちゅぶらは倒れている。命を月の祭壇へ！", Color("ffc8e7"))
