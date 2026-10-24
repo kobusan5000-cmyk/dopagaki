@@ -3974,8 +3974,148 @@ func extract_alive() -> void:
 	var brought_count: int = bank.size()
 	var kept_gold: int = coins
 	var result_wave: int = wave
-	reset_game()
-	show_status("生還！ WAVE%d・装備%d個・%dGを金庫へ。次回はLV1から" % [result_wave, brought_count, kept_gold], Color("a8ffdb"))
+	return_to_safe_hub()
+	show_status("生還！ WAVE%d・装備%d個・%dGを保存。%sのまま拠点へ！ [G]出撃" % [result_wave, brought_count, kept_gold, CLASS_NAMES[class_id]], Color("a8ffdb"))
+
+# A successful extraction returns the player to the SAME job in a peaceful hub.
+# Do not call reset_game(): that would show the class selection screen and wipe farms.
+func return_to_safe_hub() -> void:
+	state = "playing"
+	phase = "hub"
+	phase_clock = 0.0
+	wave = 0
+	wave_target = 0
+	wave_spawned = 0
+	wave_clear_clock = -1.0
+	wave_damage_taken = 0.0
+	combat_elapsed = 0.0
+	spawn_clock = 0.65
+	first_reaper_spawned = false
+	all_in_open = false
+	all_in_stage = ""
+	all_in_panel.hide()
+	all_in_options.clear()
+	all_in_stacks.clear()
+	all_in_split = 0
+	all_in_pierce = 0
+	all_in_vamp = 0
+	all_in_chain = 0
+	all_in_crit = 0.0
+	# Temporary combat progression resets; identity, farms, recipes and pet affection remain.
+	level = 1
+	xp = 0
+	xp_needed = 5
+	kills = 0
+	hero_stats = [0, 0, 0, 0, 0, 0]
+	pending_hero_points = 0
+	pending_mint_points = 0
+	attack_speed_mult = 1.0
+	damage_mult = 1.15 if class_id == 3 else 1.0
+	projectile_speed_mult = 1.0
+	move_speed = 297.0 if class_id == 1 else (245.0 if class_id == 2 else (235.0 if class_id == 4 else (309.0 if class_id == 6 else 262.0)))
+	base_class_speed = move_speed
+	max_hp = 85.0 if class_id == 3 else (140.0 if class_id == 4 else (95.0 if class_id == 6 else (115.0 if class_id in [0, 5] else 100.0)))
+	hp = max_hp
+	max_mp = 30.0
+	mp = max_mp
+	skill_buff_clock = 0.0
+	skill_guard_clock = 0.0
+	shadow_clone_clock = 0.0
+	shadow_clone_fire = 0.0
+	jump_clock = 0.0
+	jump_cooldown = 0.0
+	guard_active = false
+	fire_clock = 0.3
+	hurt_clock = 0.0
+	poison_clock = 0.0
+	burn_clock = 0.0
+	freeze_clock = 0.0
+	freeze_lock_clock = 0.0
+	companion_level = 1
+	companion_xp = 0
+	companion_xp_needed = 18
+	companion_max_hp = 90.0
+	companion_hp = companion_max_hp
+	companion_stats = [0, 0, 0, 0, 0, 0]
+	companion_damage = 3.6
+	companion_mode = "巡回"
+	companion_skill_clock = 9.0
+	mint_soul_on_ground = false
+	mint_soul_carried = false
+	mint_soul_pos = Vector2.ZERO
+	rabbit_hp = RABBIT_MAX_HP
+	rabbit_soul_on_ground = false
+	rabbit_soul_carried = false
+	rabbit_soul_pos = Vector2.ZERO
+	rabbit_carried = false
+	rabbit_pet_mode = "ついてくる"
+	rabbit_pet_attack_clock = 0.2
+	# The full loadout was deposited before this transition; give the SAME job its starter.
+	equipped = {"type": "weapon", "kind": CLASS_WEAPONS[class_id], "rarity": 0, "name": WEAPONS[CLASS_WEAPONS[class_id]]}
+	backpack.clear()
+	for i in range(BAG_CAPACITY):
+		backpack.append({})
+	armor_equipped = [{}, {}, {}, {}]
+	coins = 0
+	player = Vector2(1208, 870)
+	companion = player + Vector2(-59, 14)
+	companion_goal = CAMP_STATIONS[0]
+	rabbit_pet = player + Vector2(52, 48)
+	rabbit_pet_goal = rabbit_pet
+	camera.position = player
+	camera.offset = Vector2.ZERO
+	enemies.clear()
+	projectiles.clear()
+	hostile_orbs.clear()
+	coin_drops.clear()
+	drops.clear()
+	corpses.clear()
+	damage_numbers.clear()
+	impact_rings.clear()
+	impact_sparks.clear()
+	countdown_label.text = ""
+	countdown_last = -1
+	banner_clock = 0.0
+	banner.hide()
+	stash_open = false
+	stash_panel.hide()
+	inventory_open = false
+	inventory_panel.hide()
+	upgrade_open = false
+	upgrade_panel.hide()
+	merchant_open = false
+	merchant_panel.hide()
+	cooking_open = false
+	cooking_panel.hide()
+	rabbit_menu_open = false
+	rabbit_menu.hide()
+	slot_open = false
+	slot_panel.hide()
+	choose_panel.hide()
+	dead_panel.hide()
+	hub_sortie_button.show()
+	# Keep farm_plots, crop/seed counts, meals, rabbit affection/gear, bank and stash.
+	refresh_inventory_ui()
+	update_hud()
+	queue_redraw()
+
+func start_sortie() -> void:
+	if state != "playing" or phase != "hub":
+		return
+	if stash_open or inventory_open or cooking_open or merchant_open or slot_open or rabbit_menu_open or upgrade_open or controls_open:
+		show_status("メニューを閉じてから出撃してね", Color("ffe6b3"))
+		return
+	phase = "prep"
+	phase_clock = 8.0
+	wave = 0
+	wave_target = 0
+	wave_spawned = 0
+	wave_damage_taken = 0.0
+	first_reaper_spawned = false
+	countdown_last = -1
+	hub_sortie_button.hide()
+	show_status("%sで出撃！ WAVE1開始まで8秒" % CLASS_NAMES[class_id], Color("ffd78f"))
+	play_sound(AUDIO_HEAVY, -20.0)
 
 func count_empty_bag_slots() -> int:
 	var count := 0
