@@ -59,6 +59,8 @@ const BAG_CAPACITY := 5
 const SLOT_COST := 25
 const LUMI_SLOT_SCRIPT = preload("res://scripts/lumi_slot.gd")
 const ALL_IN_RULES = preload("res://scripts/all_in_rules.gd")
+const EXTRACTION_RULES = preload("res://scripts/extraction_rules.gd")
+const MATERIALS_SAVE := "user://dopagaki_stored_materials_v025.json"
 const SLOT_POS := Vector2(865, 895)
 const REVIVE_SHRINE := Vector2(3060, 1860)
 const MERCHANT_POS := Vector2(1780, 985)
@@ -245,6 +247,15 @@ var carrots := 2
 var mushrooms := 1
 var stew_meals := 0
 var broth_meals := 0
+# Expedition mode uses the existing combat engine without automatic wave-clears.
+var expedition_active := false
+var search_crates: Array[Dictionary] = []
+var carried_materials: Array[int] = [0, 0, 0]
+var stored_materials: Array[int] = [0, 0, 0]
+var extraction_clock := -1.0
+var active_exit := -1
+var expedition_elapsed := 0.0
+var expedition_spawn_clock := 0.0
 var wave := 0
 var combat_elapsed := 0.0
 var wave_target := 0
@@ -513,6 +524,7 @@ func _ready() -> void:
 	add_child(camera)
 	load_stash()
 	load_banked_gold()
+	load_stored_materials()
 	reset_game()
 
 func make_style(fill: Color, border: Color, radius: int = 14) -> StyleBoxFlat:
@@ -1079,7 +1091,7 @@ func build_ui() -> void:
 	all_in_box.add_child(all_in_back_button)
 	all_in_panel.hide()
 	# Visible only inside the hub. Re-entering combat is always a deliberate choice.
-	hub_sortie_button = make_button("出撃 [G]  — WAVE1から", Color("ffba81"), Vector2(315, 55))
+	hub_sortie_button = make_button("探索へ出撃 [G]", Color("ffba81"), Vector2(315, 55))
 	hub_sortie_button.position = Vector2(781, 336)
 	hub_sortie_button.add_theme_font_size_override("font_size", 18)
 	hub_sortie_button.pressed.connect(start_sortie)
@@ -1121,6 +1133,13 @@ func reset_game() -> void:
 	mushrooms = 1
 	stew_meals = 0
 	broth_meals = 0
+	expedition_active = false
+	search_crates.clear()
+	carried_materials = [0, 0, 0]
+	extraction_clock = -1.0
+	active_exit = -1
+	expedition_elapsed = 0.0
+	expedition_spawn_clock = 0.0
 	wave = 0
 	combat_elapsed = 0.0
 	wave_target = 0
@@ -1341,7 +1360,8 @@ func select_class(index: int) -> void:
 	state = "playing"
 	fire_clock = 0.25
 	choose_panel.hide()
-	show_status("%s / %s  キャンプで準備しよう！" % [character_name, CLASS_NAMES[index]], Color("90e7ed"))
+	return_to_safe_hub()
+	show_status("%s / %s  拠点で準備したら[G]で探索へ出撃！" % [character_name, CLASS_NAMES[index]], Color("90e7ed"))
 	play_sound(AUDIO_PICKUP, -10.0)
 
 func nearest_plot_index() -> int:
@@ -1963,7 +1983,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		return
 	if state == "dead":
 		if event.keycode == KEY_R:
-			reset_game()
+			return_to_safe_hub()
+			show_status("拠点へ帰還。今回の戦利品は失った", Color("ffb6b6"))
 		return
 	if state == "playing":
 		if phase == "hub" and event.keycode == KEY_G:
@@ -3435,8 +3456,8 @@ const CONTROLS_HELP := [
 	["マウス右ボタン（長押し）", "ガード（押した直後ならパリィ）"],
 	["SPACE", "回避"],
 	["E", "調べる（拾う・畑・料理・商人・スロット）"],
-	["G", "安全区域で出撃する（次のWAVE1から）"],
-	["生還 / 出撃", "WAVE3以降のクリア選択。生還なら装備を倉庫へ"],
+	["G", "拠点から探索マップへ出撃"],
+	["脱出", "マップ内の青い脱出装置でEを押し、12秒間守る"],
 	["Q", "クラススキル（LV5で習得）"],
 	["1 - 5", "バッグの装備をすばやく切り替え"],
 	["I", "バッグを開く / 閉じる"],
@@ -3984,6 +4005,13 @@ func extract_alive() -> void:
 func return_to_safe_hub() -> void:
 	state = "playing"
 	phase = "hub"
+	expedition_active = false
+	search_crates.clear()
+	carried_materials = [0, 0, 0]
+	extraction_clock = -1.0
+	active_exit = -1
+	expedition_elapsed = 0.0
+	expedition_spawn_clock = 0.0
 	phase_clock = 0.0
 	wave = 0
 	wave_target = 0
@@ -4107,16 +4135,30 @@ func start_sortie() -> void:
 	if stash_open or inventory_open or cooking_open or merchant_open or slot_open or rabbit_menu_open or upgrade_open or controls_open:
 		show_status("メニューを閉じてから出撃してね", Color("ffe6b3"))
 		return
-	phase = "prep"
-	phase_clock = 8.0
-	wave = 0
+	# Keep the starter camp and gear equipped. Waves no longer gate exploration.
+	expedition_active = true
+	phase = "combat"
+	wave = 3  # World danger tier: unlocks the full early enemy variety.
 	wave_target = 0
 	wave_spawned = 0
 	wave_damage_taken = 0.0
+	combat_elapsed = 0.0
 	first_reaper_spawned = false
-	countdown_last = -1
+	expedition_elapsed = 0.0
+	expedition_spawn_clock = 7.0
+	extraction_clock = -1.0
+	active_exit = -1
+	carried_materials = [0, 0, 0]
+	search_crates.clear()
+	for box_data in EXTRACTION_RULES.CRATES:
+		search_crates.append({"pos": box_data["pos"], "tier": box_data["tier"], "opened": false})
+	# Roaming guards patrol the world; several powerful sentries guard rare containers.
+	for i in range(9):
+		spawn_enemy()
+	for position in [Vector2(3210, 765), Vector2(2850, 1860)]:
+		spawn_brute(position)
 	hub_sortie_button.hide()
-	show_status("%sで出撃！ WAVE1開始まで8秒" % CLASS_NAMES[class_id], Color("ffd78f"))
+	show_status("探索へ出撃！ [E]でコンテナを調査。脱出地点で戦利品を持ち帰ろう", Color("ffd78f"))
 	play_sound(AUDIO_HEAVY, -20.0)
 
 func count_empty_bag_slots() -> int:
@@ -4159,7 +4201,7 @@ func update_hud() -> void:
 	companion_hp_bar.value = maxf(0.0, companion_hp)
 	companion_hp_text.text = "ミント LV%d  %s" % [companion_level, ("復活祭壇へ" if mint_soul_carried else "ハートを回収" if companion_hp <= 0.0 else "%d / %d" % [roundi(companion_hp), roundi(companion_max_hp)])]
 	companion_xp_text.text = "ミントXP %d/%d  |  %s" % [companion_xp, companion_xp_needed, companion_mode]
-	phase_label.text = "安全区域  |  [G] 出撃で再挑戦" if phase == "hub" else (("出撃 / 生還  |  WAVE %d CLEAR" % wave) if phase == "all_in" else (("準備 あと%d秒" % ceili(phase_clock)) if phase == "prep" else ("休憩 あと%d秒  |  Wave %d" % [ceili(phase_clock), wave] if phase == "rest" else "Wave %d  討伐 %d/%d  残敵%d" % [wave, maxi(0, wave_spawned - enemies.size()), wave_target, enemies.size()])))
+	phase_label.text = ("探索中 %d分  |  コンテナ%d/%d  |  脱出地点で[E]" % [int(expedition_elapsed / 60.0), count_open_crates(), search_crates.size()]) if expedition_active else ("安全区域  |  [G] 探索へ出撃" if phase == "hub" else (("出撃 / 生還  |  WAVE %d CLEAR" % wave) if phase == "all_in" else (("準備 あと%d秒" % ceili(phase_clock)) if phase == "prep" else ("休憩 あと%d秒  |  Wave %d" % [ceili(phase_clock), wave] if phase == "rest" else "Wave %d  討伐 %d/%d  残敵%d" % [wave, maxi(0, wave_spawned - enemies.size()), wave_target, enemies.size()])))
 	phase_label.add_theme_color_override("font_color", Color("a1ffc4") if phase != "combat" else Color("ffc39b"))
 	var to_shrine := REVIVE_SHRINE - player
 	var to_shop := MERCHANT_POS - player
