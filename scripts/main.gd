@@ -25,6 +25,7 @@ const GUARD_RESTART_DELAY := 0.28
 const WOLF_WALK: Texture2D = preload("res://assets/ookami_walk.png")
 const WOLF_ATTACK: Texture2D = preload("res://assets/ookami_attack.png")
 const PIERO_WALK: Texture2D = preload("res://assets/piero_walk.png")
+const STAR_DUO_SOURCE = preload("res://scripts/star_duo_art.gd")
 # 48px frames in the order idle / walk / skill-or-dash / hit.
 const HIHI_ART: Texture2D = preload("res://assets/characters/hihi_actions.png")
 const HEALER_ART: Texture2D = preload("res://assets/characters/healer_actions.png")
@@ -210,6 +211,7 @@ const AUDIO_BGM_REST: AudioStream = preload("res://audio/kk_celtic15_loop.ogg")
 const AUDIO_BGM_BATTLE: AudioStream = preload("res://audio/kk_celtic5_loop.ogg")
 
 var rng := RandomNumberGenerator.new()
+var star_duo_art: Texture2D
 var ui_font: SystemFont
 var state := "choose" # choose, playing, upgrade, dead
 var class_id := 0
@@ -458,6 +460,7 @@ var minimap_panel: Control
 var minimap_marker: Panel
 
 func _ready() -> void:
+	star_duo_art = STAR_DUO_SOURCE.build_texture()
 	rng.randomize()
 	for i in range(12):
 		var sfx := AudioStreamPlayer.new()
@@ -2489,6 +2492,9 @@ func update_hostile_orbs(delta: float) -> void:
 		if not gone and companion_hp > 0.0 and not is_in_safe_camp(companion) and companion.distance_to(orb["pos"]) < 19.0:
 			companion_take_damage(11.0)
 			gone = true
+		if not gone and rabbit_pet_enabled and rabbit_hp > 0.0 and not rabbit_carried and not is_in_safe_camp(rabbit_pet) and rabbit_pet.distance_to(orb["pos"]) < 16.0:
+			rabbit_take_damage(float(orb.get("damage", 11.0)))
+			gone = true
 		if gone:
 			hostile_orbs.remove_at(i)
 
@@ -2684,7 +2690,9 @@ func spawn_enemy() -> void:
 	# Elemental ranged enemies unlock gradually and telegraph with distinct colors.
 	var roll: float = rng.randf()
 	var kind := "grunt"
-	if wave >= 2 and roll < 0.14:
+	if wave >= 3 and roll < 0.13:
+		kind = "star_duo"
+	elif wave >= 2 and roll < 0.24:
 		kind = "hihi"
 	elif wave >= 6 and roll < 0.25:
 		kind = "ember"
@@ -2703,6 +2711,9 @@ func spawn_enemy() -> void:
 	var base_hp := 8.5
 	var base_speed := 106.0
 	match kind:
+		"star_duo":
+			base_hp = 21.0
+			base_speed = 96.0
 		"hihi":
 			base_hp = 7.2
 			base_speed = 205.0
@@ -2732,7 +2743,7 @@ func spawn_enemy() -> void:
 	enemy_serial += 1
 	enemies.append({"id": enemy_serial, "pos": random_spawn_edge(), "hp": total_hp, "max_hp": total_hp,
 		"speed": base_speed * speed_growth, "kind": kind, "fast": kind == "runner" or kind == "zigzag" or kind == "hihi", "elite": false, "boss": false,
-		"touch": 0.0, "hurt": 0.0, "walk": rng.randf() * 4.0, "target_ally": rng.randf() < 0.28,
+		"touch": 0.0, "hurt": 0.0, "walk": rng.randf() * 4.0, "target_ally": rng.randf() < 0.28, "target_rabbit": rng.randf() < 0.20,
 		"windup": 0.0, "charge": 0.0, "charge_cd": 0.0, "charge_dir": Vector2.ZERO, "orb_cd": rng.randf_range(0.7, 2.1), "poison": 0.0, "burn": 0.0, "freeze": 0.0, "status_tick": 1.0})
 
 func spawn_brute(pos: Vector2) -> void:
@@ -2784,8 +2795,9 @@ func update_enemies(delta: float) -> void:
 			enemy["hurt"] = 0.14
 			continue
 		# If Mint shelters in camp, enemies must chase the exposed player instead.
-		var target_ally: bool = bool(enemy["target_ally"]) and companion_hp > 0.0 and not is_in_safe_camp(companion)
-		var target_pos: Vector2 = companion if target_ally else player
+		var target_rabbit: bool = bool(enemy.get("target_rabbit", false)) and rabbit_pet_enabled and rabbit_hp > 0.0 and not rabbit_carried and not is_in_safe_camp(rabbit_pet)
+		var target_ally: bool = not target_rabbit and bool(enemy["target_ally"]) and companion_hp > 0.0 and not is_in_safe_camp(companion)
+		var target_pos: Vector2 = rabbit_pet if target_rabbit else (companion if target_ally else player)
 		var toward: Vector2 = target_pos - enemy["pos"]
 		var elite: bool = bool(enemy["elite"])
 		var boss: bool = bool(enemy["boss"])
@@ -2825,7 +2837,29 @@ func update_enemies(delta: float) -> void:
 			enemy["walk"] = float(enemy["walk"]) + delta * 6.0
 		else:
 			var kind := str(enemy.get("kind", "grunt"))
-			if kind == "hihi":
+			if kind == "star_duo":
+				# Linked star/triangle pair: star casts arcane bolts; triangle strikes in short bursts.
+				enemy["orb_cd"] = maxf(0.0, float(enemy["orb_cd"]) - delta)
+				if float(enemy["orb_cd"]) <= 0.0 and toward.length() < 455.0 and not is_in_safe_camp(target_pos):
+					enemy["orb_cd"] = 3.3
+					var duo_aim: Vector2 = toward.normalized()
+					for turn in [-0.16, 0.16]:
+						hostile_orbs.append({"pos": (enemy["pos"] as Vector2) + Vector2(0, -34), "vel": duo_aim.rotated(turn) * 278.0, "life": 1.8, "damage": 8.0, "tint": Color("b88cff"), "status": ""})
+					burst(enemy["pos"], Color("90eeff"), 9)
+				if float(enemy["charge"]) > 0.0:
+					enemy["charge"] = maxf(0.0, float(enemy["charge"]) - delta)
+					enemy["pos"] = (enemy["pos"] as Vector2) + (enemy["charge_dir"] as Vector2) * 255.0 * movement_multiplier * delta
+				elif float(enemy["windup"]) > 0.0:
+					enemy["windup"] = maxf(0.0, float(enemy["windup"]) - delta)
+					if float(enemy["windup"]) <= 0.0:
+						enemy["charge"] = 0.28
+				elif toward.length() < 185.0 and toward.length_squared() > 0.1 and float(enemy["charge_cd"]) <= 0.0:
+					enemy["windup"] = 0.35
+					enemy["charge_dir"] = toward.normalized()
+					enemy["charge_cd"] = 3.1
+				elif toward.length() > 235.0 and toward.length_squared() > 0.1:
+					enemy["pos"] = (enemy["pos"] as Vector2) + toward.normalized() * float(enemy["speed"]) * movement_multiplier * delta
+			elif kind == "hihi":
 				# A small blue trickster: warns briefly, then rushes the player.
 				var dash_time: float = float(enemy["charge"])
 				var prep_time: float = float(enemy["windup"])
@@ -2867,6 +2901,7 @@ func update_enemies(delta: float) -> void:
 		match str(enemy.get("kind", "grunt")):
 			"runner": normal_touch = 8.0
 			"hihi": normal_touch = 9.0
+			"star_duo": normal_touch = 12.0
 			"tank": normal_touch = 16.0
 			"spitter": normal_touch = 7.0
 			"zigzag": normal_touch = 10.0
@@ -2874,8 +2909,10 @@ func update_enemies(delta: float) -> void:
 			"frost": normal_touch = 8.0
 			"ember": normal_touch = 11.0
 		var raw_damage := (24.0 if boss else (18.0 if elite else normal_touch)) * damage_scale
-		if not is_in_safe_camp(target_pos) and (target_ally or not is_player_airborne()) and target_pos.distance_to(enemy["pos"]) < hit_radius and float(enemy["touch"]) <= 0.0:
-			if target_ally:
+		if not is_in_safe_camp(target_pos) and (target_rabbit or target_ally or not is_player_airborne()) and target_pos.distance_to(enemy["pos"]) < hit_radius and float(enemy["touch"]) <= 0.0:
+			if target_rabbit:
+				rabbit_take_damage(raw_damage * 0.75)
+			elif target_ally:
 				companion_take_damage(raw_damage * 0.85)
 			else:
 				# Contact attacks also feed through directional guard/parry.
@@ -4475,6 +4512,14 @@ func _draw() -> void:
 		draw_circle(pos + Vector2(4, 13), 17.0, Color(0, 0, 0, 0.28))
 		var facing_right: bool = (player.x - pos.x) > 0.0
 		var kind := str(enemy.get("kind", "grunt"))
+		if kind == "star_duo" and star_duo_art != null:
+			var duo_frame: int = 7 if float(enemy["hurt"]) > 0.0 else (6 if float(enemy["charge"]) > 0.0 else (5 if float(enemy["windup"]) > 0.0 or float(enemy["orb_cd"]) > 2.95 else (1 if int(float(enemy["walk"])) % 2 == 1 else 0)))
+			draw_set_transform(pos, 0.0, Vector2(1.0 if facing_right else -1.0, 1.0))
+			draw_texture_rect_region(star_duo_art, Rect2(-54, -92, 108, 108), Rect2(duo_frame * 32, 0, 32, 32), Color("ffdada") if float(enemy["hurt"]) > 0.0 else Color.WHITE)
+			draw_set_transform(Vector2.ZERO)
+			draw_rect(Rect2(pos + Vector2(-31, -86), Vector2(62, 6)), Color("211636"))
+			draw_rect(Rect2(pos + Vector2(-31, -86), Vector2(62.0 * maxf(0.0, float(enemy["hp"]) / float(enemy["max_hp"])), 6)), Color("b695ff"))
+			continue
 		if kind == "hihi":
 			var hihi_frame: int = 3 if float(enemy["hurt"]) > 0.0 else (2 if float(enemy["charge"]) > 0.0 or float(enemy["windup"]) > 0.0 else (1 if int(float(enemy["walk"])) % 2 == 1 else 0))
 			var hihi_tint := Color("ffdbdf") if float(enemy["hurt"]) > 0.0 else Color.WHITE
