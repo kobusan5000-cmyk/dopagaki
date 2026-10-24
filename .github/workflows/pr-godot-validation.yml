@@ -99,6 +99,18 @@ jobs:
           }
           cat godot-all-in-flow.log
 
+      - name: Validate extraction and hub sortie flow
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot="$HOME/.cache/dopagaki-godot/godot"
+          timeout 60 "$godot" --headless --path . --script res://tests/test_safe_hub_flow.gd > godot-safe-hub-flow.log 2>&1 || {
+            cat godot-safe-hub-flow.log
+            echo "::error::Safe hub regression failed"
+            exit 1
+          }
+          cat godot-safe-hub-flow.log
+
       - name: Launch Godot and smoke-test main scene
         shell: bash
         run: |
@@ -124,6 +136,7 @@ jobs:
             godot-import.log
             godot-all-in-tests.log
             godot-all-in-flow.log
+            godot-safe-hub-flow.log
             godot-run.log
           if-no-files-found: ignore
           retention-days: 7
