@@ -12,6 +12,7 @@ func _run() -> void:
 	scene.call("select_class", 6)
 	_check(int(scene.get("class_id")) == 6, "Ninja selected at start")
 	_check(str(scene.get("state")) == "playing", "Game entered")
+	_check(str(scene.get("phase")) == "hub", "First class choice starts in safe hub")
 	var plots_before: Array = scene.get("farm_plots")
 	_check(plots_before.size() > 0, "Farm plots present")
 	plots_before[0]["progress"] = 4.25
@@ -37,11 +38,11 @@ func _run() -> void:
 	await process_frame
 	_check(str(scene.get("phase")) == "hub", "Hub cannot auto-start a wave")
 	scene.call("start_sortie")
-	_check(str(scene.get("phase")) == "prep", "Deliberate sortie begins preparation")
+	_check(str(scene.get("phase")) == "combat", "Deliberate sortie enters exploration")
 	_check(int(scene.get("class_id")) == 6, "Sortie retains chosen class")
 	_check(not (scene.get("hub_sortie_button") as Control).visible, "Sortie button hidden after departure")
-	_check(int(scene.get("wave")) == 0, "First sortie wave begins from 1")
-	_check(float(scene.get("phase_clock")) > 0.0, "Preparation countdown started")
+	_check(int(scene.get("wave")) == 3, "Danger tier initialized for exploration")
+	_check(bool(scene.get("expedition_active")), "Expedition mode enabled")
 	scene.queue_free()
 	if failures > 0:
 		push_error("Safe hub regression failures: %d" % failures)

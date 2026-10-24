@@ -59,6 +59,8 @@ const BAG_CAPACITY := 5
 const SLOT_COST := 25
 const LUMI_SLOT_SCRIPT = preload("res://scripts/lumi_slot.gd")
 const ALL_IN_RULES = preload("res://scripts/all_in_rules.gd")
+const EXTRACTION_RULES = preload("res://scripts/extraction_rules.gd")
+const MATERIALS_SAVE := "user://dopagaki_stored_materials_v025.json"
 const SLOT_POS := Vector2(865, 895)
 const REVIVE_SHRINE := Vector2(3060, 1860)
 const MERCHANT_POS := Vector2(1780, 985)
@@ -245,6 +247,15 @@ var carrots := 2
 var mushrooms := 1
 var stew_meals := 0
 var broth_meals := 0
+# Expedition mode uses the existing combat engine without automatic wave-clears.
+var expedition_active := false
+var search_crates: Array[Dictionary] = []
+var carried_materials: Array[int] = [0, 0, 0]
+var stored_materials: Array[int] = [0, 0, 0]
+var extraction_clock := -1.0
+var active_exit := -1
+var expedition_elapsed := 0.0
+var expedition_spawn_clock := 0.0
 var wave := 0
 var combat_elapsed := 0.0
 var wave_target := 0
@@ -454,6 +465,7 @@ var upgrade_hero_button: Button
 var upgrade_mint_button: Button
 var stash_panel: PanelContainer
 var stash_title: Label
+var stash_materials_label: Label
 var banked_gold_withdraw_button: Button
 var stash_bag_buttons: Array[Button] = []
 var stash_storage_buttons: Array[Button] = []
@@ -513,6 +525,7 @@ func _ready() -> void:
 	add_child(camera)
 	load_stash()
 	load_banked_gold()
+	load_stored_materials()
 	reset_game()
 
 func make_style(fill: Color, border: Color, radius: int = 14) -> StyleBoxFlat:
@@ -673,6 +686,25 @@ func build_ui() -> void:
 		camp_dot.add_theme_color_override("font_color", Color("f3c67a"))
 		camp_dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		minimap_panel.add_child(camp_dot)
+	# World markers: gold supply boxes, cyan extraction stations.
+	for box_data in EXTRACTION_RULES.CRATES:
+		var box_point: Vector2 = box_data["pos"]
+		var crate_dot := Label.new()
+		crate_dot.text = "▪"
+		crate_dot.position = Vector2(4, 0) + Vector2((box_point.x - ARENA.position.x) / ARENA.size.x * 150.0, (box_point.y - ARENA.position.y) / ARENA.size.y * 121.0)
+		crate_dot.add_theme_font_size_override("font_size", 15)
+		crate_dot.add_theme_color_override("font_color", Color("ffe49b"))
+		crate_dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		minimap_panel.add_child(crate_dot)
+	for exit_data in EXTRACTION_RULES.EXITS:
+		var exit_point: Vector2 = exit_data
+		var exit_dot := Label.new()
+		exit_dot.text = "●"
+		exit_dot.position = Vector2(4, 0) + Vector2((exit_point.x - ARENA.position.x) / ARENA.size.x * 150.0, (exit_point.y - ARENA.position.y) / ARENA.size.y * 121.0)
+		exit_dot.add_theme_font_size_override("font_size", 14)
+		exit_dot.add_theme_color_override("font_color", Color("8bdfff"))
+		exit_dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		minimap_panel.add_child(exit_dot)
 	minimap_marker = Panel.new()
 	minimap_marker.size = Vector2(9, 9)
 	minimap_marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -680,7 +712,7 @@ func build_ui() -> void:
 	marker_style.set_border_width_all(2)
 	minimap_marker.add_theme_stylebox_override("panel", marker_style)
 	minimap_panel.add_child(minimap_marker)
-	var map_caption := make_label("翡翠の森 · 現在地", 12, Color("d1e9d6"), true)
+	var map_caption := make_label("探索地図  ■物資  ●脱出  ◆拠点", 11, Color("d1e9d6"), true)
 	map_caption.position = Vector2(-1, -21)
 	map_caption.custom_minimum_size = Vector2(168, 19)
 	minimap_panel.add_child(map_caption)
@@ -1000,6 +1032,8 @@ func build_ui() -> void:
 	chest_pad.add_child(chest_box)
 	stash_title = make_label("倉庫", 22, Color("ffe2af"), true)
 	chest_box.add_child(stash_title)
+	stash_materials_label = make_label("", 14, Color("a7e7e9"), true)
+	chest_box.add_child(stash_materials_label)
 	chest_box.add_child(make_label("クリックで預ける / 取り出す。死亡後も、再起動後も保存されます。", 14, Color("aaf1d7")))
 	var bag_label := make_label("持ち物から預ける（5枠）", 17, Color("dbecff"))
 	chest_box.add_child(bag_label)
@@ -1079,7 +1113,7 @@ func build_ui() -> void:
 	all_in_box.add_child(all_in_back_button)
 	all_in_panel.hide()
 	# Visible only inside the hub. Re-entering combat is always a deliberate choice.
-	hub_sortie_button = make_button("出撃 [G]  — WAVE1から", Color("ffba81"), Vector2(315, 55))
+	hub_sortie_button = make_button("探索へ出撃 [G]", Color("ffba81"), Vector2(315, 55))
 	hub_sortie_button.position = Vector2(781, 336)
 	hub_sortie_button.add_theme_font_size_override("font_size", 18)
 	hub_sortie_button.pressed.connect(start_sortie)
@@ -1121,6 +1155,13 @@ func reset_game() -> void:
 	mushrooms = 1
 	stew_meals = 0
 	broth_meals = 0
+	expedition_active = false
+	search_crates.clear()
+	carried_materials = [0, 0, 0]
+	extraction_clock = -1.0
+	active_exit = -1
+	expedition_elapsed = 0.0
+	expedition_spawn_clock = 0.0
 	wave = 0
 	combat_elapsed = 0.0
 	wave_target = 0
@@ -1341,7 +1382,8 @@ func select_class(index: int) -> void:
 	state = "playing"
 	fire_clock = 0.25
 	choose_panel.hide()
-	show_status("%s / %s  キャンプで準備しよう！" % [character_name, CLASS_NAMES[index]], Color("90e7ed"))
+	return_to_safe_hub()
+	show_status("%s / %s  拠点で準備したら[G]で探索へ出撃！" % [character_name, CLASS_NAMES[index]], Color("90e7ed"))
 	play_sound(AUDIO_PICKUP, -10.0)
 
 func nearest_plot_index() -> int:
@@ -1355,6 +1397,8 @@ func nearest_plot_index() -> int:
 	return best
 
 func interact_nearby() -> void:
+	if expedition_active and interact_expedition_site():
+		return
 	# Both companions use the same moon shrine. One E can revive both carried souls.
 	if player.distance_to(REVIVE_SHRINE) < 90.0 and (mint_soul_carried or rabbit_soul_carried):
 		if mint_soul_carried:
@@ -1641,7 +1685,7 @@ func refresh_hotbar() -> void:
 			btn.text = "%d %s" % [i + 1, short_name]
 			btn.tooltip_text = item_description(item) + "\nクリック / 数字キーで装備"
 			btn.add_theme_stylebox_override("normal", make_style(Color("152430"), RARITY_COLORS[rarity], 7))
-	hotbar_currency.text = "所持金 %dG\n種:人参%d/メロン%d/スイカ%d" % [coins, seeds, melon_seeds, watermelon_seeds]
+	hotbar_currency.text = "所持金 %dG\n素材 %d/%d  |  種:人参%d/メロン%d/スイカ%d" % [coins, EXTRACTION_RULES.cargo_count(carried_materials), EXTRACTION_RULES.CARGO_CAPACITY, seeds, melon_seeds, watermelon_seeds]
 
 func item_icon(item: Dictionary) -> Texture2D:
 	if str(item.get("type", "")) == "armor":
@@ -1963,7 +2007,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		return
 	if state == "dead":
 		if event.keycode == KEY_R:
-			reset_game()
+			return_to_safe_hub()
+			show_status("拠点へ帰還。今回の戦利品は失った", Color("ffb6b6"))
 		return
 	if state == "playing":
 		if phase == "hub" and event.keycode == KEY_G:
@@ -2244,8 +2289,11 @@ func _process(delta: float) -> void:
 		attack()
 	if phase == "combat":
 		combat_elapsed += delta
-		spawn_clock -= delta
-		if wave_spawned < wave_target and spawn_clock <= 0.0:
+		if expedition_active:
+			update_expedition(delta)
+		else:
+			spawn_clock -= delta
+		if not expedition_active and wave_spawned < wave_target and spawn_clock <= 0.0:
 			var group_size := mini(4, 1 + int(floor(float(maxi(0, wave - 1)) / 4.0)))
 			for spawn_i in range(group_size):
 				if wave_spawned >= wave_target or enemies.size() >= wave_enemy_limit():
@@ -2259,12 +2307,13 @@ func _process(delta: float) -> void:
 					spawn_enemy()
 				wave_spawned += 1
 			spawn_clock = maxf(0.56, 1.65 - float(maxi(0, wave - 1)) * 0.075)
-		if wave_spawned >= wave_target and enemies.is_empty():
-			wave_clear_clock -= delta
-			if wave_clear_clock < -1.2:
-				advance_phase()
-		else:
-			wave_clear_clock = 0.0
+		if not expedition_active:
+			if wave_spawned >= wave_target and enemies.is_empty():
+				wave_clear_clock -= delta
+				if wave_clear_clock < -1.2:
+					advance_phase()
+			else:
+				wave_clear_clock = 0.0
 	update_companion(delta)
 	update_rabbit_pet(delta)
 	update_wanderer(delta)
@@ -2699,7 +2748,7 @@ func player_died() -> void:
 	dead_panel.show()
 	controls_open = false
 	controls_panel.hide()
-	dead_label.text = "Wave %d  討伐 %d  レベル%d → 次回LV1\n持ち物・装備は失うが倉庫の%d個は保存済み" % [wave, kills, level, stash_items.size()]
+	dead_label.text = ("探索失敗！ 討伐%d、探索レベル%d\n冒険で持ち出した装備・素材・Gを失った。倉庫と金庫は安全。\n[R] 同じ職業で拠点へ戻る" % [kills, level]) if expedition_active else ("Wave %d  討伐 %d  レベル%d → 次回LV1\n持ち物・装備は失うが倉庫の%d個は保存済み" % [wave, kills, level, stash_items.size()])
 
 func generate_scenery() -> void:
 	scenery.clear()
@@ -3435,8 +3484,8 @@ const CONTROLS_HELP := [
 	["マウス右ボタン（長押し）", "ガード（押した直後ならパリィ）"],
 	["SPACE", "回避"],
 	["E", "調べる（拾う・畑・料理・商人・スロット）"],
-	["G", "安全区域で出撃する（次のWAVE1から）"],
-	["生還 / 出撃", "WAVE3以降のクリア選択。生還なら装備を倉庫へ"],
+	["G", "拠点から探索マップへ出撃"],
+	["脱出", "マップ内の青い脱出装置でEを押し、12秒間守る"],
 	["Q", "クラススキル（LV5で習得）"],
 	["1 - 5", "バッグの装備をすばやく切り替え"],
 	["I", "バッグを開く / 閉じる"],
@@ -3616,6 +3665,15 @@ func update_drops(delta: float) -> void:
 		pickup_hint.text = "[E] 月の祭壇でミント・ちゅぶらを蘇生"
 	if player.distance_to(STASH_POS) < 106.0:
 		pickup_hint.text = "[E] 倉庫を開く  |  預けた装備は死亡しても残る"
+	if expedition_active:
+		for box_data in search_crates:
+			if not bool(box_data["opened"]) and player.distance_to(box_data["pos"]) < EXTRACTION_RULES.SEARCH_RADIUS:
+				pickup_hint.text = "[E] 物資コンテナを調べる  |  素材 %d/%d" % [EXTRACTION_RULES.cargo_count(carried_materials), EXTRACTION_RULES.CARGO_CAPACITY]
+				break
+		for exit_pos in EXTRACTION_RULES.EXITS:
+			if player.distance_to(exit_pos) < EXTRACTION_RULES.EXTRACTION_RADIUS:
+				pickup_hint.text = "脱出準備中：あと%d秒！ その場を守ろう" % ceili(extraction_clock) if extraction_clock > 0.0 else "[E] 脱出装置を起動（12秒守る）"
+				break
 
 func update_particles(delta: float) -> void:
 	for i in range(particles.size() - 1, -1, -1):
@@ -3853,6 +3911,25 @@ func save_banked_gold() -> bool:
 	file.close()
 	return true
 
+func load_stored_materials() -> void:
+	stored_materials = [0, 0, 0]
+	if not FileAccess.file_exists(MATERIALS_SAVE):
+		return
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(MATERIALS_SAVE))
+	if typeof(parsed) != TYPE_ARRAY or parsed.size() != stored_materials.size():
+		return
+	for i in range(stored_materials.size()):
+		stored_materials[i] = maxi(0, int(parsed[i]))
+
+func save_stored_materials() -> bool:
+	var file := FileAccess.open(MATERIALS_SAVE, FileAccess.WRITE)
+	if file == null:
+		show_status("素材倉庫の保存に失敗。空き容量・権限を確認", Color("ffabab"))
+		return false
+	file.store_string(JSON.stringify(stored_materials))
+	file.close()
+	return true
+
 func withdraw_banked_gold() -> void:
 	if state != "playing" or not stash_open or wave >= 1 or banked_gold <= 0:
 		return
@@ -3882,7 +3959,8 @@ func toggle_stash() -> void:
 func refresh_stash_ui() -> void:
 	if not stash_open:
 		return
-	stash_title.text = "倉庫 %d/%d  |  金庫 %dG / 冒険 %dG  |  生還で預入" % [stash_items.size(), STASH_MAX, banked_gold, coins]
+	stash_title.text = "倉庫 %d/%d | 金庫 %dG / 冒険 %dG" % [stash_items.size(), STASH_MAX, banked_gold, coins]
+	stash_materials_label.text = "保管素材: スクラップ%d  電力コア%d  古代結晶%d\n探索中の素材: %d/%d（脱出時に保管）" % [stored_materials[0], stored_materials[1], stored_materials[2], EXTRACTION_RULES.cargo_count(carried_materials), EXTRACTION_RULES.CARGO_CAPACITY]
 	banked_gold_withdraw_button.disabled = wave >= 1 or banked_gold <= 0
 	banked_gold_withdraw_button.text = "挑戦前：金庫から最大100G引出" if wave == 0 else "挑戦中は引出不可（生還で預入）"
 	for i in range(BAG_CAPACITY):
@@ -3950,40 +4028,66 @@ func stash_withdraw(index: int) -> void:
 	show_status("倉庫から装備を取り出した", Color("b9f4e4"))
 
 func extract_alive() -> void:
-	# Existing stash deposits remain safe, but a run can ONLY be cashed out
-	# from the explicit post-WAVE-3 ALL IN decision.
-	if state != "playing" or not all_in_open or all_in_stage != "decision" or not ALL_IN_RULES.can_extract(wave, phase):
-		show_status("WAVE3以降、クリア時の生還画面で確保してね", Color("ffe0b8"))
+	# Only extraction terminals, not wave menus, may safely bank expedition loot.
+	if state != "playing" or not expedition_active or phase != "combat" or active_exit < 0 or extraction_clock > 0.0:
+		show_status("探索先の脱出装置を12秒守ってから生還してね", Color("ffe0b8"))
+		return
+	var exit_point: Vector2 = EXTRACTION_RULES.EXITS[active_exit]
+	if not EXTRACTION_RULES.is_near_exit(player, exit_point):
 		return
 	var bank: Array[Dictionary] = all_in_collect_gear()
 	if stash_items.size() + bank.size() > STASH_MAX:
-		all_in_info.text = "倉庫の空きが足りない！（戦利品%d個 / 空き%d個）\n出撃を続けるか、不要な装備をバッグで整理してから生還しよう。\n※装備は勝手に捨てたり上書きしたりしません。" % [bank.size(), STASH_MAX - stash_items.size()]
-		show_status("倉庫に空きがないため生還できない", Color("ffbca5"))
+		show_status("装備倉庫が満杯！ バッグで不要品を捨てるか入れ替えてから脱出", Color("ffbca5"))
+		active_exit = -1
+		extraction_clock = -1.0
 		return
-	var saved_size: int = stash_items.size()
+	var previous_gear: Array[Dictionary] = stash_items.duplicate(true)
+	var old_gold: int = banked_gold
+	var old_materials: Array[int] = stored_materials.duplicate()
 	for item in bank:
 		stash_items.append(item)
 	if not save_stash():
-		stash_items.resize(saved_size)
+		stash_items = previous_gear
+		active_exit = -1
+		extraction_clock = -1.0
 		return
-	var original_bank: int = banked_gold
 	banked_gold += coins
 	if not save_banked_gold():
-		banked_gold = original_bank
-		stash_items.resize(saved_size)
-		save_stash()  # Roll back the equipment deposit if currency persistence failed.
+		banked_gold = old_gold
+		stash_items = previous_gear
+		save_stash()
+		active_exit = -1
+		extraction_clock = -1.0
 		return
-	var brought_count: int = bank.size()
-	var kept_gold: int = coins
-	var result_wave: int = wave
+	for i in range(stored_materials.size()):
+		stored_materials[i] += carried_materials[i]
+	if not save_stored_materials():
+		stored_materials = old_materials
+		banked_gold = old_gold
+		stash_items = previous_gear
+		save_banked_gold()
+		save_stash()
+		active_exit = -1
+		extraction_clock = -1.0
+		return
+	var gear_count: int = bank.size()
+	var material_count: int = EXTRACTION_RULES.cargo_count(carried_materials)
+	var gold_kept: int = coins
 	return_to_safe_hub()
-	show_status("生還！ WAVE%d・装備%d個・%dGを保存。%sのまま拠点へ！ [G]出撃" % [result_wave, brought_count, kept_gold, CLASS_NAMES[class_id]], Color("a8ffdb"))
+	show_status("脱出成功！ 装備%d個・素材%d個・%dGを保管。同じ職業で拠点へ帰還" % [gear_count, material_count, gold_kept], Color("a8ffdb"))
 
 # A successful extraction returns the player to the SAME job in a peaceful hub.
 # Do not call reset_game(): that would show the class selection screen and wipe farms.
 func return_to_safe_hub() -> void:
 	state = "playing"
 	phase = "hub"
+	expedition_active = false
+	search_crates.clear()
+	carried_materials = [0, 0, 0]
+	extraction_clock = -1.0
+	active_exit = -1
+	expedition_elapsed = 0.0
+	expedition_spawn_clock = 0.0
 	phase_clock = 0.0
 	wave = 0
 	wave_target = 0
@@ -4107,17 +4211,137 @@ func start_sortie() -> void:
 	if stash_open or inventory_open or cooking_open or merchant_open or slot_open or rabbit_menu_open or upgrade_open or controls_open:
 		show_status("メニューを閉じてから出撃してね", Color("ffe6b3"))
 		return
-	phase = "prep"
-	phase_clock = 8.0
-	wave = 0
+	# Keep the starter camp and gear equipped. Waves no longer gate exploration.
+	expedition_active = true
+	phase = "combat"
+	wave = 3  # World danger tier: unlocks the full early enemy variety.
 	wave_target = 0
 	wave_spawned = 0
 	wave_damage_taken = 0.0
+	combat_elapsed = 0.0
 	first_reaper_spawned = false
-	countdown_last = -1
+	expedition_elapsed = 0.0
+	expedition_spawn_clock = 7.0
+	extraction_clock = -1.0
+	active_exit = -1
+	carried_materials = [0, 0, 0]
+	search_crates.clear()
+	for box_data in EXTRACTION_RULES.CRATES:
+		search_crates.append({"pos": box_data["pos"], "tier": box_data["tier"], "opened": false})
+	# Guards are placed around specific supply sites, so exploring valuable areas
+	# carries more risk than walking around the entry camp.
+	for box_data in search_crates:
+		var supply_pos: Vector2 = box_data["pos"]
+		var danger_tier: int = int(box_data["tier"])
+		var guard_count: int = 1 + danger_tier
+		for guard_i in range(guard_count):
+			var count_before: int = enemies.size()
+			spawn_enemy()
+			if enemies.size() > count_before:
+				var guard_angle: float = TAU * float(guard_i) / float(guard_count) + 0.45
+				enemies[enemies.size() - 1]["pos"] = keep_enemy_out_of_camp(supply_pos + Vector2.RIGHT.rotated(guard_angle) * 165.0)
+	for position in [Vector2(3210, 765), Vector2(2850, 1860)]:
+		spawn_brute(position)
 	hub_sortie_button.hide()
-	show_status("%sで出撃！ WAVE1開始まで8秒" % CLASS_NAMES[class_id], Color("ffd78f"))
+	show_status("探索へ出撃！ [E]でコンテナを調査。脱出地点で戦利品を持ち帰ろう", Color("ffd78f"))
 	play_sound(AUDIO_HEAVY, -20.0)
+
+# An exploration run stays live until the player dies or actively extracts.
+func count_open_crates() -> int:
+	var opened := 0
+	for box_data in search_crates:
+		if bool(box_data["opened"]):
+			opened += 1
+	return opened
+
+func update_expedition(delta: float) -> void:
+	if not expedition_active:
+		return
+	expedition_elapsed += delta
+	expedition_spawn_clock -= delta
+	# Ambient danger remains, but enemies no longer arrive in numbered waves.
+	if expedition_spawn_clock <= 0.0:
+		expedition_spawn_clock = 14.0
+		if enemies.size() < 18 and not is_in_safe_camp(player):
+			spawn_enemy()
+	if active_exit >= 0 and extraction_clock > 0.0:
+		var exit_point: Vector2 = EXTRACTION_RULES.EXITS[active_exit]
+		if not EXTRACTION_RULES.is_near_exit(player, exit_point):
+			active_exit = -1
+			extraction_clock = -1.0
+			show_status("脱出装置から離れた！ 再度[E]で起動してね", Color("ffb3b3"))
+			return
+		extraction_clock = maxf(0.0, extraction_clock - delta)
+		if extraction_clock <= 0.0:
+			extract_alive()
+
+func interact_expedition_site() -> bool:
+	if not expedition_active:
+		return false
+	for i in range(EXTRACTION_RULES.EXITS.size()):
+		var exit_point: Vector2 = EXTRACTION_RULES.EXITS[i]
+		if EXTRACTION_RULES.is_near_exit(player, exit_point):
+			if active_exit == i and extraction_clock > 0.0:
+				show_status("脱出準備中！あと%d秒、装置を守ろう" % ceili(extraction_clock), Color("acefff"))
+				return true
+			active_exit = i
+			extraction_clock = EXTRACTION_RULES.EXTRACTION_SECONDS
+			burst(exit_point, Color("88e2ff"), 36)
+			play_sound(AUDIO_RARE, -12.0)
+			show_status("脱出装置を起動！ 12秒間、半径100以内で守り抜こう", Color("b2f3ff"))
+			return true
+	for box_data in search_crates:
+		if bool(box_data["opened"]) or player.distance_to(box_data["pos"]) > EXTRACTION_RULES.SEARCH_RADIUS:
+			continue
+		if not EXTRACTION_RULES.can_search(carried_materials):
+			show_status("素材バッグ満杯！ 脱出して持ち帰るか、装備を探そう", Color("ffcc9c"))
+			return true
+		box_data["opened"] = true
+		var tier: int = int(box_data["tier"])
+		var count: int = mini(EXTRACTION_RULES.CARGO_CAPACITY - EXTRACTION_RULES.cargo_count(carried_materials), 1 + tier + rng.randi_range(0, 1))
+		for item_index in range(count):
+			var kind: int = EXTRACTION_RULES.material_kind(tier, rng.randf())
+			carried_materials[kind] += 1
+		var gold_amount: int = rng.randi_range(18, 35) * (tier + 1)
+		coins += gold_amount
+		if rng.randf() < (0.17 + float(tier) * 0.24):
+			var rarity: int = mini(3, maxi(1, tier + 1))
+			spawn_drop(box_data["pos"] + Vector2(32, 22), rarity)
+		burst(box_data["pos"], Color("b6e6ff") if tier < 2 else Color("ffdf9f"), 25)
+		play_sound(AUDIO_PICKUP, -10.0)
+		show_status("物資回収！素材+%d / +%dG  |  持ち物%d/%d" % [count, gold_amount, EXTRACTION_RULES.cargo_count(carried_materials), EXTRACTION_RULES.CARGO_CAPACITY], Color("b5f5dd"))
+		return true
+	return false
+
+func draw_expedition_sites() -> void:
+	if not expedition_active:
+		return
+	for box_data in search_crates:
+		var at: Vector2 = box_data["pos"]
+		var opened: bool = bool(box_data["opened"])
+		var tier: int = int(box_data["tier"])
+		var col: Color = Color("6b8282") if opened else (Color("ffd591") if tier >= 2 else (Color("aa9df6") if tier == 1 else Color("8be2ce")))
+		draw_circle(at + Vector2(0, 18), 37.0, Color("091b2a", 0.43))
+		draw_rect(Rect2(at + Vector2(-31, -24), Vector2(62, 45)), Color("273743") if not opened else Color("354047"))
+		draw_rect(Rect2(at + Vector2(-31, -24), Vector2(62, 45)), col, false, 3.0)
+		draw_line(at + Vector2(-27, -9), at + Vector2(27, -9), col.darkened(0.19), 4.0)
+		draw_rect(Rect2(at + Vector2(-5, -9), Vector2(10, 15)), col)
+		if not opened:
+			draw_string(ui_font, at + Vector2(-44, -34), "物資 [E]", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, col)
+		else:
+			draw_string(ui_font, at + Vector2(-25, -34), "回収済", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("aab6bd"))
+	for i in range(EXTRACTION_RULES.EXITS.size()):
+		var exit_point: Vector2 = EXTRACTION_RULES.EXITS[i]
+		var active: bool = active_exit == i and extraction_clock > 0.0
+		var hue: Color = Color("9cf7ca") if active else Color("8bdbfa")
+		draw_circle(exit_point, EXTRACTION_RULES.EXTRACTION_RADIUS, Color(hue, 0.075))
+		draw_arc(exit_point, EXTRACTION_RULES.EXTRACTION_RADIUS, 0.0, TAU, 48, Color(hue, 0.54), 3.0)
+		draw_rect(Rect2(exit_point + Vector2(-29, -39), Vector2(58, 53)), Color("153b5a"))
+		draw_rect(Rect2(exit_point + Vector2(-29, -39), Vector2(58, 53)), hue, false, 3.0)
+		draw_line(exit_point + Vector2(-13, -25), exit_point + Vector2(13, -25), hue, 4.0)
+		draw_string(ui_font, exit_point + Vector2(-67, -60), "脱出装置 [E]", HORIZONTAL_ALIGNMENT_LEFT, -1, 17, hue)
+		if active:
+			draw_string(ui_font, exit_point + Vector2(-45, 38), "あと%d秒" % ceili(extraction_clock), HORIZONTAL_ALIGNMENT_LEFT, -1, 21, Color("fff5b7"))
 
 func count_empty_bag_slots() -> int:
 	var count := 0
@@ -4159,7 +4383,18 @@ func update_hud() -> void:
 	companion_hp_bar.value = maxf(0.0, companion_hp)
 	companion_hp_text.text = "ミント LV%d  %s" % [companion_level, ("復活祭壇へ" if mint_soul_carried else "ハートを回収" if companion_hp <= 0.0 else "%d / %d" % [roundi(companion_hp), roundi(companion_max_hp)])]
 	companion_xp_text.text = "ミントXP %d/%d  |  %s" % [companion_xp, companion_xp_needed, companion_mode]
-	phase_label.text = "安全区域  |  [G] 出撃で再挑戦" if phase == "hub" else (("出撃 / 生還  |  WAVE %d CLEAR" % wave) if phase == "all_in" else (("準備 あと%d秒" % ceili(phase_clock)) if phase == "prep" else ("休憩 あと%d秒  |  Wave %d" % [ceili(phase_clock), wave] if phase == "rest" else "Wave %d  討伐 %d/%d  残敵%d" % [wave, maxi(0, wave_spawned - enemies.size()), wave_target, enemies.size()])))
+	if expedition_active:
+		phase_label.text = "探索中 %d分  |  コンテナ%d/%d  |  脱出地点で[E]" % [int(expedition_elapsed / 60.0), count_open_crates(), search_crates.size()]
+	elif phase == "hub":
+		phase_label.text = "安全区域  |  [G] 探索へ出撃"
+	elif phase == "all_in":
+		phase_label.text = "出撃 / 生還  |  WAVE %d CLEAR" % wave
+	elif phase == "prep":
+		phase_label.text = "準備 あと%d秒" % ceili(phase_clock)
+	elif phase == "rest":
+		phase_label.text = "休憩 あと%d秒  |  Wave %d" % [ceili(phase_clock), wave]
+	else:
+		phase_label.text = "Wave %d  討伐 %d/%d  残敵%d" % [wave, maxi(0, wave_spawned - enemies.size()), wave_target, enemies.size()]
 	phase_label.add_theme_color_override("font_color", Color("a1ffc4") if phase != "combat" else Color("ffc39b"))
 	var to_shrine := REVIVE_SHRINE - player
 	var to_shop := MERCHANT_POS - player
@@ -4869,6 +5104,7 @@ func draw_fantasy_ground() -> void:
 
 func _draw() -> void:
 	draw_fantasy_ground()
+	draw_expedition_sites()
 	draw_farm_and_kitchen()
 	draw_stash_chest()
 	draw_meal_displays()

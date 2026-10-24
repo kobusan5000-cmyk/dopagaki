@@ -111,6 +111,18 @@ jobs:
           }
           cat godot-safe-hub-flow.log
 
+      - name: Validate extraction and exploration gameplay
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot="$HOME/.cache/dopagaki-godot/godot"
+          timeout 75 "$godot" --headless --path . --script res://tests/test_extraction_flow.gd > godot-extraction-flow.log 2>&1 || {
+            cat godot-extraction-flow.log
+            echo "::error::Extraction flow failed"
+            exit 1
+          }
+          cat godot-extraction-flow.log
+
       - name: Launch Godot and smoke-test main scene
         shell: bash
         run: |
@@ -137,6 +149,7 @@ jobs:
             godot-all-in-tests.log
             godot-all-in-flow.log
             godot-safe-hub-flow.log
+            godot-extraction-flow.log
             godot-run.log
           if-no-files-found: ignore
           retention-days: 7
