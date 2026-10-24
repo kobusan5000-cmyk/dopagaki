@@ -354,6 +354,7 @@ var all_in_pierce := 0
 var all_in_vamp := 0
 var all_in_chain := 0
 var all_in_crit := 0.0
+var hub_sortie_button: Button
 var all_in_panel: PanelContainer
 var all_in_title: Label
 var all_in_info: Label
@@ -1052,7 +1053,7 @@ func build_ui() -> void:
 	var all_in_box := VBoxContainer.new()
 	all_in_box.add_theme_constant_override("separation", 9)
 	all_in_panel.get_child(0).add_child(all_in_box)
-	all_in_title = make_label("ALL IN", 32, Color("ffe3a1"), true)
+	all_in_title = make_label("出撃 / 生還", 32, Color("ffe3a1"), true)
 	all_in_box.add_child(all_in_title)
 	all_in_info = make_label("", 17, Color("e7e3f7"), true)
 	all_in_info.custom_minimum_size = Vector2(600, 72)
@@ -1070,13 +1071,20 @@ func build_ui() -> void:
 	all_in_cashout_button = make_button("生還する [1]", Color("94edc2"), Vector2(289, 54))
 	all_in_cashout_button.pressed.connect(extract_alive)
 	action_row.add_child(all_in_cashout_button)
-	all_in_continue_button = make_button("ALL IN [2]", Color("ff9e9b"), Vector2(289, 54))
+	all_in_continue_button = make_button("出撃（続行） [2]", Color("ff9e9b"), Vector2(289, 54))
 	all_in_continue_button.pressed.connect(start_all_in_upgrades)
 	action_row.add_child(all_in_continue_button)
 	all_in_back_button = make_button("帰還の選択に戻る", Color("c7b7dc"), Vector2(600, 40))
 	all_in_back_button.pressed.connect(show_all_in_decision)
 	all_in_box.add_child(all_in_back_button)
 	all_in_panel.hide()
+	# Visible only inside the hub. Re-entering combat is always a deliberate choice.
+	hub_sortie_button = make_button("出撃 [G]  — WAVE1から", Color("ffba81"), Vector2(315, 55))
+	hub_sortie_button.position = Vector2(781, 336)
+	hub_sortie_button.add_theme_font_size_override("font_size", 18)
+	hub_sortie_button.pressed.connect(start_sortie)
+	layer.add_child(hub_sortie_button)
+	hub_sortie_button.hide()
 
 func reset_game() -> void:
 	state = "choose"
@@ -1153,6 +1161,7 @@ func reset_game() -> void:
 	all_in_chain = 0
 	all_in_crit = 0.0
 	all_in_panel.hide()
+	hub_sortie_button.hide()
 	first_reaper_spawned = false
 	companion = player + Vector2(-59, 14)
 	companion_level = 1
@@ -1957,6 +1966,9 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			reset_game()
 		return
 	if state == "playing":
+		if phase == "hub" and event.keycode == KEY_G:
+			start_sortie()
+			return
 		if all_in_open:
 			if all_in_stage == "decision":
 				if event.keycode == KEY_1:
@@ -2131,7 +2143,7 @@ func update_music() -> void:
 		bgm_player.play()
 
 func update_countdown() -> void:
-	if phase == "combat":
+	if phase == "combat" or phase == "hub":
 		countdown_label.text = ""
 		return
 	var remain := ceili(phase_clock)
@@ -2204,7 +2216,7 @@ func _process(delta: float) -> void:
 	for plot in farm_plots:
 		if float(plot["progress"]) >= 0.0 and float(plot["progress"]) < float(CROP_GROW[int(plot.get("crop", 0))]):
 			plot["progress"] = minf(float(CROP_GROW[int(plot.get("crop", 0))]), float(plot["progress"]) + delta)
-	if phase != "combat":
+	if phase == "prep" or phase == "rest":
 		phase_clock -= delta
 		if phase_clock <= 0.0:
 			advance_phase()
@@ -2356,10 +2368,10 @@ func show_all_in_decision() -> void:
 	phase = "all_in"
 	phase_clock = REST_SECONDS
 	all_in_panel.show()
-	all_in_title.text = "WAVE %d CLEAR — 生還 or ALL IN" % wave
+	all_in_title.text = "WAVE %d CLEAR — 生還 or 出撃" % wave
 	var carried_count: int = all_in_collect_gear().size()
 	var free_slots: int = STASH_MAX - stash_items.size()
-	all_in_info.text = "装備 %d個 / 倉庫の空き %d個　|　冒険 %dG → 金庫 %dG\n今なら装備とGを確保。ALL INすると次のWAVEクリアまで撤退不可。\n次WAVE報酬 ×%.1f、敵の追加強化 ×%.2f。死亡で冒険Gも失う。" % [carried_count, free_slots, coins, banked_gold, ALL_IN_RULES.reward_multiplier(wave + 1), ALL_IN_RULES.danger_multiplier(wave + 1)]
+	all_in_info.text = "装備 %d個 / 倉庫の空き %d個　|　冒険 %dG → 金庫 %dG\n今なら装備とGを確保。出撃すると次のWAVEクリアまで撤退不可。\n次WAVE報酬 ×%.1f、敵の追加強化 ×%.2f。死亡で冒険Gも失う。" % [carried_count, free_slots, coins, banked_gold, ALL_IN_RULES.reward_multiplier(wave + 1), ALL_IN_RULES.danger_multiplier(wave + 1)]
 	for button in all_in_perk_buttons:
 		button.hide()
 	all_in_cashout_button.show()
@@ -3943,7 +3955,7 @@ func extract_alive() -> void:
 		return
 	var bank: Array[Dictionary] = all_in_collect_gear()
 	if stash_items.size() + bank.size() > STASH_MAX:
-		all_in_info.text = "倉庫の空きが足りない！（戦利品%d個 / 空き%d個）\nALL INするか、次回は倉庫の整理後に挑戦しよう。\n※今は装備を勝手に捨てたり上書きしたりしません。" % [bank.size(), STASH_MAX - stash_items.size()]
+		all_in_info.text = "倉庫の空きが足りない！（戦利品%d個 / 空き%d個）\n出撃を続けるか、不要な装備をバッグで整理してから生還しよう。\n※装備は勝手に捨てたり上書きしたりしません。" % [bank.size(), STASH_MAX - stash_items.size()]
 		show_status("倉庫に空きがないため生還できない", Color("ffbca5"))
 		return
 	var saved_size: int = stash_items.size()
@@ -4005,7 +4017,7 @@ func update_hud() -> void:
 	companion_hp_bar.value = maxf(0.0, companion_hp)
 	companion_hp_text.text = "ミント LV%d  %s" % [companion_level, ("復活祭壇へ" if mint_soul_carried else "ハートを回収" if companion_hp <= 0.0 else "%d / %d" % [roundi(companion_hp), roundi(companion_max_hp)])]
 	companion_xp_text.text = "ミントXP %d/%d  |  %s" % [companion_xp, companion_xp_needed, companion_mode]
-	phase_label.text = ("ALL IN | WAVE %d CLEAR" % wave) if phase == "all_in" else (("準備 あと%d秒" % ceili(phase_clock)) if phase == "prep" else ("休憩 あと%d秒  |  Wave %d" % [ceili(phase_clock), wave] if phase == "rest" else "Wave %d  討伐 %d/%d  残敵%d" % [wave, maxi(0, wave_spawned - enemies.size()), wave_target, enemies.size()]))
+	phase_label.text = "安全区域  |  [G] 出撃で再挑戦" if phase == "hub" else (("出撃 / 生還  |  WAVE %d CLEAR" % wave) if phase == "all_in" else (("準備 あと%d秒" % ceili(phase_clock)) if phase == "prep" else ("休憩 あと%d秒  |  Wave %d" % [ceili(phase_clock), wave] if phase == "rest" else "Wave %d  討伐 %d/%d  残敵%d" % [wave, maxi(0, wave_spawned - enemies.size()), wave_target, enemies.size()])))
 	phase_label.add_theme_color_override("font_color", Color("a1ffc4") if phase != "combat" else Color("ffc39b"))
 	var to_shrine := REVIVE_SHRINE - player
 	var to_shop := MERCHANT_POS - player
