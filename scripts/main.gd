@@ -1031,9 +1031,9 @@ func build_ui() -> void:
 	var exit_chest := make_button("閉じる [E / Esc]", Color("cdb184"), Vector2(250, 38))
 	exit_chest.pressed.connect(toggle_stash)
 	chest_controls.add_child(exit_chest)
-	var leave_btn := make_button("生還して帰還 [V]（持ち物も倉庫へ）", Color("99dfb8"), Vector2(370, 38))
+	var leave_btn := make_button("生還はWAVE3以降のALL IN画面から", Color("99dfb8"), Vector2(370, 38))
 	leave_btn.add_theme_font_size_override("font_size", 14)
-	leave_btn.pressed.connect(extract_alive)
+	leave_btn.disabled = true
 	chest_controls.add_child(leave_btn)
 	chest_box.add_child(chest_controls)
 	stash_panel.hide()
@@ -3815,7 +3815,7 @@ func toggle_stash() -> void:
 func refresh_stash_ui() -> void:
 	if not stash_open:
 		return
-	stash_title.text = "倉庫 %d/%d  |  死亡後も保持  |  今回のLV%dは死亡で初期化" % [stash_items.size(), STASH_MAX, level]
+	stash_title.text = "倉庫 %d/%d  |  持ち帰り品はALL IN生還で預入  |  今回LV%d" % [stash_items.size(), STASH_MAX, level]
 	for i in range(BAG_CAPACITY):
 		var item: Dictionary = backpack[i]
 		var bag_button: Button = stash_bag_buttons[i]
@@ -3823,8 +3823,8 @@ func refresh_stash_ui() -> void:
 		bag_button.icon = null if item.is_empty() else item_icon(item)
 		bag_button.expand_icon = true
 		bag_button.tooltip_text = "" if item.is_empty() else item_description(item)
-		bag_button.disabled = item.is_empty() or stash_items.size() >= STASH_MAX
-	stash_equip_button.disabled = stash_items.size() >= STASH_MAX
+		bag_button.disabled = item.is_empty() or stash_items.size() >= STASH_MAX or wave >= 1
+	stash_equip_button.disabled = stash_items.size() >= STASH_MAX or wave >= 1
 	for i in range(STASH_MAX):
 		var button: Button = stash_storage_buttons[i]
 		if i < stash_items.size():
@@ -3841,6 +3841,9 @@ func refresh_stash_ui() -> void:
 		button.expand_icon = true
 
 func stash_deposit_backpack(index: int) -> void:
+	if wave >= 1:
+		show_status("挑戦中は預けられない。WAVEをクリアして生還しよう", Color("ffe0ae"))
+		return
 	if not stash_open or index < 0 or index >= BAG_CAPACITY or stash_items.size() >= STASH_MAX or backpack[index].is_empty():
 		return
 	stash_items.append(backpack[index].duplicate(true))
@@ -3851,6 +3854,9 @@ func stash_deposit_backpack(index: int) -> void:
 	show_status("倉庫に預けた！ 次の挑戦でも取り出せます", Color("ffe7a5"))
 
 func stash_deposit_equipped() -> void:
+	if wave >= 1:
+		show_status("挑戦中は預けられない。WAVEをクリアして生還しよう", Color("ffe0ae"))
+		return
 	if not stash_open or stash_items.size() >= STASH_MAX:
 		return
 	stash_items.append(equipped.duplicate(true))
@@ -3875,28 +3881,23 @@ func stash_withdraw(index: int) -> void:
 	show_status("倉庫から装備を取り出した", Color("b9f4e4"))
 
 func extract_alive() -> void:
-	if not stash_open or state != "playing" or player.distance_to(STASH_POS) > 106.0:
+	# Existing stash deposits remain safe, but a run can ONLY be cashed out
+	# from the explicit post-WAVE-3 ALL IN decision.
+	if state != "playing" or not all_in_open or all_in_stage != "decision" or not ALL_IN_RULES.can_extract(wave, phase):
+		show_status("WAVE3以降、クリア時の生還画面で確保してね", Color("ffe0b8"))
 		return
-	# Extracting alive banks the loadout as long as there is enough chest space.
-	var bank: Array[Dictionary] = []
-	for item in backpack:
-		if not item.is_empty():
-			bank.append(item.duplicate(true))
-	for item in armor_equipped:
-		if not item.is_empty():
-			bank.append(item.duplicate(true))
-	# Ignore only the basic unmodified starter weapon.
-	var starter_kind: int = CLASS_WEAPONS[class_id]
-	if not (int(equipped.get("kind", -1)) == starter_kind and int(equipped.get("rarity", -1)) == 0 and str(equipped.get("name", "")) == WEAPONS[starter_kind]):
-		bank.append(equipped.duplicate(true))
+	var bank: Array[Dictionary] = all_in_collect_gear()
 	if stash_items.size() + bank.size() > STASH_MAX:
-		show_status("倉庫の空きが足りない！ 整理してから帰還しよう", Color("ffb9a5"))
+		all_in_info.text = "倉庫の空きが足りない！（戦利品%d個 / 空き%d個）\nALL INするか、次回は倉庫の整理後に挑戦しよう。\n※今は装備を勝手に捨てたり上書きしたりしません。" % [bank.size(), STASH_MAX - stash_items.size()]
+		show_status("倉庫に空きがないため生還できない", Color("ffbca5"))
 		return
 	for item in bank:
 		stash_items.append(item)
 	save_stash()
+	var brought_count: int = bank.size()
+	var result_wave: int = wave
 	reset_game()
-	show_status("無事生還！ 装備%d個を倉庫へ保存。次はLV1から" % bank.size(), Color("a8ffdb"))
+	show_status("ALL IN生還成功！ WAVE%d・装備%d個を倉庫へ。次の冒険はLV1から" % [result_wave, brought_count], Color("a8ffdb"))
 
 func count_empty_bag_slots() -> int:
 	var count := 0
