@@ -5118,6 +5118,14 @@ func draw_fantasy_ground() -> void:
 	for station in CAMP_STATIONS:
 		if station.distance_to(player) > 1260.0:
 			continue
+		if expedition_active:
+			# The same map coordinates become abandoned ruins in the expedition.
+			# No green ring, invisible wall, free crafting or shelter.
+			draw_circle(station, CAMP_RADIUS * 0.56, Color("6f343d", 0.11))
+			draw_texture_rect(ROCK_V017, Rect2(station + Vector2(-112, -96), Vector2(132, 100)), false, Color("8c8388"))
+			draw_texture_rect(ROCK_V017, Rect2(station + Vector2(70, 38), Vector2(98, 82)), false, Color("ab8b8a"))
+			draw_string(ui_font, station + Vector2(-122, -220), "旧キャンプ / 危険地帯", HORIZONTAL_ALIGNMENT_LEFT, -1, 19, Color("ffb2a6"))
+			continue
 		draw_v017_glow(station + Vector2(0, -100), GLOW_AMBER_V017, 760.0, 0.75)
 		draw_texture_rect(CAMP_GROUND_V017, Rect2(station - Vector2(384, 384), Vector2(768, 768)), false)
 		# Uneven walkways visually connect the tent, kitchen and chest.
@@ -5178,9 +5186,11 @@ func draw_fantasy_ground() -> void:
 func _draw() -> void:
 	draw_fantasy_ground()
 	draw_expedition_sites()
-	draw_farm_and_kitchen()
-	draw_stash_chest()
-	draw_meal_displays()
+	if not expedition_active:
+		# Home is a separate gameplay phase, not an invulnerable pocket inside a raid.
+		draw_farm_and_kitchen()
+		draw_stash_chest()
+		draw_meal_displays()
 	draw_corpses()
 	for d in drops:
 		draw_loot(d)
