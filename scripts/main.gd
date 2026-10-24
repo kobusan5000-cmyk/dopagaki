@@ -1375,6 +1375,8 @@ func nearest_plot_index() -> int:
 	return best
 
 func interact_nearby() -> void:
+	if expedition_active and interact_expedition_site():
+		return
 	# Both companions use the same moon shrine. One E can revive both carried souls.
 	if player.distance_to(REVIVE_SHRINE) < 90.0 and (mint_soul_carried or rabbit_soul_carried):
 		if mint_soul_carried:
@@ -2265,8 +2267,11 @@ func _process(delta: float) -> void:
 		attack()
 	if phase == "combat":
 		combat_elapsed += delta
-		spawn_clock -= delta
-		if wave_spawned < wave_target and spawn_clock <= 0.0:
+		if expedition_active:
+			update_expedition(delta)
+		else:
+			spawn_clock -= delta
+		if not expedition_active and wave_spawned < wave_target and spawn_clock <= 0.0:
 			var group_size := mini(4, 1 + int(floor(float(maxi(0, wave - 1)) / 4.0)))
 			for spawn_i in range(group_size):
 				if wave_spawned >= wave_target or enemies.size() >= wave_enemy_limit():
@@ -2280,12 +2285,13 @@ func _process(delta: float) -> void:
 					spawn_enemy()
 				wave_spawned += 1
 			spawn_clock = maxf(0.56, 1.65 - float(maxi(0, wave - 1)) * 0.075)
-		if wave_spawned >= wave_target and enemies.is_empty():
-			wave_clear_clock -= delta
-			if wave_clear_clock < -1.2:
-				advance_phase()
-		else:
-			wave_clear_clock = 0.0
+		if not expedition_active:
+			if wave_spawned >= wave_target and enemies.is_empty():
+				wave_clear_clock -= delta
+				if wave_clear_clock < -1.2:
+					advance_phase()
+			else:
+				wave_clear_clock = 0.0
 	update_companion(delta)
 	update_rabbit_pet(delta)
 	update_wanderer(delta)
@@ -2720,7 +2726,7 @@ func player_died() -> void:
 	dead_panel.show()
 	controls_open = false
 	controls_panel.hide()
-	dead_label.text = "Wave %d  討伐 %d  レベル%d → 次回LV1\n持ち物・装備は失うが倉庫の%d個は保存済み" % [wave, kills, level, stash_items.size()]
+	dead_label.text = ("探索失敗！ 討伐%d、探索レベル%d\n冒険で持ち出した装備・素材・Gを失った。倉庫と金庫は安全。\n[R] 同じ職業で拠点へ戻る" % [kills, level]) if expedition_active else ("Wave %d  討伐 %d  レベル%d → 次回LV1\n持ち物・装備は失うが倉庫の%d個は保存済み" % [wave, kills, level, stash_items.size()])
 
 func generate_scenery() -> void:
 	scenery.clear()
@@ -3637,6 +3643,15 @@ func update_drops(delta: float) -> void:
 		pickup_hint.text = "[E] 月の祭壇でミント・ちゅぶらを蘇生"
 	if player.distance_to(STASH_POS) < 106.0:
 		pickup_hint.text = "[E] 倉庫を開く  |  預けた装備は死亡しても残る"
+	if expedition_active:
+		for box_data in search_crates:
+			if not bool(box_data["opened"]) and player.distance_to(box_data["pos"]) < EXTRACTION_RULES.SEARCH_RADIUS:
+				pickup_hint.text = "[E] 物資コンテナを調べる  |  素材 %d/%d" % [EXTRACTION_RULES.cargo_count(carried_materials), EXTRACTION_RULES.CARGO_CAPACITY]
+				break
+		for exit_pos in EXTRACTION_RULES.EXITS:
+			if player.distance_to(exit_pos) < EXTRACTION_RULES.EXTRACTION_RADIUS:
+				pickup_hint.text = "脱出準備中：あと%d秒！ その場を守ろう" % ceili(extraction_clock) if extraction_clock > 0.0 else "[E] 脱出装置を起動（12秒守る）"
+				break
 
 func update_particles(delta: float) -> void:
 	for i in range(particles.size() - 1, -1, -1):
@@ -4911,6 +4926,7 @@ func draw_fantasy_ground() -> void:
 
 func _draw() -> void:
 	draw_fantasy_ground()
+	draw_expedition_sites()
 	draw_farm_and_kitchen()
 	draw_stash_chest()
 	draw_meal_displays()
