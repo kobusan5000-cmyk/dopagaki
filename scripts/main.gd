@@ -4176,6 +4176,103 @@ func start_sortie() -> void:
 	show_status("探索へ出撃！ [E]でコンテナを調査。脱出地点で戦利品を持ち帰ろう", Color("ffd78f"))
 	play_sound(AUDIO_HEAVY, -20.0)
 
+# An exploration run stays live until the player dies or actively extracts.
+func count_open_crates() -> int:
+	var opened := 0
+	for box_data in search_crates:
+		if bool(box_data["opened"]):
+			opened += 1
+	return opened
+
+func update_expedition(delta: float) -> void:
+	if not expedition_active:
+		return
+	expedition_elapsed += delta
+	expedition_spawn_clock -= delta
+	# Ambient danger remains, but enemies no longer arrive in numbered waves.
+	if expedition_spawn_clock <= 0.0:
+		expedition_spawn_clock = 14.0
+		if enemies.size() < 18 and not is_in_safe_camp(player):
+			spawn_enemy()
+	if active_exit >= 0 and extraction_clock > 0.0:
+		var exit_point: Vector2 = EXTRACTION_RULES.EXITS[active_exit]
+		if not EXTRACTION_RULES.is_near_exit(player, exit_point):
+			active_exit = -1
+			extraction_clock = -1.0
+			show_status("脱出装置から離れた！ 再度[E]で起動してね", Color("ffb3b3"))
+			return
+		extraction_clock = maxf(0.0, extraction_clock - delta)
+		if extraction_clock <= 0.0:
+			extract_alive()
+
+func interact_expedition_site() -> bool:
+	if not expedition_active:
+		return false
+	for i in range(EXTRACTION_RULES.EXITS.size()):
+		var exit_point: Vector2 = EXTRACTION_RULES.EXITS[i]
+		if EXTRACTION_RULES.is_near_exit(player, exit_point):
+			if active_exit == i and extraction_clock > 0.0:
+				show_status("脱出準備中！あと%d秒、装置を守ろう" % ceili(extraction_clock), Color("acefff"))
+				return true
+			active_exit = i
+			extraction_clock = EXTRACTION_RULES.EXTRACTION_SECONDS
+			burst(exit_point, Color("88e2ff"), 36)
+			play_sound(AUDIO_RARE, -12.0)
+			show_status("脱出装置を起動！ 12秒間、半径100以内で守り抜こう", Color("b2f3ff"))
+			return true
+	for box_data in search_crates:
+		if bool(box_data["opened"]) or player.distance_to(box_data["pos"]) > EXTRACTION_RULES.SEARCH_RADIUS:
+			continue
+		if not EXTRACTION_RULES.can_search(carried_materials):
+			show_status("素材バッグ満杯！ 脱出して持ち帰るか、装備を探そう", Color("ffcc9c"))
+			return true
+		box_data["opened"] = true
+		var tier: int = int(box_data["tier"])
+		var count: int = mini(EXTRACTION_RULES.CARGO_CAPACITY - EXTRACTION_RULES.cargo_count(carried_materials), 1 + tier + rng.randi_range(0, 1))
+		for item_index in range(count):
+			var kind: int = EXTRACTION_RULES.material_kind(tier, rng.randf())
+			carried_materials[kind] += 1
+		var gold_amount: int = rng.randi_range(18, 35) * (tier + 1)
+		coins += gold_amount
+		if rng.randf() < (0.17 + float(tier) * 0.24):
+			var rarity: int = mini(3, maxi(1, tier + 1))
+			spawn_drop(box_data["pos"] + Vector2(32, 22), rarity)
+		burst(box_data["pos"], Color("b6e6ff") if tier < 2 else Color("ffdf9f"), 25)
+		play_sound(AUDIO_PICKUP, -10.0)
+		show_status("物資回収！素材+%d / +%dG  |  持ち物%d/%d" % [count, gold_amount, EXTRACTION_RULES.cargo_count(carried_materials), EXTRACTION_RULES.CARGO_CAPACITY], Color("b5f5dd"))
+		return true
+	return false
+
+func draw_expedition_sites() -> void:
+	if not expedition_active:
+		return
+	for box_data in search_crates:
+		var at: Vector2 = box_data["pos"]
+		var opened: bool = bool(box_data["opened"])
+		var tier: int = int(box_data["tier"])
+		var col: Color = Color("6b8282") if opened else (Color("ffd591") if tier >= 2 else (Color("aa9df6") if tier == 1 else Color("8be2ce")))
+		draw_circle(at + Vector2(0, 18), 37.0, Color("091b2a", 0.43))
+		draw_rect(Rect2(at + Vector2(-31, -24), Vector2(62, 45)), Color("273743") if not opened else Color("354047"))
+		draw_rect(Rect2(at + Vector2(-31, -24), Vector2(62, 45)), col, false, 3.0)
+		draw_line(at + Vector2(-27, -9), at + Vector2(27, -9), col.darkened(0.19), 4.0)
+		draw_rect(Rect2(at + Vector2(-5, -9), Vector2(10, 15)), col)
+		if not opened:
+			draw_string(ui_font, at + Vector2(-44, -34), "物資 [E]", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, col)
+		else:
+			draw_string(ui_font, at + Vector2(-25, -34), "回収済", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("aab6bd"))
+	for i in range(EXTRACTION_RULES.EXITS.size()):
+		var exit_point: Vector2 = EXTRACTION_RULES.EXITS[i]
+		var active: bool = active_exit == i and extraction_clock > 0.0
+		var hue: Color = Color("9cf7ca") if active else Color("8bdbfa")
+		draw_circle(exit_point, EXTRACTION_RULES.EXTRACTION_RADIUS, Color(hue, 0.075))
+		draw_arc(exit_point, EXTRACTION_RULES.EXTRACTION_RADIUS, 0.0, TAU, 48, Color(hue, 0.54), 3.0)
+		draw_rect(Rect2(exit_point + Vector2(-29, -39), Vector2(58, 53)), Color("153b5a"))
+		draw_rect(Rect2(exit_point + Vector2(-29, -39), Vector2(58, 53)), hue, false, 3.0)
+		draw_line(exit_point + Vector2(-13, -25), exit_point + Vector2(13, -25), hue, 4.0)
+		draw_string(ui_font, exit_point + Vector2(-67, -60), "脱出装置 [E]", HORIZONTAL_ALIGNMENT_LEFT, -1, 17, hue)
+		if active:
+			draw_string(ui_font, exit_point + Vector2(-45, 38), "あと%d秒" % ceili(extraction_clock), HORIZONTAL_ALIGNMENT_LEFT, -1, 21, Color("fff5b7"))
+
 func count_empty_bag_slots() -> int:
 	var count := 0
 	for item in backpack:
