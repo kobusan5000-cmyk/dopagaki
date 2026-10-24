@@ -686,6 +686,25 @@ func build_ui() -> void:
 		camp_dot.add_theme_color_override("font_color", Color("f3c67a"))
 		camp_dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		minimap_panel.add_child(camp_dot)
+	# World markers: gold supply boxes, cyan extraction stations.
+	for box_data in EXTRACTION_RULES.CRATES:
+		var box_point: Vector2 = box_data["pos"]
+		var crate_dot := Label.new()
+		crate_dot.text = "▪"
+		crate_dot.position = Vector2(4, 0) + Vector2((box_point.x - ARENA.position.x) / ARENA.size.x * 150.0, (box_point.y - ARENA.position.y) / ARENA.size.y * 121.0)
+		crate_dot.add_theme_font_size_override("font_size", 15)
+		crate_dot.add_theme_color_override("font_color", Color("ffe49b"))
+		crate_dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		minimap_panel.add_child(crate_dot)
+	for exit_data in EXTRACTION_RULES.EXITS:
+		var exit_point: Vector2 = exit_data
+		var exit_dot := Label.new()
+		exit_dot.text = "●"
+		exit_dot.position = Vector2(4, 0) + Vector2((exit_point.x - ARENA.position.x) / ARENA.size.x * 150.0, (exit_point.y - ARENA.position.y) / ARENA.size.y * 121.0)
+		exit_dot.add_theme_font_size_override("font_size", 14)
+		exit_dot.add_theme_color_override("font_color", Color("8bdfff"))
+		exit_dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		minimap_panel.add_child(exit_dot)
 	minimap_marker = Panel.new()
 	minimap_marker.size = Vector2(9, 9)
 	minimap_marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -693,7 +712,7 @@ func build_ui() -> void:
 	marker_style.set_border_width_all(2)
 	minimap_marker.add_theme_stylebox_override("panel", marker_style)
 	minimap_panel.add_child(minimap_marker)
-	var map_caption := make_label("翡翠の森 · 現在地", 12, Color("d1e9d6"), true)
+	var map_caption := make_label("探索地図  ■物資  ●脱出  ◆拠点", 11, Color("d1e9d6"), true)
 	map_caption.position = Vector2(-1, -21)
 	map_caption.custom_minimum_size = Vector2(168, 19)
 	minimap_panel.add_child(map_caption)
