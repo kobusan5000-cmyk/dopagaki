@@ -465,6 +465,7 @@ var upgrade_hero_button: Button
 var upgrade_mint_button: Button
 var stash_panel: PanelContainer
 var stash_title: Label
+var stash_materials_label: Label
 var banked_gold_withdraw_button: Button
 var stash_bag_buttons: Array[Button] = []
 var stash_storage_buttons: Array[Button] = []
@@ -1012,6 +1013,8 @@ func build_ui() -> void:
 	chest_pad.add_child(chest_box)
 	stash_title = make_label("倉庫", 22, Color("ffe2af"), true)
 	chest_box.add_child(stash_title)
+	stash_materials_label = make_label("", 14, Color("a7e7e9"), true)
+	chest_box.add_child(stash_materials_label)
 	chest_box.add_child(make_label("クリックで預ける / 取り出す。死亡後も、再起動後も保存されます。", 14, Color("aaf1d7")))
 	var bag_label := make_label("持ち物から預ける（5枠）", 17, Color("dbecff"))
 	chest_box.add_child(bag_label)
@@ -1663,7 +1666,7 @@ func refresh_hotbar() -> void:
 			btn.text = "%d %s" % [i + 1, short_name]
 			btn.tooltip_text = item_description(item) + "\nクリック / 数字キーで装備"
 			btn.add_theme_stylebox_override("normal", make_style(Color("152430"), RARITY_COLORS[rarity], 7))
-	hotbar_currency.text = "所持金 %dG\n種:人参%d/メロン%d/スイカ%d" % [coins, seeds, melon_seeds, watermelon_seeds]
+	hotbar_currency.text = "所持金 %dG\n素材 %d/%d  |  種:人参%d/メロン%d/スイカ%d" % [coins, EXTRACTION_RULES.cargo_count(carried_materials), EXTRACTION_RULES.CARGO_CAPACITY, seeds, melon_seeds, watermelon_seeds]
 
 func item_icon(item: Dictionary) -> Texture2D:
 	if str(item.get("type", "")) == "armor":
@@ -3889,6 +3892,25 @@ func save_banked_gold() -> bool:
 	file.close()
 	return true
 
+func load_stored_materials() -> void:
+	stored_materials = [0, 0, 0]
+	if not FileAccess.file_exists(MATERIALS_SAVE):
+		return
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(MATERIALS_SAVE))
+	if typeof(parsed) != TYPE_ARRAY or parsed.size() != stored_materials.size():
+		return
+	for i in range(stored_materials.size()):
+		stored_materials[i] = maxi(0, int(parsed[i]))
+
+func save_stored_materials() -> bool:
+	var file := FileAccess.open(MATERIALS_SAVE, FileAccess.WRITE)
+	if file == null:
+		show_status("素材倉庫の保存に失敗。空き容量・権限を確認", Color("ffabab"))
+		return false
+	file.store_string(JSON.stringify(stored_materials))
+	file.close()
+	return true
+
 func withdraw_banked_gold() -> void:
 	if state != "playing" or not stash_open or wave >= 1 or banked_gold <= 0:
 		return
@@ -3918,7 +3940,8 @@ func toggle_stash() -> void:
 func refresh_stash_ui() -> void:
 	if not stash_open:
 		return
-	stash_title.text = "倉庫 %d/%d  |  金庫 %dG / 冒険 %dG  |  生還で預入" % [stash_items.size(), STASH_MAX, banked_gold, coins]
+	stash_title.text = "倉庫 %d/%d | 金庫 %dG / 冒険 %dG" % [stash_items.size(), STASH_MAX, banked_gold, coins]
+	stash_materials_label.text = "保管素材: スクラップ%d  電力コア%d  古代結晶%d\n探索中の素材: %d/%d（脱出時に保管）" % [stored_materials[0], stored_materials[1], stored_materials[2], EXTRACTION_RULES.cargo_count(carried_materials), EXTRACTION_RULES.CARGO_CAPACITY]
 	banked_gold_withdraw_button.disabled = wave >= 1 or banked_gold <= 0
 	banked_gold_withdraw_button.text = "挑戦前：金庫から最大100G引出" if wave == 0 else "挑戦中は引出不可（生還で預入）"
 	for i in range(BAG_CAPACITY):
@@ -3986,34 +4009,53 @@ func stash_withdraw(index: int) -> void:
 	show_status("倉庫から装備を取り出した", Color("b9f4e4"))
 
 func extract_alive() -> void:
-	# Existing stash deposits remain safe, but a run can ONLY be cashed out
-	# from the explicit post-WAVE-3 ALL IN decision.
-	if state != "playing" or not all_in_open or all_in_stage != "decision" or not ALL_IN_RULES.can_extract(wave, phase):
-		show_status("WAVE3以降、クリア時の生還画面で確保してね", Color("ffe0b8"))
+	# Only extraction terminals, not wave menus, may safely bank expedition loot.
+	if state != "playing" or not expedition_active or phase != "combat" or active_exit < 0 or extraction_clock > 0.0:
+		show_status("探索先の脱出装置を12秒守ってから生還してね", Color("ffe0b8"))
+		return
+	var exit_point: Vector2 = EXTRACTION_RULES.EXITS[active_exit]
+	if not EXTRACTION_RULES.is_near_exit(player, exit_point):
 		return
 	var bank: Array[Dictionary] = all_in_collect_gear()
 	if stash_items.size() + bank.size() > STASH_MAX:
-		all_in_info.text = "倉庫の空きが足りない！（戦利品%d個 / 空き%d個）\n出撃を続けるか、不要な装備をバッグで整理してから生還しよう。\n※装備は勝手に捨てたり上書きしたりしません。" % [bank.size(), STASH_MAX - stash_items.size()]
-		show_status("倉庫に空きがないため生還できない", Color("ffbca5"))
+		show_status("装備倉庫が満杯！ バッグで不要品を捨てるか入れ替えてから脱出", Color("ffbca5"))
+		active_exit = -1
+		extraction_clock = -1.0
 		return
-	var saved_size: int = stash_items.size()
+	var previous_gear: Array[Dictionary] = stash_items.duplicate(true)
+	var old_gold: int = banked_gold
+	var old_materials: Array[int] = stored_materials.duplicate()
 	for item in bank:
 		stash_items.append(item)
 	if not save_stash():
-		stash_items.resize(saved_size)
+		stash_items = previous_gear
+		active_exit = -1
+		extraction_clock = -1.0
 		return
-	var original_bank: int = banked_gold
 	banked_gold += coins
 	if not save_banked_gold():
-		banked_gold = original_bank
-		stash_items.resize(saved_size)
-		save_stash()  # Roll back the equipment deposit if currency persistence failed.
+		banked_gold = old_gold
+		stash_items = previous_gear
+		save_stash()
+		active_exit = -1
+		extraction_clock = -1.0
 		return
-	var brought_count: int = bank.size()
-	var kept_gold: int = coins
-	var result_wave: int = wave
+	for i in range(stored_materials.size()):
+		stored_materials[i] += carried_materials[i]
+	if not save_stored_materials():
+		stored_materials = old_materials
+		banked_gold = old_gold
+		stash_items = previous_gear
+		save_banked_gold()
+		save_stash()
+		active_exit = -1
+		extraction_clock = -1.0
+		return
+	var gear_count: int = bank.size()
+	var material_count: int = EXTRACTION_RULES.cargo_count(carried_materials)
+	var gold_kept: int = coins
 	return_to_safe_hub()
-	show_status("生還！ WAVE%d・装備%d個・%dGを保存。%sのまま拠点へ！ [G]出撃" % [result_wave, brought_count, kept_gold, CLASS_NAMES[class_id]], Color("a8ffdb"))
+	show_status("脱出成功！ 装備%d個・素材%d個・%dGを保管。同じ職業で拠点へ帰還" % [gear_count, material_count, gold_kept], Color("a8ffdb"))
 
 # A successful extraction returns the player to the SAME job in a peaceful hub.
 # Do not call reset_game(): that would show the class selection screen and wipe farms.
