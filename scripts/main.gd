@@ -256,6 +256,8 @@ var extraction_clock := -1.0
 var active_exit := -1
 var expedition_elapsed := 0.0
 var expedition_spawn_clock := 0.0
+var raid_noise_clock := 0.0
+var raid_alarm_spawn_clock := 0.0
 var wave := 0
 var combat_elapsed := 0.0
 var wave_target := 0
@@ -1162,6 +1164,8 @@ func reset_game() -> void:
 	active_exit = -1
 	expedition_elapsed = 0.0
 	expedition_spawn_clock = 0.0
+	raid_noise_clock = 0.0
+	raid_alarm_spawn_clock = 0.0
 	wave = 0
 	combat_elapsed = 0.0
 	wave_target = 0
@@ -2233,6 +2237,7 @@ func _process(delta: float) -> void:
 	if brute_flash_clock > 0.0:
 		brute_flash_clock = maxf(0.0, brute_flash_clock - delta)
 	attack_clock = maxf(0.0, attack_clock - delta)
+	raid_noise_clock = maxf(0.0, raid_noise_clock - delta)
 	jump_cooldown = maxf(0.0, jump_cooldown - delta)
 	jump_clock = maxf(0.0, jump_clock - delta)
 	update_guard_state(delta)
@@ -2836,6 +2841,8 @@ func apply_player_status(kind: String) -> void:
 
 
 func attack() -> void:
+	if expedition_active:
+		raid_noise_clock = 2.0  # Shooting gives nearby guards a wider detection radius.
 	var kind: int = int(equipped["kind"])
 	var tier: int = int(equipped["rarity"])
 	var power: float = RARITY_DAMAGE[tier] * float(equipped.get("bonus", 1.0)) * damage_mult * attack_stat_multiplier(kind) * (1.35 if skill_buff_clock > 0.0 else 1.0)
@@ -3055,7 +3062,25 @@ func update_enemies(delta: float) -> void:
 			enemy["touch"] = maxf(float(enemy.get("touch", 0.0)), 0.18)
 			enemy["hurt"] = 0.14
 			continue
-		# If Mint shelters in camp, enemies must chase the exposed player instead.
+		# In a raid, guards watch their own area and investigate nearby gunfire.
+		# A player who breaks contact and escapes their range can lose pursuit.
+		if expedition_active:
+			if not enemy.has("home"):
+				enemy["home"] = enemy["pos"]
+			var guard_pos: Vector2 = enemy["pos"]
+			var aggro_radius: float = (700.0 if bool(enemy["boss"]) else (550.0 if bool(enemy["elite"]) else 445.0)) + (230.0 if raid_noise_clock > 0.0 else 0.0)
+			var detected: bool = guard_pos.distance_to(player) < aggro_radius
+			if active_exit >= 0 and extraction_clock > 0.0 and guard_pos.distance_to(EXTRACTION_RULES.EXITS[active_exit]) < 670.0:
+				detected = true  # Extraction sirens alert guards even without gunfire.
+			if detected:
+				enemy["alert_clock"] = 6.0
+			else:
+				enemy["alert_clock"] = maxf(0.0, float(enemy.get("alert_clock", 0.0)) - delta)
+			if float(enemy["alert_clock"]) <= 0.0:
+				var home: Vector2 = enemy["home"]
+				if guard_pos.distance_to(home) > 48.0:
+					enemy["pos"] = guard_pos.move_toward(home, float(enemy["speed"]) * 0.48 * delta)
+				continue
 		var target_rabbit: bool = bool(enemy.get("target_rabbit", false)) and rabbit_pet_enabled and rabbit_hp > 0.0 and not rabbit_carried and not is_in_safe_camp(rabbit_pet)
 		var target_ally: bool = not target_rabbit and bool(enemy["target_ally"]) and companion_hp > 0.0 and not is_in_safe_camp(companion)
 		var target_pos: Vector2 = rabbit_pet if target_rabbit else (companion if target_ally else player)
@@ -4113,6 +4138,8 @@ func return_to_safe_hub() -> void:
 	active_exit = -1
 	expedition_elapsed = 0.0
 	expedition_spawn_clock = 0.0
+	raid_noise_clock = 0.0
+	raid_alarm_spawn_clock = 0.0
 	phase_clock = 0.0
 	wave = 0
 	wave_target = 0
@@ -4247,6 +4274,8 @@ func start_sortie() -> void:
 	first_reaper_spawned = false
 	expedition_elapsed = 0.0
 	expedition_spawn_clock = 7.0
+	raid_noise_clock = 0.0
+	raid_alarm_spawn_clock = 0.0
 	extraction_clock = -1.0
 	active_exit = -1
 	carried_materials = [0, 0, 0]
@@ -4265,6 +4294,7 @@ func start_sortie() -> void:
 			if enemies.size() > count_before:
 				var guard_angle: float = TAU * float(guard_i) / float(guard_count) + 0.45
 				enemies[enemies.size() - 1]["pos"] = keep_enemy_out_of_camp(supply_pos + Vector2.RIGHT.rotated(guard_angle) * 165.0)
+				enemies[enemies.size() - 1]["home"] = enemies[enemies.size() - 1]["pos"]
 	for position in [Vector2(3210, 765), Vector2(2850, 1860)]:
 		spawn_brute(position)
 	hub_sortie_button.hide()
@@ -4291,6 +4321,18 @@ func update_expedition(delta: float) -> void:
 			spawn_enemy()
 	if active_exit >= 0 and extraction_clock > 0.0:
 		var exit_point: Vector2 = EXTRACTION_RULES.EXITS[active_exit]
+		raid_alarm_spawn_clock -= delta
+		if raid_alarm_spawn_clock <= 0.0 and enemies.size() < 23:
+			# The alarm draws guards into the evac zone. The extraction is never free.
+			raid_alarm_spawn_clock = 4.8
+			var previous_count: int = enemies.size()
+			spawn_enemy()
+			if enemies.size() > previous_count:
+				var approach: Vector2 = Vector2.RIGHT.rotated(rng.randf_range(0.0, TAU)) * rng.randf_range(245.0, 335.0)
+				var guard: Dictionary = enemies[enemies.size() - 1]
+				guard["pos"] = (exit_point + approach).clamp(ARENA.position + Vector2(45, 50), ARENA.end - Vector2(45, 50))
+				guard["home"] = guard["pos"]
+				guard["alert_clock"] = 9.0
 		if not EXTRACTION_RULES.is_near_exit(player, exit_point):
 			active_exit = -1
 			extraction_clock = -1.0
@@ -4311,6 +4353,8 @@ func interact_expedition_site() -> bool:
 				return true
 			active_exit = i
 			extraction_clock = EXTRACTION_RULES.EXTRACTION_SECONDS
+			raid_alarm_spawn_clock = 3.4
+			raid_noise_clock = 2.0
 			burst(exit_point, Color("88e2ff"), 36)
 			play_sound(AUDIO_RARE, -12.0)
 			show_status("脱出装置を起動！ 12秒間、半径100以内で守り抜こう", Color("b2f3ff"))
