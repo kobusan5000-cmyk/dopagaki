@@ -12,6 +12,7 @@ const CAMP_ENEMY_MARGIN := 27.0
 const STASH_POS := Vector2(1390, 1085)
 const STASH_MAX := 16
 const STASH_SAVE := "user://dopagaki_stash_v1.json"
+const BANKED_GOLD_SAVE := "user://dopagaki_all_in_gold_v023.txt"
 const WANDERER_START := Vector2(1650, 850)
 const MAX_ENEMIES := 78
 const REST_PLAYER_HEAL_FRACTION := 0.24
@@ -221,6 +222,7 @@ var accessory_id := 0
 var character_name := "Ookami"
 var base_class_speed := 262.0
 var coins := 0
+var banked_gold := 0  # Secure gold never disappears on death.
 var coin_drops: Array[Dictionary] = []
 var mint_soul_on_ground := false
 var mint_soul_carried := false
@@ -451,6 +453,7 @@ var upgrade_hero_button: Button
 var upgrade_mint_button: Button
 var stash_panel: PanelContainer
 var stash_title: Label
+var banked_gold_withdraw_button: Button
 var stash_bag_buttons: Array[Button] = []
 var stash_storage_buttons: Array[Button] = []
 var stash_equip_button: Button
@@ -508,6 +511,7 @@ func _ready() -> void:
 	camera.limit_bottom = int(ARENA.end.y)
 	add_child(camera)
 	load_stash()
+	load_banked_gold()
 	reset_game()
 
 func make_style(fill: Color, border: Color, radius: int = 14) -> StyleBoxFlat:
@@ -1031,10 +1035,10 @@ func build_ui() -> void:
 	var exit_chest := make_button("閉じる [E / Esc]", Color("cdb184"), Vector2(250, 38))
 	exit_chest.pressed.connect(toggle_stash)
 	chest_controls.add_child(exit_chest)
-	var leave_btn := make_button("生還はWAVE3以降のALL IN画面から", Color("99dfb8"), Vector2(370, 38))
-	leave_btn.add_theme_font_size_override("font_size", 14)
-	leave_btn.disabled = true
-	chest_controls.add_child(leave_btn)
+	banked_gold_withdraw_button = make_button("金庫から最大100Gを引き出す", Color("99dfb8"), Vector2(370, 38))
+	banked_gold_withdraw_button.add_theme_font_size_override("font_size", 14)
+	banked_gold_withdraw_button.pressed.connect(withdraw_banked_gold)
+	chest_controls.add_child(banked_gold_withdraw_button)
 	chest_box.add_child(chest_controls)
 	stash_panel.hide()
 	choose_panel.hide()
@@ -2355,7 +2359,7 @@ func show_all_in_decision() -> void:
 	all_in_title.text = "WAVE %d CLEAR — 生還 or ALL IN" % wave
 	var carried_count: int = all_in_collect_gear().size()
 	var free_slots: int = STASH_MAX - stash_items.size()
-	all_in_info.text = "持ち帰れる装備 %d個 / 倉庫の空き %d個　|　所持 %dG（今回の冒険用）\n今なら装備を確保。続行すると次のWAVEを突破するまで撤退不可。\n次WAVE報酬 ×%.1f、敵の追加強化 ×%.2f。死亡時は未確保品を失う。" % [carried_count, free_slots, coins, ALL_IN_RULES.reward_multiplier(wave + 1), ALL_IN_RULES.danger_multiplier(wave + 1)]
+	all_in_info.text = "装備 %d個 / 倉庫の空き %d個　|　冒険 %dG → 金庫 %dG\n今なら装備とGを確保。ALL INすると次のWAVEクリアまで撤退不可。\n次WAVE報酬 ×%.1f、敵の追加強化 ×%.2f。死亡で冒険Gも失う。" % [carried_count, free_slots, coins, banked_gold, ALL_IN_RULES.reward_multiplier(wave + 1), ALL_IN_RULES.danger_multiplier(wave + 1)]
 	for button in all_in_perk_buttons:
 		button.hide()
 	all_in_cashout_button.show()
@@ -3812,13 +3816,41 @@ func load_stash() -> void:
 			if typeof(entry) == TYPE_DICTIONARY and str(entry.get("type", "")) in ["weapon", "armor"] and stash_items.size() < STASH_MAX:
 				stash_items.append(entry.duplicate(true))
 
-func save_stash() -> void:
+func save_stash() -> bool:
 	var save_file := FileAccess.open(STASH_SAVE, FileAccess.WRITE)
 	if save_file == null:
 		show_status("倉庫の保存に失敗！ 空き容量・権限を確認", Color("ff9e9e"))
-		return
+		return false
 	save_file.store_string(JSON.stringify(stash_items))
 	save_file.close()
+	return true
+
+func load_banked_gold() -> void:
+	banked_gold = 0
+	if FileAccess.file_exists(BANKED_GOLD_SAVE):
+		banked_gold = maxi(0, FileAccess.get_file_as_string(BANKED_GOLD_SAVE).to_int())
+
+func save_banked_gold() -> bool:
+	var file := FileAccess.open(BANKED_GOLD_SAVE, FileAccess.WRITE)
+	if file == null:
+		show_status("金庫Gの保存に失敗。空き容量や権限を確認", Color("ffadad"))
+		return false
+	file.store_string(str(banked_gold))
+	file.close()
+	return true
+
+func withdraw_banked_gold() -> void:
+	if state != "playing" or not stash_open or wave >= 1 or banked_gold <= 0:
+		return
+	var taken: int = mini(100, banked_gold)
+	banked_gold -= taken
+	if not save_banked_gold():
+		banked_gold += taken
+		return
+	coins += taken
+	refresh_stash_ui()
+	refresh_hotbar()
+	show_status("金庫から%dGを冒険に持ち出した！ 死亡すると失う" % taken, Color("ffe0af"))
 
 func toggle_stash() -> void:
 	if state != "playing":
@@ -3836,7 +3868,9 @@ func toggle_stash() -> void:
 func refresh_stash_ui() -> void:
 	if not stash_open:
 		return
-	stash_title.text = "倉庫 %d/%d  |  持ち帰り品はALL IN生還で預入  |  今回LV%d" % [stash_items.size(), STASH_MAX, level]
+	stash_title.text = "倉庫 %d/%d  |  金庫 %dG / 冒険 %dG  |  生還で預入" % [stash_items.size(), STASH_MAX, banked_gold, coins]
+	banked_gold_withdraw_button.disabled = wave >= 1 or banked_gold <= 0
+	banked_gold_withdraw_button.text = "挑戦前：金庫から最大100G引出" if wave == 0 else "挑戦中は引出不可（生還で預入）"
 	for i in range(BAG_CAPACITY):
 		var item: Dictionary = backpack[i]
 		var bag_button: Button = stash_bag_buttons[i]
@@ -3912,13 +3946,24 @@ func extract_alive() -> void:
 		all_in_info.text = "倉庫の空きが足りない！（戦利品%d個 / 空き%d個）\nALL INするか、次回は倉庫の整理後に挑戦しよう。\n※今は装備を勝手に捨てたり上書きしたりしません。" % [bank.size(), STASH_MAX - stash_items.size()]
 		show_status("倉庫に空きがないため生還できない", Color("ffbca5"))
 		return
+	var saved_size: int = stash_items.size()
 	for item in bank:
 		stash_items.append(item)
-	save_stash()
+	if not save_stash():
+		stash_items.resize(saved_size)
+		return
+	var original_bank: int = banked_gold
+	banked_gold += coins
+	if not save_banked_gold():
+		banked_gold = original_bank
+		stash_items.resize(saved_size)
+		save_stash()  # Roll back the equipment deposit if currency persistence failed.
+		return
 	var brought_count: int = bank.size()
+	var kept_gold: int = coins
 	var result_wave: int = wave
 	reset_game()
-	show_status("ALL IN生還成功！ WAVE%d・装備%d個を倉庫へ。次の冒険はLV1から" % [result_wave, brought_count], Color("a8ffdb"))
+	show_status("生還！ WAVE%d・装備%d個・%dGを金庫へ。次回はLV1から" % [result_wave, brought_count, kept_gold], Color("a8ffdb"))
 
 func count_empty_bag_slots() -> int:
 	var count := 0
