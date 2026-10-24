@@ -325,6 +325,11 @@ var rabbit_pet_meal_clock := 0.0
 var rabbit_pet_bob_clock := 0.0
 var rabbit_pet_was_moving := false
 var rabbit_pet_enabled := true
+const RABBIT_MAX_HP := 65.0
+var rabbit_hp := RABBIT_MAX_HP
+var rabbit_soul_on_ground := false
+var rabbit_soul_carried := false
+var rabbit_soul_pos := Vector2.ZERO
 var rabbit_gear_level := 0
 var rabbit_affection := 35.0
 var rabbit_hunger := 48.0 # 0=空腹 / 100=満腹
@@ -561,26 +566,9 @@ func build_ui() -> void:
 	status_style.border_width_right = 0
 	layer.add_child(status_back)
 	status_back.add_theme_stylebox_override("panel", status_style)
-	var hero_medallion := TextureRect.new()
-	hero_medallion.texture = HERO_BADGE_V017
-	hero_medallion.position = Vector2(3, 9)
-	hero_medallion.size = Vector2(42, 42)
-	hero_medallion.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	hero_medallion.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	hero_medallion.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	hero_medallion.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	layer.add_child(hero_medallion)
-	var bunny_medallion := TextureRect.new()
-	bunny_medallion.texture = BUNNY_BADGE_V017
-	bunny_medallion.position = Vector2(338, 40)
-	bunny_medallion.size = Vector2(23, 23)
-	bunny_medallion.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	bunny_medallion.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	bunny_medallion.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	bunny_medallion.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	layer.add_child(bunny_medallion)
+	# Portrait medallions removed: they overlapped the HUD and obscured text.
 	hud = make_label("", 15, Color("eaf6ff"))
-	hud.position = Vector2(48, 8)
+	hud.position = Vector2(18, 8)
 	layer.add_child(hud)
 	# Always show the currently equipped weapon, not just the contents of the backpack.
 	equipped_icon = TextureRect.new()
@@ -612,7 +600,7 @@ func build_ui() -> void:
 	companion_xp_text.custom_minimum_size = Vector2(240, 17)
 	layer.add_child(companion_xp_text)
 	mp_text = make_label("", 15, Color("b6a4ff"))
-	mp_text.position = Vector2(48, 42)
+	mp_text.position = Vector2(18, 42)
 	layer.add_child(mp_text)
 	skill_text = make_label("", 13, Color("ffda94"))
 	skill_text.position = Vector2(617, 65)
@@ -1046,6 +1034,9 @@ func reset_game() -> void:
 	mint_soul_on_ground = false
 	mint_soul_carried = false
 	mint_soul_pos = Vector2.ZERO
+	rabbit_soul_on_ground = false
+	rabbit_soul_carried = false
+	rabbit_soul_pos = Vector2.ZERO
 	slot_open = false
 	slot_spin_clock = 0.0
 	slot_roll = 0.0
@@ -1127,6 +1118,7 @@ func reset_game() -> void:
 	rabbit_pet_bob_clock = 0.0
 	rabbit_pet_was_moving = false
 	rabbit_pet_enabled = true
+	rabbit_hp = RABBIT_MAX_HP
 	rabbit_gear_level = 0
 	rabbit_affection = 35.0
 	rabbit_hunger = 48.0
@@ -1288,9 +1280,18 @@ func nearest_plot_index() -> int:
 	return best
 
 func interact_nearby() -> void:
-	# Mint's soul and shrine have priority so revival never fights with cooking.
-	if mint_soul_carried and player.distance_to(REVIVE_SHRINE) < 90.0:
-		revive_mint()
+	# Both companions use the same moon shrine. One E can revive both carried souls.
+	if player.distance_to(REVIVE_SHRINE) < 90.0 and (mint_soul_carried or rabbit_soul_carried):
+		if mint_soul_carried:
+			revive_mint()
+		if rabbit_soul_carried:
+			revive_rabbit()
+		return
+	if rabbit_soul_on_ground and player.distance_to(rabbit_soul_pos) < 100.0:
+		rabbit_soul_on_ground = false
+		rabbit_soul_carried = true
+		show_status("ちゅぶらの命を回収！ 南東の月の祭壇で復活させよう", Color("ffc9ee"))
+		play_sound(AUDIO_RARE, -13.0)
 		return
 	if mint_soul_on_ground and player.distance_to(mint_soul_pos) < 100.0:
 		mint_soul_on_ground = false
@@ -1717,6 +1718,41 @@ func revive_mint() -> void:
 	burst(companion, Color("ffb7d8"), 40)
 	play_sound(AUDIO_LEGEND, -12.0)
 	show_status("ミントが復活！ LV%d と能力値はそのまま" % companion_level, Color("aaffd9"))
+
+func rabbit_take_damage(amount: float) -> void:
+	if not rabbit_pet_enabled or rabbit_hp <= 0.0 or rabbit_carried or is_in_safe_camp(rabbit_pet):
+		return
+	# Rabbit gear provides a small amount of protection.
+	rabbit_hp = maxf(0.0, rabbit_hp - maxf(1.0, amount - float(rabbit_gear_level) * 1.5))
+	burst(rabbit_pet, Color("ff9ec6"), 5)
+	if rabbit_hp <= 0.0:
+		rabbit_soul_on_ground = true
+		rabbit_soul_carried = false
+		rabbit_soul_pos = rabbit_pet
+		rabbit_carried = false
+		rabbit_pet_mode = "魂を祭壇へ"
+		rabbit_pet_attack_clock = 0.0
+		rabbit_menu_open = false
+		rabbit_menu.hide()
+		show_status("ちゅぶらが倒れた！ 命を拾って月の祭壇へ運ぼう", Color("ffb4d7"))
+
+func revive_rabbit() -> void:
+	if not rabbit_soul_carried:
+		return
+	rabbit_soul_carried = false
+	rabbit_soul_on_ground = false
+	rabbit_soul_pos = Vector2.ZERO
+	rabbit_hp = RABBIT_MAX_HP * 0.75
+	rabbit_pet = REVIVE_SHRINE + Vector2(52, 36)
+	rabbit_pet_goal = rabbit_pet
+	rabbit_carried = false
+	rabbit_pet_mode = "復活！"
+	rabbit_pet_attack_clock = 1.0
+	rabbit_pet_meal_clock = 3.0
+	rabbit_pet_glow = 1.7
+	burst(rabbit_pet, Color("ffb3e3"), 35)
+	play_sound(AUDIO_LEGEND, -12.0)
+	show_status("ちゅぶらが復活！ HP %d/%d・装備・なかよし度はそのまま" % [roundi(rabbit_hp), roundi(RABBIT_MAX_HP)], Color("ffd3ec"))
 
 func collect_coin(index: int) -> void:
 	if index < 0 or index >= coin_drops.size():
@@ -3331,8 +3367,10 @@ func update_drops(delta: float) -> void:
 			pickup_hint.text = "[E] コイン +%dG" % int(coin["amount"])
 	if mint_soul_on_ground and player.distance_to(mint_soul_pos) < 100.0:
 		pickup_hint.text = "[E] ミントの命を拾う → 南東の月の祭壇へ"
-	if mint_soul_carried and player.distance_to(REVIVE_SHRINE) < 90.0:
-		pickup_hint.text = "[E] 月の祭壇でミントを蘇生"
+	if rabbit_soul_on_ground and player.distance_to(rabbit_soul_pos) < 100.0:
+		pickup_hint.text = "[E] ちゅぶらの命を拾う → 南東の月の祭壇へ"
+	if (mint_soul_carried or rabbit_soul_carried) and player.distance_to(REVIVE_SHRINE) < 90.0:
+		pickup_hint.text = "[E] 月の祭壇でミント・ちゅぶらを蘇生"
 	if player.distance_to(STASH_POS) < 106.0:
 		pickup_hint.text = "[E] 倉庫を開く  |  預けた装備は死亡しても残る"
 
@@ -3910,7 +3948,7 @@ func draw_revive_shrine() -> void:
 	draw_rect(Rect2(c + Vector2(-19, -9), Vector2(38, 25)), Color("8495aa"))
 	draw_rect(Rect2(c + Vector2(-15, -6), Vector2(30, 18)), Color("d7e5e9"))
 	draw_mint_heart(c + Vector2(0, -24), 0.55)
-	draw_string(ui_font, c + Vector2(-82, 57), "月の祭壇 / ミント蘇生 [E]", HORIZONTAL_ALIGNMENT_LEFT, -1, 17, Color("ffc2dd"))
+	draw_string(ui_font, c + Vector2(-103, 57), "月の祭壇 / ミント・ちゅぶら蘇生 [E]", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color("ffc2dd"))
 	for i in range(8):
 		var angle := TAU * float(i) / 8.0 + elapsed * 0.1
 		var glow_pos := c + Vector2.RIGHT.rotated(angle) * 61.0
@@ -3985,6 +4023,9 @@ func draw_farm_and_kitchen() -> void:
 func toggle_rabbit_menu() -> void:
 	if state != "playing":
 		return
+	if rabbit_hp <= 0.0:
+		show_status("ちゅぶらは倒れている。命を月の祭壇へ！", Color("ffc8e7"))
+		return
 	if not rabbit_menu_open and not rabbit_carried and player.distance_to(rabbit_pet) > 115.0:
 		show_status("ちゅぶらの近くで [T] を押してね", Color("ead7ff"))
 		return
@@ -4000,13 +4041,13 @@ func refresh_rabbit_menu() -> void:
 		return
 	var gear_next := mini(3, rabbit_gear_level + 1)
 	var gear_line := "装備は最上級まで購入済" if rabbit_gear_level >= 3 else "次の装備: %s (%dG)" % [RABBIT_GEAR_NAMES[gear_next], RABBIT_GEAR_COSTS[gear_next]]
-	rabbit_menu_info.text = "名前: %s　好物: にんじん\nなかよし度: %d/100  満腹度: %d/100　にんじん: %d個\n装備: %s　%s\n状態: %s" % [RABBIT_NAME, roundi(rabbit_affection), roundi(rabbit_hunger), carrots, RABBIT_GEAR_NAMES[rabbit_gear_level], gear_line, "抱っこ中" if rabbit_carried else rabbit_pet_mode]
+	rabbit_menu_info.text = "名前: %s　HP: %d/%d　好物: にんじん\nなかよし度: %d/100  満腹度: %d/100　にんじん: %d個\n装備: %s　%s\n状態: %s" % [RABBIT_NAME, roundi(rabbit_hp), roundi(RABBIT_MAX_HP), roundi(rabbit_affection), roundi(rabbit_hunger), carrots, RABBIT_GEAR_NAMES[rabbit_gear_level], gear_line, "抱っこ中" if rabbit_carried else rabbit_pet_mode]
 	rabbit_menu_buttons[2].disabled = carrots <= 0 or rabbit_hunger >= 98.0
 	rabbit_menu_buttons[3].disabled = rabbit_gear_level >= 3 or coins < RABBIT_GEAR_COSTS[gear_next]
 	rabbit_menu_buttons[3].text = "[4] 次の装備を購入 (%dG)" % RABBIT_GEAR_COSTS[gear_next] if rabbit_gear_level < 3 else "[4] すべての装備を購入済"
 
 func rabbit_action_selected(action: int) -> void:
-	if state != "playing" or not rabbit_pet_enabled:
+	if state != "playing" or not rabbit_pet_enabled or rabbit_hp <= 0.0:
 		return
 	match action:
 		0: # Pet
@@ -4056,7 +4097,7 @@ func rabbit_action_selected(action: int) -> void:
 	refresh_rabbit_menu()
 
 func update_rabbit_pet(delta: float) -> void:
-	if not rabbit_pet_enabled or state != "playing":
+	if not rabbit_pet_enabled or state != "playing" or rabbit_hp <= 0.0:
 		return
 	rabbit_pet_attack_clock = maxf(0.0, rabbit_pet_attack_clock - delta)
 	rabbit_pet_meal_clock = maxf(0.0, rabbit_pet_meal_clock - delta)
@@ -4136,7 +4177,7 @@ func update_rabbit_pet(delta: float) -> void:
 		burst(enemy_target["pos"], Color("d7d1ff"), 6)
 
 func draw_rabbit_pet() -> void:
-	if not rabbit_pet_enabled:
+	if not rabbit_pet_enabled or rabbit_hp <= 0.0:
 		return
 	var p: Vector2 = rabbit_pet
 	var bob: float = sin(rabbit_pet_bob_clock) * 1.5 if not rabbit_carried else 0.0
@@ -4170,7 +4211,9 @@ func draw_rabbit_pet() -> void:
 		for i in range(3):
 			var heart_pos: Vector2 = p + Vector2(-13 + float(i) * 13.0, -40 - rabbit_pet_glow * 5.0)
 			draw_circle(heart_pos, 3.0, Color("ffb2d8", minf(1.0, rabbit_pet_glow)))
-	draw_string(ui_font, p + Vector2(-29, -40), RABBIT_NAME, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("f2dcff"))
+	draw_string(ui_font, p + Vector2(-29, -48), "%s %d/%d" % [RABBIT_NAME, roundi(rabbit_hp), roundi(RABBIT_MAX_HP)], HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("f2dcff"))
+	draw_rect(Rect2(p + Vector2(-24, -42), Vector2(48, 5)), Color("291b35", 0.85))
+	draw_rect(Rect2(p + Vector2(-24, -42), Vector2(48.0 * rabbit_hp / RABBIT_MAX_HP, 5)), Color("ff91c3"))
 
 func damage_wanderer(amount: float) -> void:
 	if wanderer_hp <= 0.0:
@@ -4415,7 +4458,12 @@ func _draw() -> void:
 		draw_mint_heart(mint_soul_pos + Vector2(0, -8 + sin(elapsed * 4.0) * 5.0))
 		draw_string(ui_font, mint_soul_pos + Vector2(-46, -44), "ミントの命 [E]", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("ffc0d8"))
 	if mint_soul_carried:
-		draw_mint_heart(player + Vector2(0, -85), 0.55)
+		draw_mint_heart(player + Vector2(-18, -85), 0.55)
+	if rabbit_soul_on_ground:
+		draw_mint_heart(rabbit_soul_pos + Vector2(0, -6 + sin(elapsed * 5.0) * 5.0), 0.72)
+		draw_string(ui_font, rabbit_soul_pos + Vector2(-57, -47), "ちゅぶらの命 [E]", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color("ffc4e5"))
+	if rabbit_soul_carried:
+		draw_mint_heart(player + Vector2(18, -85), 0.45)
 	for enemy in enemies:
 		if bool(enemy["boss"]):
 			draw_reaper(enemy)
