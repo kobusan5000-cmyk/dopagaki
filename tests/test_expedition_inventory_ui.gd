@@ -26,7 +26,8 @@ func _run() -> void:
 
 	scene.call("start_sortie")
 	_check(bool(scene.get("expedition_active")), "Exploration started")
-	scene.set("carried_materials", [2, 3, 1])
+	var earned: Array[int] = [2, 3, 1]
+	scene.set("carried_materials", earned)
 	scene.call("refresh_inventory_ui")
 	_check(materials.visible, "Materials shown inside bag during exploration")
 	_check(materials.text.contains("探索素材 6/12"), "Material capacity text")
@@ -35,7 +36,7 @@ func _run() -> void:
 	_check(materials.text.contains("古代結晶 1"), "Crystal amount displayed")
 
 	var ground_items: Array = scene.get("drops")
-	ground_items.append({"type": "weapon", "rarity": 1, "name": "TEST RARE SWORD", "kind": 2, "trait": 0, "bonus": 1.0, "pos": Vector2.ZERO})
+	ground_items.append({"type": "weapon", "rarity": 1, "name": "TEST RARE SWORD", "kind": 2, "trait": 0, "bonus": 1.0, "pos": Vector2.ZERO, "life": 30.0, "phase": 0.0})
 	var picked: bool = scene.call("auto_collect_expedition_gear")
 	var bag: Array = scene.get("backpack")
 	_check(picked, "Available gear slot automatically collects exploration drop")
@@ -45,7 +46,7 @@ func _run() -> void:
 	# All 5 equipment slots full: valuables must not silently disappear.
 	for i in range(1, bag.size()):
 		bag[i] = bag[0].duplicate(true)
-	ground_items.append({"type": "weapon", "rarity": 2, "name": "TEST EPIC", "kind": 2, "trait": 0, "bonus": 1.0, "pos": Vector2.ZERO})
+	ground_items.append({"type": "weapon", "rarity": 2, "name": "TEST EPIC", "kind": 2, "trait": 0, "bonus": 1.0, "pos": Vector2.ZERO, "life": 30.0, "phase": 0.0})
 	picked = scene.call("auto_collect_expedition_gear")
 	_check(not picked, "Full equipment bag blocks automatic pickup")
 	_check(ground_items.size() == 1, "Gear stays on ground when equipment bag full")
