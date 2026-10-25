@@ -256,6 +256,12 @@ var extraction_clock := -1.0
 var active_exit := -1
 var expedition_elapsed := 0.0
 var expedition_spawn_clock := 0.0
+var expedition_noise_clock := 0.0
+var expedition_noise_pos := Vector2.ZERO
+var expedition_noise_radius := 0.0
+var expedition_quiet_move := false
+var extraction_hatch_active := false
+var extraction_alarm_triggered := false
 var wave := 0
 var combat_elapsed := 0.0
 var wave_target := 0
@@ -2272,9 +2278,10 @@ func _process(delta: float) -> void:
 	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT): movement.x += 1.0
 	if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP): movement.y -= 1.0
 	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN): movement.y += 1.0
+	expedition_quiet_move = expedition_active and Input.is_key_pressed(KEY_SHIFT)
 	if movement.length_squared() > 0.1:
-		walk_clock += delta * 10.0
-		player += movement.normalized() * move_speed * (0.64 if guard_active else 1.0) * (0.0 if freeze_lock_clock > 0.0 else (0.52 if freeze_clock > 0.0 else 1.0)) * (1.0 + float(hero_stats[1]) * 0.04) * (1.25 if food_buff_clock > 0.0 else 1.0) * (1.3 if skill_buff_clock > 0.0 else 1.0) * delta
+		walk_clock += delta * (5.0 if expedition_quiet_move else 10.0)
+		player += movement.normalized() * move_speed * (0.43 if expedition_quiet_move else 1.0) * (0.64 if guard_active else 1.0) * (0.0 if freeze_lock_clock > 0.0 else (0.52 if freeze_clock > 0.0 else 1.0)) * (1.0 + float(hero_stats[1]) * 0.04) * (1.25 if food_buff_clock > 0.0 else 1.0) * (1.3 if skill_buff_clock > 0.0 else 1.0) * delta
 	else:
 		walk_clock = 0.0
 	if jump_clock > 0.0:
@@ -2815,6 +2822,8 @@ func apply_player_status(kind: String) -> void:
 
 
 func attack() -> void:
+	if expedition_active:
+		raise_expedition_noise(player, EXTRACTION_RULES.NOISE_SHOT_RADIUS, "attack")
 	var kind: int = int(equipped["kind"])
 	var tier: int = int(equipped["rarity"])
 	var power: float = RARITY_DAMAGE[tier] * float(equipped.get("bonus", 1.0)) * damage_mult * attack_stat_multiplier(kind) * (1.35 if skill_buff_clock > 0.0 else 1.0)
@@ -3485,6 +3494,7 @@ const CONTROLS_HELP := [
 	["SPACE", "回避"],
 	["E", "調べる（拾う・畑・料理・商人・スロット）"],
 	["G", "拠点から探索マップへ出撃"],
+	["SHIFT", "探索中は静音移動（足が遅くなるが発見されにくい）"],
 	["脱出", "マップ内の青い脱出装置でEを押し、12秒間守る"],
 	["Q", "クラススキル（LV5で習得）"],
 	["1 - 5", "バッグの装備をすばやく切り替え"],
@@ -4088,6 +4098,11 @@ func return_to_safe_hub() -> void:
 	active_exit = -1
 	expedition_elapsed = 0.0
 	expedition_spawn_clock = 0.0
+	expedition_noise_clock = 0.0
+	expedition_noise_radius = 0.0
+	expedition_quiet_move = false
+	extraction_hatch_active = false
+	extraction_alarm_triggered = false
 	phase_clock = 0.0
 	wave = 0
 	wave_target = 0
@@ -4222,6 +4237,11 @@ func start_sortie() -> void:
 	first_reaper_spawned = false
 	expedition_elapsed = 0.0
 	expedition_spawn_clock = 7.0
+	expedition_noise_clock = 0.0
+	expedition_noise_radius = 0.0
+	expedition_quiet_move = false
+	extraction_hatch_active = false
+	extraction_alarm_triggered = false
 	extraction_clock = -1.0
 	active_exit = -1
 	carried_materials = [0, 0, 0]
@@ -4384,7 +4404,7 @@ func update_hud() -> void:
 	companion_hp_text.text = "ミント LV%d  %s" % [companion_level, ("復活祭壇へ" if mint_soul_carried else "ハートを回収" if companion_hp <= 0.0 else "%d / %d" % [roundi(companion_hp), roundi(companion_max_hp)])]
 	companion_xp_text.text = "ミントXP %d/%d  |  %s" % [companion_xp, companion_xp_needed, companion_mode]
 	if expedition_active:
-		phase_label.text = "探索中 %d分  |  コンテナ%d/%d  |  脱出地点で[E]" % [int(expedition_elapsed / 60.0), count_open_crates(), search_crates.size()]
+		phase_label.text = "探索 %d分 | 箱%d/%d | 素材%d/%d | %s" % [int(expedition_elapsed / 60.0), count_open_crates(), search_crates.size(), EXTRACTION_RULES.cargo_count(carried_materials), EXTRACTION_RULES.CARGO_CAPACITY, "静音移動" if expedition_quiet_move else "通常移動"]
 	elif phase == "hub":
 		phase_label.text = "安全区域  |  [G] 探索へ出撃"
 	elif phase == "all_in":
