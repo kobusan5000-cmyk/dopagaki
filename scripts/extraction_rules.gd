@@ -5,6 +5,19 @@ const CARGO_CAPACITY := 12
 const EXTRACTION_SECONDS := 12.0
 const EXTRACTION_RADIUS := 100.0
 const SEARCH_RADIUS := 90.0
+# Enemies patrol until they detect movement or a nearby disturbance.
+const PATROL_DETECTION_RADIUS := 330.0
+const CROUCH_DETECTION_RADIUS := 135.0
+const NOISE_SHOT_RADIUS := 600.0
+const NOISE_SEARCH_RADIUS := 290.0
+const NOISE_EXTRACTION_RADIUS := 1250.0
+const ALERT_DURATION := 8.0
+const EXIT_REINFORCEMENTS := 3
+# Optional fast-but-costly escape. Uses ONLY loot carried during this sortie.
+const HATCH_POSITION := Vector2(690, 1080)
+const HATCH_SCRAP_COST := 2
+const HATCH_CORE_COST := 1
+const HATCH_SECONDS := 4.0
 const CRATES := [
 	{"pos": Vector2(1710, 495), "tier": 0},
 	{"pos": Vector2(2450, 600), "tier": 1},
@@ -38,3 +51,9 @@ static func material_kind(tier: int, roll: float) -> int:
 	if tier >= 1 and roll < 0.69:
 		return 1
 	return 0
+
+static func can_use_hatch(cargo: Array[int]) -> bool:
+	return cargo.size() >= 3 and cargo[0] >= HATCH_SCRAP_COST and cargo[1] >= HATCH_CORE_COST
+
+static func enemy_can_detect(distance: float, moving_quietly: bool, was_alerted: bool) -> bool:
+	return was_alerted or distance <= (CROUCH_DETECTION_RADIUS if moving_quietly else PATROL_DETECTION_RADIUS)
