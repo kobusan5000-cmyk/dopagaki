@@ -123,6 +123,18 @@ jobs:
           }
           cat godot-extraction-flow.log
 
+      - name: Validate expedition loot and inventory layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot="$HOME/.cache/dopagaki-godot/godot"
+          timeout 75 "$godot" --headless --path . --script res://tests/test_expedition_inventory_ui.gd > godot-expedition-inventory.log 2>&1 || {
+            cat godot-expedition-inventory.log
+            echo "::error::Exploration inventory or loot regression"
+            exit 1
+          }
+          cat godot-expedition-inventory.log
+
       - name: Launch Godot and smoke-test main scene
         shell: bash
         run: |
@@ -150,6 +162,7 @@ jobs:
             godot-all-in-flow.log
             godot-safe-hub-flow.log
             godot-extraction-flow.log
+            godot-expedition-inventory.log
             godot-run.log
           if-no-files-found: ignore
           retention-days: 7
