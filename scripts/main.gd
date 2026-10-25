@@ -2784,6 +2784,8 @@ func deal_enemy_damage(enemy: Dictionary, base_damage: float, impact_pos: Vector
 		return
 	var is_critical: bool = rng.randf() < crit_rate
 	var actual_damage: float = base_damage * (2.0 if is_critical else 1.0)
+	if expedition_active:
+		enemy["alert_clock"] = EXTRACTION_RULES.ALERT_DURATION
 	enemy["hp"] = float(enemy["hp"]) - actual_damage
 	enemy["hurt"] = 0.20 if is_critical else 0.12
 	add_damage_number(impact_pos, actual_damage, is_critical, Color("ffe478") if is_critical else Color("fff3da"))
