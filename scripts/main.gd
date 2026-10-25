@@ -4493,6 +4493,8 @@ func update_hud() -> void:
 	companion_xp_text.text = "ミントXP %d/%d  |  %s" % [companion_xp, companion_xp_needed, companion_mode]
 	if expedition_active:
 		phase_label.text = "探索 %d分 | 箱%d/%d | 素材%d/%d | %s" % [int(expedition_elapsed / 60.0), count_open_crates(), search_crates.size(), EXTRACTION_RULES.cargo_count(carried_materials), EXTRACTION_RULES.CARGO_CAPACITY, "静音移動" if expedition_quiet_move else "通常移動"]
+		if expedition_noise_clock > 0.0:
+			phase_label.text += " | 警戒！"
 	elif phase == "hub":
 		phase_label.text = "安全区域  |  [G] 探索へ出撃"
 	elif phase == "all_in":
@@ -4506,7 +4508,24 @@ func update_hud() -> void:
 	phase_label.add_theme_color_override("font_color", Color("a1ffc4") if phase != "combat" else Color("ffc39b"))
 	var to_shrine := REVIVE_SHRINE - player
 	var to_shop := MERCHANT_POS - player
-	direction_label.text = "商人 %dm %s  |  月の祭壇 %dm %s" % [roundi(to_shop.length() / 10.0), compass(to_shop), roundi(to_shrine.length() / 10.0), compass(to_shrine)]
+	if expedition_active:
+		var nearest_cache: Vector2 = Vector2.ZERO
+		var cache_distance := INF
+		for box_data in search_crates:
+			if bool(box_data["opened"]):
+				continue
+			var cache_dir: Vector2 = box_data["pos"] - player
+			if cache_dir.length() < cache_distance:
+				cache_distance = cache_dir.length()
+				nearest_cache = cache_dir
+		var nearest_exit: Vector2 = EXTRACTION_RULES.EXITS[0] - player
+		for exit_pos in EXTRACTION_RULES.EXITS:
+			var exit_dir: Vector2 = exit_pos - player
+			if exit_dir.length() < nearest_exit.length():
+				nearest_exit = exit_dir
+		direction_label.text = ("次の物資 %dm %s | " % [roundi(cache_distance / 10.0), compass(nearest_cache)] if cache_distance < INF else "物資回収済 | ") + "通常脱出 %dm %s | 隠し脱出 %dm %s" % [roundi(nearest_exit.length() / 10.0), compass(nearest_exit), roundi((EXTRACTION_RULES.HATCH_POSITION - player).length() / 10.0), compass(EXTRACTION_RULES.HATCH_POSITION - player)]
+	else:
+		direction_label.text = "商人 %dm %s  |  月の祭壇 %dm %s" % [roundi(to_shop.length() / 10.0), compass(to_shop), roundi(to_shrine.length() / 10.0), compass(to_shrine)]
 	var effects := ""
 	if poison_clock > 0.0: effects += " [毒%d秒]" % ceili(poison_clock)
 	if burn_clock > 0.0: effects += " [火傷%d秒]" % ceili(burn_clock)
