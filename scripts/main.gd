@@ -3043,6 +3043,24 @@ func update_enemies(delta: float) -> void:
 			enemy["touch"] = maxf(float(enemy.get("touch", 0.0)), 0.18)
 			enemy["hurt"] = 0.14
 			continue
+		# Explore stealth: threats patrol until they see/hear the player.
+		# Distance-based detection is intentionally simple for the first 2D prototype.
+		if expedition_active:
+			var guard_pos: Vector2 = enemy["pos"]
+			var old_alert: float = maxf(0.0, float(enemy.get("alert_clock", 0.0)) - delta)
+			var detected: bool = EXTRACTION_RULES.enemy_can_detect(guard_pos.distance_to(player), expedition_quiet_move, old_alert > 0.0)
+			enemy["alert_clock"] = EXTRACTION_RULES.ALERT_DURATION if detected and guard_pos.distance_to(player) <= (EXTRACTION_RULES.CROUCH_DETECTION_RADIUS if expedition_quiet_move else EXTRACTION_RULES.PATROL_DETECTION_RADIUS) else old_alert
+			if not detected:
+				var home: Vector2 = enemy.get("patrol_center", guard_pos)
+				# Gentle deterministic motion around the post; no global perfect tracking.
+				var patrol_point: Vector2 = home + Vector2(cos(elapsed * 0.35 + float(enemy["id"])), sin(elapsed * 0.42 + float(enemy["id"]))) * 65.0
+				var drift: Vector2 = patrol_point - guard_pos
+				if drift.length_squared() > 64.0:
+					enemy["pos"] = keep_enemy_out_of_camp(guard_pos + drift.normalized() * float(enemy["speed"]) * 0.24 * delta)
+				enemy["hurt"] = maxf(0.0, float(enemy["hurt"]) - delta)
+				enemy["touch"] = maxf(0.0, float(enemy["touch"]) - delta)
+				enemy["walk"] = float(enemy["walk"]) + delta * 2.0
+				continue
 		# If Mint shelters in camp, enemies must chase the exposed player instead.
 		var target_rabbit: bool = bool(enemy.get("target_rabbit", false)) and rabbit_pet_enabled and rabbit_hp > 0.0 and not rabbit_carried and not is_in_safe_camp(rabbit_pet)
 		var target_ally: bool = not target_rabbit and bool(enemy["target_ally"]) and companion_hp > 0.0 and not is_in_safe_camp(companion)
@@ -4259,9 +4277,12 @@ func start_sortie() -> void:
 			spawn_enemy()
 			if enemies.size() > count_before:
 				var guard_angle: float = TAU * float(guard_i) / float(guard_count) + 0.45
-				enemies[enemies.size() - 1]["pos"] = keep_enemy_out_of_camp(supply_pos + Vector2.RIGHT.rotated(guard_angle) * 165.0)
+				var guard: Dictionary = enemies[enemies.size() - 1]
+				guard["pos"] = keep_enemy_out_of_camp(supply_pos + Vector2.RIGHT.rotated(guard_angle) * 165.0)
+				guard["patrol_center"] = guard["pos"]
 	for position in [Vector2(3210, 765), Vector2(2850, 1860)]:
 		spawn_brute(position)
+		enemies[enemies.size() - 1]["patrol_center"] = position
 	hub_sortie_button.hide()
 	show_status("探索へ出撃！ [E]でコンテナを調査。脱出地点で戦利品を持ち帰ろう", Color("ffd78f"))
 	play_sound(AUDIO_HEAVY, -20.0)
@@ -4278,12 +4299,14 @@ func update_expedition(delta: float) -> void:
 	if not expedition_active:
 		return
 	expedition_elapsed += delta
+	expedition_noise_clock = maxf(0.0, expedition_noise_clock - delta)
 	expedition_spawn_clock -= delta
 	# Ambient danger remains, but enemies no longer arrive in numbered waves.
 	if expedition_spawn_clock <= 0.0:
 		expedition_spawn_clock = 14.0
 		if enemies.size() < 18 and not is_in_safe_camp(player):
 			spawn_enemy()
+			enemies[enemies.size() - 1]["patrol_center"] = enemies[enemies.size() - 1]["pos"]
 	if active_exit >= 0 and extraction_clock > 0.0:
 		var exit_point: Vector2 = EXTRACTION_RULES.EXITS[active_exit]
 		if not EXTRACTION_RULES.is_near_exit(player, exit_point):
@@ -4295,6 +4318,32 @@ func update_expedition(delta: float) -> void:
 		if extraction_clock <= 0.0:
 			extract_alive()
 
+func raise_expedition_noise(at: Vector2, radius: float, cause: String) -> void:
+	if not expedition_active:
+		return
+	expedition_noise_clock = 3.0
+	expedition_noise_radius = radius
+	expedition_noise_pos = at
+	for enemy in enemies:
+		if float(enemy["hp"]) > 0.0 and (enemy["pos"] as Vector2).distance_to(at) <= radius:
+			enemy["alert_clock"] = EXTRACTION_RULES.ALERT_DURATION
+	if cause == "extract":
+		show_status("警報！ 周辺の敵に脱出位置が知られた", Color("ff9d9d"))
+
+func call_extraction_reinforcements(at: Vector2) -> void:
+	# A loud public extraction is never a guaranteed safe countdown.
+	for i in range(EXTRACTION_RULES.EXIT_REINFORCEMENTS):
+		if enemies.size() >= MAX_ENEMIES - 2:
+			break
+		var prev: int = enemies.size()
+		spawn_enemy()
+		if enemies.size() > prev:
+			var foe: Dictionary = enemies[enemies.size() - 1]
+			foe["pos"] = keep_enemy_out_of_camp(at + Vector2.RIGHT.rotated(float(i) * TAU / float(EXTRACTION_RULES.EXIT_REINFORCEMENTS)) * 375.0)
+			foe["patrol_center"] = foe["pos"]
+			foe["alert_clock"] = EXTRACTION_RULES.ALERT_DURATION
+	burst(at, Color("ff777e"), 25)
+
 func interact_expedition_site() -> bool:
 	if not expedition_active:
 		return false
@@ -4305,7 +4354,10 @@ func interact_expedition_site() -> bool:
 				show_status("脱出準備中！あと%d秒、装置を守ろう" % ceili(extraction_clock), Color("acefff"))
 				return true
 			active_exit = i
+			extraction_hatch_active = false
 			extraction_clock = EXTRACTION_RULES.EXTRACTION_SECONDS
+			raise_expedition_noise(exit_point, EXTRACTION_RULES.NOISE_EXTRACTION_RADIUS, "extract")
+			call_extraction_reinforcements(exit_point)
 			burst(exit_point, Color("88e2ff"), 36)
 			play_sound(AUDIO_RARE, -12.0)
 			show_status("脱出装置を起動！ 12秒間、半径100以内で守り抜こう", Color("b2f3ff"))
@@ -4318,6 +4370,7 @@ func interact_expedition_site() -> bool:
 			return true
 		box_data["opened"] = true
 		var tier: int = int(box_data["tier"])
+		raise_expedition_noise(box_data["pos"], EXTRACTION_RULES.NOISE_SEARCH_RADIUS + float(tier) * 65.0, "search")
 		var count: int = mini(EXTRACTION_RULES.CARGO_CAPACITY - EXTRACTION_RULES.cargo_count(carried_materials), 1 + tier + rng.randi_range(0, 1))
 		for item_index in range(count):
 			var kind: int = EXTRACTION_RULES.material_kind(tier, rng.randf())
