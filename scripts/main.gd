@@ -3694,6 +3694,8 @@ func update_drops(delta: float) -> void:
 	if player.distance_to(STASH_POS) < 106.0:
 		pickup_hint.text = "[E] 倉庫を開く  |  預けた装備は死亡しても残る"
 	if expedition_active:
+		if EXTRACTION_RULES.is_near_exit(player, EXTRACTION_RULES.HATCH_POSITION):
+			pickup_hint.text = "[E] 隠し脱出路  |  スクラップ2＋電力コア1（4秒）"
 		for box_data in search_crates:
 			if not bool(box_data["opened"]) and player.distance_to(box_data["pos"]) < EXTRACTION_RULES.SEARCH_RADIUS:
 				pickup_hint.text = "[E] 物資コンテナを調べる  |  素材 %d/%d" % [EXTRACTION_RULES.cargo_count(carried_materials), EXTRACTION_RULES.CARGO_CAPACITY]
@@ -3702,6 +3704,8 @@ func update_drops(delta: float) -> void:
 			if player.distance_to(exit_pos) < EXTRACTION_RULES.EXTRACTION_RADIUS:
 				pickup_hint.text = "脱出準備中：あと%d秒！ その場を守ろう" % ceili(extraction_clock) if extraction_clock > 0.0 else "[E] 脱出装置を起動（12秒守る）"
 				break
+		if extraction_hatch_active and extraction_clock > 0.0:
+			pickup_hint.text = "隠し脱出路：あと%d秒  |  脱出範囲を守ろう" % ceili(extraction_clock)
 
 func update_particles(delta: float) -> void:
 	for i in range(particles.size() - 1, -1, -1):
@@ -4057,12 +4061,19 @@ func stash_withdraw(index: int) -> void:
 
 func extract_alive() -> void:
 	# Only extraction terminals, not wave menus, may safely bank expedition loot.
-	if state != "playing" or not expedition_active or phase != "combat" or active_exit < 0 or extraction_clock > 0.0:
-		show_status("探索先の脱出装置を12秒守ってから生還してね", Color("ffe0b8"))
+	if state != "playing" or not expedition_active or phase != "combat" or (active_exit < 0 and not extraction_hatch_active) or extraction_clock > 0.0:
+		show_status("探索先の脱出地点へ向かって生還しよう", Color("ffe0b8"))
 		return
-	var exit_point: Vector2 = EXTRACTION_RULES.EXITS[active_exit]
+	var exit_point: Vector2 = EXTRACTION_RULES.HATCH_POSITION if extraction_hatch_active else EXTRACTION_RULES.EXITS[active_exit]
 	if not EXTRACTION_RULES.is_near_exit(player, exit_point):
 		return
+	if extraction_hatch_active and not EXTRACTION_RULES.can_use_hatch(carried_materials):
+		show_status("隠し脱出路用の素材が足りない", Color("ffc6a0"))
+		return
+	var earned_cargo: Array[int] = carried_materials.duplicate()
+	if extraction_hatch_active:
+		earned_cargo[0] -= EXTRACTION_RULES.HATCH_SCRAP_COST
+		earned_cargo[1] -= EXTRACTION_RULES.HATCH_CORE_COST
 	var bank: Array[Dictionary] = all_in_collect_gear()
 	if stash_items.size() + bank.size() > STASH_MAX:
 		show_status("装備倉庫が満杯！ バッグで不要品を捨てるか入れ替えてから脱出", Color("ffbca5"))
@@ -4088,7 +4099,7 @@ func extract_alive() -> void:
 		extraction_clock = -1.0
 		return
 	for i in range(stored_materials.size()):
-		stored_materials[i] += carried_materials[i]
+		stored_materials[i] += earned_cargo[i]
 	if not save_stored_materials():
 		stored_materials = old_materials
 		banked_gold = old_gold
@@ -4099,7 +4110,7 @@ func extract_alive() -> void:
 		extraction_clock = -1.0
 		return
 	var gear_count: int = bank.size()
-	var material_count: int = EXTRACTION_RULES.cargo_count(carried_materials)
+	var material_count: int = EXTRACTION_RULES.cargo_count(earned_cargo)
 	var gold_kept: int = coins
 	return_to_safe_hub()
 	show_status("脱出成功！ 装備%d個・素材%d個・%dGを保管。同じ職業で拠点へ帰還" % [gear_count, material_count, gold_kept], Color("a8ffdb"))
@@ -4307,10 +4318,11 @@ func update_expedition(delta: float) -> void:
 		if enemies.size() < 18 and not is_in_safe_camp(player):
 			spawn_enemy()
 			enemies[enemies.size() - 1]["patrol_center"] = enemies[enemies.size() - 1]["pos"]
-	if active_exit >= 0 and extraction_clock > 0.0:
-		var exit_point: Vector2 = EXTRACTION_RULES.EXITS[active_exit]
+	if (active_exit >= 0 or extraction_hatch_active) and extraction_clock > 0.0:
+		var exit_point: Vector2 = EXTRACTION_RULES.HATCH_POSITION if extraction_hatch_active else EXTRACTION_RULES.EXITS[active_exit]
 		if not EXTRACTION_RULES.is_near_exit(player, exit_point):
 			active_exit = -1
+			extraction_hatch_active = false
 			extraction_clock = -1.0
 			show_status("脱出装置から離れた！ 再度[E]で起動してね", Color("ffb3b3"))
 			return
@@ -4347,6 +4359,19 @@ func call_extraction_reinforcements(at: Vector2) -> void:
 func interact_expedition_site() -> bool:
 	if not expedition_active:
 		return false
+	if EXTRACTION_RULES.is_near_exit(player, EXTRACTION_RULES.HATCH_POSITION):
+		if extraction_hatch_active and extraction_clock > 0.0:
+			show_status("隠し脱出路準備中！ あと%d秒" % ceili(extraction_clock), Color("b8faeb"))
+			return true
+		if not EXTRACTION_RULES.can_use_hatch(carried_materials):
+			show_status("隠し脱出路：スクラップ2個＋電力コア1個が必要", Color("ffdb9a"))
+			return true
+		extraction_hatch_active = true
+		active_exit = -1
+		extraction_clock = EXTRACTION_RULES.HATCH_SECONDS
+		burst(EXTRACTION_RULES.HATCH_POSITION, Color("8fe0af"), 18)
+		show_status("静かな脱出路を起動！ 4秒間とどまると素材を消費して生還", Color("b8faeb"))
+		return true
 	for i in range(EXTRACTION_RULES.EXITS.size()):
 		var exit_point: Vector2 = EXTRACTION_RULES.EXITS[i]
 		if EXTRACTION_RULES.is_near_exit(player, exit_point):
@@ -4389,6 +4414,14 @@ func interact_expedition_site() -> bool:
 func draw_expedition_sites() -> void:
 	if not expedition_active:
 		return
+	var hatch_pos: Vector2 = EXTRACTION_RULES.HATCH_POSITION
+	draw_circle(hatch_pos, EXTRACTION_RULES.EXTRACTION_RADIUS, Color("77e4b5", 0.06))
+	draw_arc(hatch_pos, EXTRACTION_RULES.EXTRACTION_RADIUS, 0.0, TAU, 48, Color("7ce5aa", 0.50), 2.0)
+	draw_rect(Rect2(hatch_pos + Vector2(-34, -25), Vector2(68, 50)), Color("22443e"))
+	draw_rect(Rect2(hatch_pos + Vector2(-34, -25), Vector2(68, 50)), Color("84e9ba"), false, 3.0)
+	draw_string(ui_font, hatch_pos + Vector2(-100, -55), "隠し脱出 [E] 素材要", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color("b3ffcf"))
+	if extraction_hatch_active:
+		draw_string(ui_font, hatch_pos + Vector2(-44, 48), "あと%d秒" % ceili(extraction_clock), HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color("e7ffe5"))
 	for box_data in search_crates:
 		var at: Vector2 = box_data["pos"]
 		var opened: bool = bool(box_data["opened"])
