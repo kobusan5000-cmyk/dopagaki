@@ -496,6 +496,7 @@ var cooking_buttons: Array[Button] = []
 var meal_display_buttons: Array[Button] = []
 var defense_label: Label
 var inventory_status: Label
+var inventory_materials_label: Label
 var minimap_panel: Control
 var minimap_marker: Panel
 
@@ -951,15 +952,15 @@ func build_ui() -> void:
 	merchant_panel.hide()
 
 	# Inventory panel is built once. Equipment and backpack are refreshed per game.
-	inventory_panel = make_panel(Vector2(659, 69), Vector2(461, 554), Color("5ab9ed"))
+	inventory_panel = make_panel(Vector2(659, 25), Vector2(461, 601), Color("5ab9ed"))
 	layer.add_child(inventory_panel)
 	var inv_padding: MarginContainer = inventory_panel.get_child(0)
 	inv_padding.add_theme_constant_override("margin_left", 18)
 	inv_padding.add_theme_constant_override("margin_right", 18)
-	inv_padding.add_theme_constant_override("margin_top", 12)
-	inv_padding.add_theme_constant_override("margin_bottom", 12)
+	inv_padding.add_theme_constant_override("margin_top", 9)
+	inv_padding.add_theme_constant_override("margin_bottom", 9)
 	var inv_box := VBoxContainer.new()
-	inv_box.add_theme_constant_override("separation", 6)
+	inv_box.add_theme_constant_override("separation", 3)
 	inv_padding.add_child(inv_box)
 	var bag_head := HBoxContainer.new()
 	bag_head.add_theme_constant_override("separation", 8)
@@ -996,6 +997,10 @@ func build_ui() -> void:
 		inv_box.add_child(button)
 	defense_label = make_label("", 17, Color("97edc2"), true)
 	inv_box.add_child(defense_label)
+	# Exploration materials are stackable cargo (12 slots) separate from 5 gear slots.
+	inventory_materials_label = make_label("", 13, Color("a4ebfd"), true)
+	inventory_materials_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	inv_box.add_child(inventory_materials_label)
 	inventory_status = make_label("", 13, Color("ffdf99"), true)
 	inv_box.add_child(inventory_status)
 	var close_button := make_button("バッグを閉じる [I / Esc]", Color("5ab9ed"), Vector2(414, 34))
@@ -1118,7 +1123,7 @@ func build_ui() -> void:
 	all_in_back_button.pressed.connect(show_all_in_decision)
 	all_in_box.add_child(all_in_back_button)
 	all_in_panel.hide()
-	# Visible only inside the hub. Re-entering combat is always a deliberate choice.
+	# Hub action must never overlap inventory, stash or any other full-screen menu.
 	hub_sortie_button = make_button("探索へ出撃 [G]", Color("ffba81"), Vector2(315, 55))
 	hub_sortie_button.position = Vector2(781, 336)
 	hub_sortie_button.add_theme_font_size_override("font_size", 18)
@@ -2230,6 +2235,7 @@ func _process(delta: float) -> void:
 	jump_clock = maxf(0.0, jump_clock - delta)
 	update_guard_state(delta)
 	enemy_sound_cooldown = maxf(0.0, enemy_sound_cooldown - delta)
+	hub_sortie_button.visible = state == "playing" and phase == "hub" and not (all_in_open or inventory_open or cooking_open or slot_open or merchant_open or rabbit_menu_open or upgrade_open or stash_open or controls_open)
 	if state != "playing" or all_in_open or inventory_open or cooking_open or slot_open or merchant_open or rabbit_menu_open or upgrade_open or stash_open:
 		update_hud()
 		queue_redraw()
@@ -3649,6 +3655,10 @@ func refresh_inventory_ui() -> void:
 		var c: Color = Color("628aa7") if item.is_empty() else RARITY_COLORS[int(item["rarity"])]
 		armor_buttons[i].add_theme_color_override("font_color", c)
 	defense_label.text = "防御力 %d  |  ダメージ軽減 %d%%" % [total_defense(), roundi(calculate_damage_reduction() * 100.0)]
+	var capacity: int = EXTRACTION_RULES.CARGO_CAPACITY
+	var amount: int = EXTRACTION_RULES.cargo_count(carried_materials)
+	inventory_materials_label.text = "探索素材 %d/%d（装備5枠とは別）\n%s %d  /  %s %d  /  %s %d" % [amount, capacity, EXTRACTION_RULES.MATERIAL_NAMES[0], carried_materials[0], EXTRACTION_RULES.MATERIAL_NAMES[1], carried_materials[1], EXTRACTION_RULES.MATERIAL_NAMES[2], carried_materials[2]]
+	inventory_materials_label.visible = expedition_active or amount > 0
 	inventory_status.text = inventory_message
 	refresh_hotbar()
 
@@ -4404,12 +4414,30 @@ func interact_expedition_site() -> bool:
 			carried_materials[kind] += 1
 		var gold_amount: int = rng.randi_range(18, 35) * (tier + 1)
 		coins += gold_amount
+		var found_gear_name := ""
+		var gear_left_on_ground := false
 		if rng.randf() < (0.17 + float(tier) * 0.24):
 			var rarity: int = mini(3, maxi(1, tier + 1))
+			# Generate the same randomized real gear as regular enemy drops, but
+			# auto-pick it into the 5-slot backpack if there is space.
+			var drop_count: int = drops.size()
 			spawn_drop(box_data["pos"] + Vector2(32, 22), rarity)
+			if drops.size() > drop_count:
+				var gear: Dictionary = to_inventory_item(drops[drops.size() - 1])
+				found_gear_name = str(gear["name"])
+				var bag_index: int = free_backpack_slot()
+				if bag_index >= 0:
+					backpack[bag_index] = gear
+					drops.remove_at(drops.size() - 1)
+				else:
+					gear_left_on_ground = true
 		burst(box_data["pos"], Color("b6e6ff") if tier < 2 else Color("ffdf9f"), 25)
 		play_sound(AUDIO_PICKUP, -10.0)
-		show_status("物資回収！素材+%d / +%dG  |  持ち物%d/%d" % [count, gold_amount, EXTRACTION_RULES.cargo_count(carried_materials), EXTRACTION_RULES.CARGO_CAPACITY], Color("b5f5dd"))
+		var loot_message := "回収！素材+%d / +%dG（素材%d/%d）" % [count, gold_amount, EXTRACTION_RULES.cargo_count(carried_materials), EXTRACTION_RULES.CARGO_CAPACITY]
+		if not found_gear_name.is_empty():
+			loot_message += " | バッグ満杯：装備は地面[E]で回収" if gear_left_on_ground else " | 装備もバッグに獲得！[I]で確認"
+		show_status(loot_message, Color("b5f5dd"))
+		refresh_inventory_ui()
 		return true
 	return false
 
