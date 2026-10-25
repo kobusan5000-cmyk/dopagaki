@@ -256,6 +256,12 @@ var extraction_clock := -1.0
 var active_exit := -1
 var expedition_elapsed := 0.0
 var expedition_spawn_clock := 0.0
+var expedition_noise_clock := 0.0
+var expedition_noise_pos := Vector2.ZERO
+var expedition_noise_radius := 0.0
+var expedition_quiet_move := false
+var extraction_hatch_active := false
+var extraction_alarm_triggered := false
 var wave := 0
 var combat_elapsed := 0.0
 var wave_target := 0
@@ -2272,9 +2278,10 @@ func _process(delta: float) -> void:
 	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT): movement.x += 1.0
 	if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP): movement.y -= 1.0
 	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN): movement.y += 1.0
+	expedition_quiet_move = expedition_active and Input.is_key_pressed(KEY_SHIFT)
 	if movement.length_squared() > 0.1:
-		walk_clock += delta * 10.0
-		player += movement.normalized() * move_speed * (0.64 if guard_active else 1.0) * (0.0 if freeze_lock_clock > 0.0 else (0.52 if freeze_clock > 0.0 else 1.0)) * (1.0 + float(hero_stats[1]) * 0.04) * (1.25 if food_buff_clock > 0.0 else 1.0) * (1.3 if skill_buff_clock > 0.0 else 1.0) * delta
+		walk_clock += delta * (5.0 if expedition_quiet_move else 10.0)
+		player += movement.normalized() * move_speed * (0.43 if expedition_quiet_move else 1.0) * (0.64 if guard_active else 1.0) * (0.0 if freeze_lock_clock > 0.0 else (0.52 if freeze_clock > 0.0 else 1.0)) * (1.0 + float(hero_stats[1]) * 0.04) * (1.25 if food_buff_clock > 0.0 else 1.0) * (1.3 if skill_buff_clock > 0.0 else 1.0) * delta
 	else:
 		walk_clock = 0.0
 	if jump_clock > 0.0:
@@ -2777,6 +2784,8 @@ func deal_enemy_damage(enemy: Dictionary, base_damage: float, impact_pos: Vector
 		return
 	var is_critical: bool = rng.randf() < crit_rate
 	var actual_damage: float = base_damage * (2.0 if is_critical else 1.0)
+	if expedition_active:
+		enemy["alert_clock"] = EXTRACTION_RULES.ALERT_DURATION
 	enemy["hp"] = float(enemy["hp"]) - actual_damage
 	enemy["hurt"] = 0.20 if is_critical else 0.12
 	add_damage_number(impact_pos, actual_damage, is_critical, Color("ffe478") if is_critical else Color("fff3da"))
@@ -2815,6 +2824,8 @@ func apply_player_status(kind: String) -> void:
 
 
 func attack() -> void:
+	if expedition_active:
+		raise_expedition_noise(player, EXTRACTION_RULES.NOISE_SHOT_RADIUS, "attack")
 	var kind: int = int(equipped["kind"])
 	var tier: int = int(equipped["rarity"])
 	var power: float = RARITY_DAMAGE[tier] * float(equipped.get("bonus", 1.0)) * damage_mult * attack_stat_multiplier(kind) * (1.35 if skill_buff_clock > 0.0 else 1.0)
@@ -3034,6 +3045,24 @@ func update_enemies(delta: float) -> void:
 			enemy["touch"] = maxf(float(enemy.get("touch", 0.0)), 0.18)
 			enemy["hurt"] = 0.14
 			continue
+		# Explore stealth: threats patrol until they see/hear the player.
+		# Distance-based detection is intentionally simple for the first 2D prototype.
+		if expedition_active:
+			var guard_pos: Vector2 = enemy["pos"]
+			var old_alert: float = maxf(0.0, float(enemy.get("alert_clock", 0.0)) - delta)
+			var detected: bool = EXTRACTION_RULES.enemy_can_detect(guard_pos.distance_to(player), expedition_quiet_move, old_alert > 0.0)
+			enemy["alert_clock"] = EXTRACTION_RULES.ALERT_DURATION if detected and guard_pos.distance_to(player) <= (EXTRACTION_RULES.CROUCH_DETECTION_RADIUS if expedition_quiet_move else EXTRACTION_RULES.PATROL_DETECTION_RADIUS) else old_alert
+			if not detected:
+				var home: Vector2 = enemy.get("patrol_center", guard_pos)
+				# Gentle deterministic motion around the post; no global perfect tracking.
+				var patrol_point: Vector2 = home + Vector2(cos(elapsed * 0.35 + float(enemy["id"])), sin(elapsed * 0.42 + float(enemy["id"]))) * 65.0
+				var drift: Vector2 = patrol_point - guard_pos
+				if drift.length_squared() > 64.0:
+					enemy["pos"] = keep_enemy_out_of_camp(guard_pos + drift.normalized() * float(enemy["speed"]) * 0.24 * delta)
+				enemy["hurt"] = maxf(0.0, float(enemy["hurt"]) - delta)
+				enemy["touch"] = maxf(0.0, float(enemy["touch"]) - delta)
+				enemy["walk"] = float(enemy["walk"]) + delta * 2.0
+				continue
 		# If Mint shelters in camp, enemies must chase the exposed player instead.
 		var target_rabbit: bool = bool(enemy.get("target_rabbit", false)) and rabbit_pet_enabled and rabbit_hp > 0.0 and not rabbit_carried and not is_in_safe_camp(rabbit_pet)
 		var target_ally: bool = not target_rabbit and bool(enemy["target_ally"]) and companion_hp > 0.0 and not is_in_safe_camp(companion)
@@ -3485,6 +3514,7 @@ const CONTROLS_HELP := [
 	["SPACE", "回避"],
 	["E", "調べる（拾う・畑・料理・商人・スロット）"],
 	["G", "拠点から探索マップへ出撃"],
+	["SHIFT", "探索中は静音移動（足が遅くなるが発見されにくい）"],
 	["脱出", "マップ内の青い脱出装置でEを押し、12秒間守る"],
 	["Q", "クラススキル（LV5で習得）"],
 	["1 - 5", "バッグの装備をすばやく切り替え"],
@@ -3666,6 +3696,8 @@ func update_drops(delta: float) -> void:
 	if player.distance_to(STASH_POS) < 106.0:
 		pickup_hint.text = "[E] 倉庫を開く  |  預けた装備は死亡しても残る"
 	if expedition_active:
+		if EXTRACTION_RULES.is_near_exit(player, EXTRACTION_RULES.HATCH_POSITION):
+			pickup_hint.text = "[E] 隠し脱出路  |  スクラップ2＋電力コア1（4秒）"
 		for box_data in search_crates:
 			if not bool(box_data["opened"]) and player.distance_to(box_data["pos"]) < EXTRACTION_RULES.SEARCH_RADIUS:
 				pickup_hint.text = "[E] 物資コンテナを調べる  |  素材 %d/%d" % [EXTRACTION_RULES.cargo_count(carried_materials), EXTRACTION_RULES.CARGO_CAPACITY]
@@ -3674,6 +3706,8 @@ func update_drops(delta: float) -> void:
 			if player.distance_to(exit_pos) < EXTRACTION_RULES.EXTRACTION_RADIUS:
 				pickup_hint.text = "脱出準備中：あと%d秒！ その場を守ろう" % ceili(extraction_clock) if extraction_clock > 0.0 else "[E] 脱出装置を起動（12秒守る）"
 				break
+		if extraction_hatch_active and extraction_clock > 0.0:
+			pickup_hint.text = "隠し脱出路：あと%d秒  |  脱出範囲を守ろう" % ceili(extraction_clock)
 
 func update_particles(delta: float) -> void:
 	for i in range(particles.size() - 1, -1, -1):
@@ -4029,12 +4063,19 @@ func stash_withdraw(index: int) -> void:
 
 func extract_alive() -> void:
 	# Only extraction terminals, not wave menus, may safely bank expedition loot.
-	if state != "playing" or not expedition_active or phase != "combat" or active_exit < 0 or extraction_clock > 0.0:
-		show_status("探索先の脱出装置を12秒守ってから生還してね", Color("ffe0b8"))
+	if state != "playing" or not expedition_active or phase != "combat" or (active_exit < 0 and not extraction_hatch_active) or extraction_clock > 0.0:
+		show_status("探索先の脱出地点へ向かって生還しよう", Color("ffe0b8"))
 		return
-	var exit_point: Vector2 = EXTRACTION_RULES.EXITS[active_exit]
+	var exit_point: Vector2 = EXTRACTION_RULES.HATCH_POSITION if extraction_hatch_active else EXTRACTION_RULES.EXITS[active_exit]
 	if not EXTRACTION_RULES.is_near_exit(player, exit_point):
 		return
+	if extraction_hatch_active and not EXTRACTION_RULES.can_use_hatch(carried_materials):
+		show_status("隠し脱出路用の素材が足りない", Color("ffc6a0"))
+		return
+	var earned_cargo: Array[int] = carried_materials.duplicate()
+	if extraction_hatch_active:
+		earned_cargo[0] -= EXTRACTION_RULES.HATCH_SCRAP_COST
+		earned_cargo[1] -= EXTRACTION_RULES.HATCH_CORE_COST
 	var bank: Array[Dictionary] = all_in_collect_gear()
 	if stash_items.size() + bank.size() > STASH_MAX:
 		show_status("装備倉庫が満杯！ バッグで不要品を捨てるか入れ替えてから脱出", Color("ffbca5"))
@@ -4060,7 +4101,7 @@ func extract_alive() -> void:
 		extraction_clock = -1.0
 		return
 	for i in range(stored_materials.size()):
-		stored_materials[i] += carried_materials[i]
+		stored_materials[i] += earned_cargo[i]
 	if not save_stored_materials():
 		stored_materials = old_materials
 		banked_gold = old_gold
@@ -4071,7 +4112,7 @@ func extract_alive() -> void:
 		extraction_clock = -1.0
 		return
 	var gear_count: int = bank.size()
-	var material_count: int = EXTRACTION_RULES.cargo_count(carried_materials)
+	var material_count: int = EXTRACTION_RULES.cargo_count(earned_cargo)
 	var gold_kept: int = coins
 	return_to_safe_hub()
 	show_status("脱出成功！ 装備%d個・素材%d個・%dGを保管。同じ職業で拠点へ帰還" % [gear_count, material_count, gold_kept], Color("a8ffdb"))
@@ -4088,6 +4129,11 @@ func return_to_safe_hub() -> void:
 	active_exit = -1
 	expedition_elapsed = 0.0
 	expedition_spawn_clock = 0.0
+	expedition_noise_clock = 0.0
+	expedition_noise_radius = 0.0
+	expedition_quiet_move = false
+	extraction_hatch_active = false
+	extraction_alarm_triggered = false
 	phase_clock = 0.0
 	wave = 0
 	wave_target = 0
@@ -4222,6 +4268,11 @@ func start_sortie() -> void:
 	first_reaper_spawned = false
 	expedition_elapsed = 0.0
 	expedition_spawn_clock = 7.0
+	expedition_noise_clock = 0.0
+	expedition_noise_radius = 0.0
+	expedition_quiet_move = false
+	extraction_hatch_active = false
+	extraction_alarm_triggered = false
 	extraction_clock = -1.0
 	active_exit = -1
 	carried_materials = [0, 0, 0]
@@ -4239,9 +4290,12 @@ func start_sortie() -> void:
 			spawn_enemy()
 			if enemies.size() > count_before:
 				var guard_angle: float = TAU * float(guard_i) / float(guard_count) + 0.45
-				enemies[enemies.size() - 1]["pos"] = keep_enemy_out_of_camp(supply_pos + Vector2.RIGHT.rotated(guard_angle) * 165.0)
+				var guard: Dictionary = enemies[enemies.size() - 1]
+				guard["pos"] = keep_enemy_out_of_camp(supply_pos + Vector2.RIGHT.rotated(guard_angle) * 165.0)
+				guard["patrol_center"] = guard["pos"]
 	for position in [Vector2(3210, 765), Vector2(2850, 1860)]:
 		spawn_brute(position)
+		enemies[enemies.size() - 1]["patrol_center"] = position
 	hub_sortie_button.hide()
 	show_status("探索へ出撃！ [E]でコンテナを調査。脱出地点で戦利品を持ち帰ろう", Color("ffd78f"))
 	play_sound(AUDIO_HEAVY, -20.0)
@@ -4258,16 +4312,19 @@ func update_expedition(delta: float) -> void:
 	if not expedition_active:
 		return
 	expedition_elapsed += delta
+	expedition_noise_clock = maxf(0.0, expedition_noise_clock - delta)
 	expedition_spawn_clock -= delta
 	# Ambient danger remains, but enemies no longer arrive in numbered waves.
 	if expedition_spawn_clock <= 0.0:
 		expedition_spawn_clock = 14.0
 		if enemies.size() < 18 and not is_in_safe_camp(player):
 			spawn_enemy()
-	if active_exit >= 0 and extraction_clock > 0.0:
-		var exit_point: Vector2 = EXTRACTION_RULES.EXITS[active_exit]
+			enemies[enemies.size() - 1]["patrol_center"] = enemies[enemies.size() - 1]["pos"]
+	if (active_exit >= 0 or extraction_hatch_active) and extraction_clock > 0.0:
+		var exit_point: Vector2 = EXTRACTION_RULES.HATCH_POSITION if extraction_hatch_active else EXTRACTION_RULES.EXITS[active_exit]
 		if not EXTRACTION_RULES.is_near_exit(player, exit_point):
 			active_exit = -1
+			extraction_hatch_active = false
 			extraction_clock = -1.0
 			show_status("脱出装置から離れた！ 再度[E]で起動してね", Color("ffb3b3"))
 			return
@@ -4275,9 +4332,48 @@ func update_expedition(delta: float) -> void:
 		if extraction_clock <= 0.0:
 			extract_alive()
 
+func raise_expedition_noise(at: Vector2, radius: float, cause: String) -> void:
+	if not expedition_active:
+		return
+	expedition_noise_clock = 3.0
+	expedition_noise_radius = radius
+	expedition_noise_pos = at
+	for enemy in enemies:
+		if float(enemy["hp"]) > 0.0 and (enemy["pos"] as Vector2).distance_to(at) <= radius:
+			enemy["alert_clock"] = EXTRACTION_RULES.ALERT_DURATION
+	if cause == "extract":
+		show_status("警報！ 周辺の敵に脱出位置が知られた", Color("ff9d9d"))
+
+func call_extraction_reinforcements(at: Vector2) -> void:
+	# A loud public extraction is never a guaranteed safe countdown.
+	for i in range(EXTRACTION_RULES.EXIT_REINFORCEMENTS):
+		if enemies.size() >= MAX_ENEMIES - 2:
+			break
+		var prev: int = enemies.size()
+		spawn_enemy()
+		if enemies.size() > prev:
+			var foe: Dictionary = enemies[enemies.size() - 1]
+			foe["pos"] = keep_enemy_out_of_camp(at + Vector2.RIGHT.rotated(float(i) * TAU / float(EXTRACTION_RULES.EXIT_REINFORCEMENTS)) * 375.0)
+			foe["patrol_center"] = foe["pos"]
+			foe["alert_clock"] = EXTRACTION_RULES.ALERT_DURATION
+	burst(at, Color("ff777e"), 25)
+
 func interact_expedition_site() -> bool:
 	if not expedition_active:
 		return false
+	if EXTRACTION_RULES.is_near_exit(player, EXTRACTION_RULES.HATCH_POSITION):
+		if extraction_hatch_active and extraction_clock > 0.0:
+			show_status("隠し脱出路準備中！ あと%d秒" % ceili(extraction_clock), Color("b8faeb"))
+			return true
+		if not EXTRACTION_RULES.can_use_hatch(carried_materials):
+			show_status("隠し脱出路：スクラップ2個＋電力コア1個が必要", Color("ffdb9a"))
+			return true
+		extraction_hatch_active = true
+		active_exit = -1
+		extraction_clock = EXTRACTION_RULES.HATCH_SECONDS
+		burst(EXTRACTION_RULES.HATCH_POSITION, Color("8fe0af"), 18)
+		show_status("静かな脱出路を起動！ 4秒間とどまると素材を消費して生還", Color("b8faeb"))
+		return true
 	for i in range(EXTRACTION_RULES.EXITS.size()):
 		var exit_point: Vector2 = EXTRACTION_RULES.EXITS[i]
 		if EXTRACTION_RULES.is_near_exit(player, exit_point):
@@ -4285,7 +4381,10 @@ func interact_expedition_site() -> bool:
 				show_status("脱出準備中！あと%d秒、装置を守ろう" % ceili(extraction_clock), Color("acefff"))
 				return true
 			active_exit = i
+			extraction_hatch_active = false
 			extraction_clock = EXTRACTION_RULES.EXTRACTION_SECONDS
+			raise_expedition_noise(exit_point, EXTRACTION_RULES.NOISE_EXTRACTION_RADIUS, "extract")
+			call_extraction_reinforcements(exit_point)
 			burst(exit_point, Color("88e2ff"), 36)
 			play_sound(AUDIO_RARE, -12.0)
 			show_status("脱出装置を起動！ 12秒間、半径100以内で守り抜こう", Color("b2f3ff"))
@@ -4298,6 +4397,7 @@ func interact_expedition_site() -> bool:
 			return true
 		box_data["opened"] = true
 		var tier: int = int(box_data["tier"])
+		raise_expedition_noise(box_data["pos"], EXTRACTION_RULES.NOISE_SEARCH_RADIUS + float(tier) * 65.0, "search")
 		var count: int = mini(EXTRACTION_RULES.CARGO_CAPACITY - EXTRACTION_RULES.cargo_count(carried_materials), 1 + tier + rng.randi_range(0, 1))
 		for item_index in range(count):
 			var kind: int = EXTRACTION_RULES.material_kind(tier, rng.randf())
@@ -4316,6 +4416,14 @@ func interact_expedition_site() -> bool:
 func draw_expedition_sites() -> void:
 	if not expedition_active:
 		return
+	var hatch_pos: Vector2 = EXTRACTION_RULES.HATCH_POSITION
+	draw_circle(hatch_pos, EXTRACTION_RULES.EXTRACTION_RADIUS, Color("77e4b5", 0.06))
+	draw_arc(hatch_pos, EXTRACTION_RULES.EXTRACTION_RADIUS, 0.0, TAU, 48, Color("7ce5aa", 0.50), 2.0)
+	draw_rect(Rect2(hatch_pos + Vector2(-34, -25), Vector2(68, 50)), Color("22443e"))
+	draw_rect(Rect2(hatch_pos + Vector2(-34, -25), Vector2(68, 50)), Color("84e9ba"), false, 3.0)
+	draw_string(ui_font, hatch_pos + Vector2(-100, -55), "隠し脱出 [E] 素材要", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, Color("b3ffcf"))
+	if extraction_hatch_active:
+		draw_string(ui_font, hatch_pos + Vector2(-44, 48), "あと%d秒" % ceili(extraction_clock), HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color("e7ffe5"))
 	for box_data in search_crates:
 		var at: Vector2 = box_data["pos"]
 		var opened: bool = bool(box_data["opened"])
@@ -4384,7 +4492,9 @@ func update_hud() -> void:
 	companion_hp_text.text = "ミント LV%d  %s" % [companion_level, ("復活祭壇へ" if mint_soul_carried else "ハートを回収" if companion_hp <= 0.0 else "%d / %d" % [roundi(companion_hp), roundi(companion_max_hp)])]
 	companion_xp_text.text = "ミントXP %d/%d  |  %s" % [companion_xp, companion_xp_needed, companion_mode]
 	if expedition_active:
-		phase_label.text = "探索中 %d分  |  コンテナ%d/%d  |  脱出地点で[E]" % [int(expedition_elapsed / 60.0), count_open_crates(), search_crates.size()]
+		phase_label.text = "探索 %d分 | 箱%d/%d | 素材%d/%d | %s" % [int(expedition_elapsed / 60.0), count_open_crates(), search_crates.size(), EXTRACTION_RULES.cargo_count(carried_materials), EXTRACTION_RULES.CARGO_CAPACITY, "静音移動" if expedition_quiet_move else "通常移動"]
+		if expedition_noise_clock > 0.0:
+			phase_label.text += " | 警戒！"
 	elif phase == "hub":
 		phase_label.text = "安全区域  |  [G] 探索へ出撃"
 	elif phase == "all_in":
@@ -4398,7 +4508,24 @@ func update_hud() -> void:
 	phase_label.add_theme_color_override("font_color", Color("a1ffc4") if phase != "combat" else Color("ffc39b"))
 	var to_shrine := REVIVE_SHRINE - player
 	var to_shop := MERCHANT_POS - player
-	direction_label.text = "商人 %dm %s  |  月の祭壇 %dm %s" % [roundi(to_shop.length() / 10.0), compass(to_shop), roundi(to_shrine.length() / 10.0), compass(to_shrine)]
+	if expedition_active:
+		var nearest_cache: Vector2 = Vector2.ZERO
+		var cache_distance := INF
+		for box_data in search_crates:
+			if bool(box_data["opened"]):
+				continue
+			var cache_dir: Vector2 = box_data["pos"] - player
+			if cache_dir.length() < cache_distance:
+				cache_distance = cache_dir.length()
+				nearest_cache = cache_dir
+		var nearest_exit: Vector2 = EXTRACTION_RULES.EXITS[0] - player
+		for exit_pos in EXTRACTION_RULES.EXITS:
+			var exit_dir: Vector2 = exit_pos - player
+			if exit_dir.length() < nearest_exit.length():
+				nearest_exit = exit_dir
+		direction_label.text = ("次の物資 %dm %s | " % [roundi(cache_distance / 10.0), compass(nearest_cache)] if cache_distance < INF else "物資回収済 | ") + "通常脱出 %dm %s | 隠し脱出 %dm %s" % [roundi(nearest_exit.length() / 10.0), compass(nearest_exit), roundi((EXTRACTION_RULES.HATCH_POSITION - player).length() / 10.0), compass(EXTRACTION_RULES.HATCH_POSITION - player)]
+	else:
+		direction_label.text = "商人 %dm %s  |  月の祭壇 %dm %s" % [roundi(to_shop.length() / 10.0), compass(to_shop), roundi(to_shrine.length() / 10.0), compass(to_shrine)]
 	var effects := ""
 	if poison_clock > 0.0: effects += " [毒%d秒]" % ceili(poison_clock)
 	if burn_clock > 0.0: effects += " [火傷%d秒]" % ceili(burn_clock)
