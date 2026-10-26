@@ -57,3 +57,43 @@ static func can_use_hatch(cargo: Array[int]) -> bool:
 
 static func enemy_can_detect(distance: float, moving_quietly: bool, was_alerted: bool) -> bool:
 	return was_alerted or distance <= (CROUCH_DETECTION_RADIUS if moving_quietly else PATROL_DETECTION_RADIUS)
+
+# PvPvE v0.2: risk and exit metadata. Existing EXITS indices remain stable.
+const ZONE_FOREST := 0
+const ZONE_RUINS := 1
+const ZONE_FORBIDDEN := 2
+const ZONE_NAMES := ["森", "廃墟", "禁域"]
+const EXIT_PROFILES := [
+	{"name": "遠回りの出口", "risk": 0, "duration": EXTRACTION_SECONDS},
+	{"name": "危険な出口", "risk": 2, "duration": EXTRACTION_SECONDS}
+]
+
+static func zone_for_position(pos: Vector2) -> int:
+	# The initial three bands fit the current supply-cache coordinates.
+	# Replace with authored polygons when the map receives distinct biomes.
+	if pos.x >= 2800.0:
+		return ZONE_FORBIDDEN
+	if pos.x >= 1700.0:
+		return ZONE_RUINS
+	return ZONE_FOREST
+
+static func zone_name(pos: Vector2) -> String:
+	return ZONE_NAMES[zone_for_position(pos)]
+
+static func pvp_enabled(_pos: Vector2) -> bool:
+	# The sortie map permits PvP everywhere; the hub is a separate phase.
+	return true
+
+static func exit_profile(index: int) -> Dictionary:
+	if index < 0 or index >= EXIT_PROFILES.size():
+		return {}
+	return EXIT_PROFILES[index].duplicate(true)
+
+static func loot_rarity_weight(zone: int) -> float:
+	match zone:
+		ZONE_FORBIDDEN:
+			return 3.0
+		ZONE_RUINS:
+			return 2.0
+		_:
+			return 1.0
