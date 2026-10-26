@@ -4033,26 +4033,40 @@ func refresh_stash_ui() -> void:
 
 func stash_deposit_backpack(index: int) -> void:
 	if wave >= 1:
-		show_status("挑戦中は預けられない。WAVEをクリアして生還しよう", Color("ffe0ae"))
+		show_status("探索中は預けられない。脱出してから倉庫を使おう", Color("ffe0ae"))
 		return
 	if not stash_open or index < 0 or index >= BAG_CAPACITY or stash_items.size() >= STASH_MAX or backpack[index].is_empty():
 		return
-	stash_items.append(backpack[index].duplicate(true))
+	var previous_stash: Array[Dictionary] = stash_items.duplicate(true)
+	var previous_item: Dictionary = backpack[index].duplicate(true)
+	stash_items.append(previous_item.duplicate(true))
 	backpack[index] = {}
-	save_stash()
+	if not save_stash():
+		stash_items = previous_stash
+		backpack[index] = previous_item
+		refresh_stash_ui()
+		refresh_inventory_ui()
+		return
 	refresh_stash_ui()
 	refresh_inventory_ui()
-	show_status("倉庫に預けた！ 次の挑戦でも取り出せます", Color("ffe7a5"))
+	show_status("倉庫に預けた！ 次の探索でも取り出せます", Color("ffe7a5"))
 
 func stash_deposit_equipped() -> void:
 	if wave >= 1:
-		show_status("挑戦中は預けられない。WAVEをクリアして生還しよう", Color("ffe0ae"))
+		show_status("探索中は預けられない。脱出してから倉庫を使おう", Color("ffe0ae"))
 		return
 	if not stash_open or stash_items.size() >= STASH_MAX:
 		return
-	stash_items.append(equipped.duplicate(true))
+	var previous_stash: Array[Dictionary] = stash_items.duplicate(true)
+	var previous_equipped: Dictionary = equipped.duplicate(true)
+	stash_items.append(previous_equipped.duplicate(true))
 	equipped = {"type": "weapon", "kind": 0, "rarity": 0, "name": "PISTOL"}
-	save_stash()
+	if not save_stash():
+		stash_items = previous_stash
+		equipped = previous_equipped
+		refresh_stash_ui()
+		refresh_inventory_ui()
+		return
 	refresh_stash_ui()
 	refresh_inventory_ui()
 	show_status("武器を倉庫へ。初期銃に切り替えた", Color("ffe7a5"))
@@ -4064,9 +4078,16 @@ func stash_withdraw(index: int) -> void:
 	if slot < 0:
 		show_status("バッグが満杯！", Color("ff9d9d"))
 		return
+	var previous_stash: Array[Dictionary] = stash_items.duplicate(true)
+	var previous_slot: Dictionary = backpack[slot].duplicate(true)
 	backpack[slot] = stash_items[index].duplicate(true)
 	stash_items.remove_at(index)
-	save_stash()
+	if not save_stash():
+		stash_items = previous_stash
+		backpack[slot] = previous_slot
+		refresh_stash_ui()
+		refresh_inventory_ui()
+		return
 	refresh_stash_ui()
 	refresh_inventory_ui()
 	show_status("倉庫から装備を取り出した", Color("b9f4e4"))
