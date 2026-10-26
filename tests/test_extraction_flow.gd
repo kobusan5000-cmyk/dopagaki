@@ -7,6 +7,14 @@ func _initialize() -> void:
 	call_deferred("_run")
 
 func _run() -> void:
+	_check(RULES.zone_for_position(Vector2(900, 900)) == RULES.ZONE_FOREST, "Forest risk zone")
+	_check(RULES.zone_for_position(Vector2(2200, 900)) == RULES.ZONE_RUINS, "Ruins risk zone")
+	_check(RULES.zone_for_position(Vector2(3200, 900)) == RULES.ZONE_FORBIDDEN, "Forbidden risk zone")
+	_check(RULES.loot_rarity_weight(2) > RULES.loot_rarity_weight(1), "Higher risk increases loot weighting")
+	_check(RULES.loot_rarity_weight(1) > RULES.loot_rarity_weight(0), "Ruins reward exceeds forest")
+	_check(RULES.pvp_enabled(Vector2(900, 900)) and RULES.pvp_enabled(Vector2(3200, 900)), "PvP allowed in all sortie zones")
+	_check(RULES.exit_profile(0).get("risk", -1) < RULES.exit_profile(1).get("risk", -1), "Exit profiles offer risk tradeoff")
+	_check(RULES.exit_profile(-1).is_empty(), "Invalid exit index is rejected")
 	_check(RULES.CRATES.size() >= 8, "Map offers substantial exploration")
 	_check(RULES.EXITS.size() >= 2, "Two possible exits")
 	_check(RULES.CARGO_CAPACITY == 12, "Finite cargo capacity")
