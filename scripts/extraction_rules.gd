@@ -30,6 +30,8 @@ const CRATES := [
 	{"pos": Vector2(2260, 2150), "tier": 1},
 	{"pos": Vector2(1510, 2070), "tier": 0}
 ]
+const VAULT_POSITION := Vector2(3080, 1740)
+const VAULT_GUARD_POSITION := Vector2(3120, 1650)
 const EXITS := [Vector2(960, 2090), Vector2(3180, 1370)]
 
 static func cargo_count(cargo: Array[int]) -> int:

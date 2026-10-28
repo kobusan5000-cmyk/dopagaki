@@ -38,7 +38,20 @@ func _run() -> void:
 	_check(bool(scene.get("expedition_active")), "Exploration mode active")
 	_check(str(scene.get("phase")) == "combat", "Exploration uses existing combat engine")
 	var caches: Array = scene.get("search_crates")
-	_check(caches.size() == RULES.CRATES.size(), "Caches spawned across map")
+	_check(caches.size() == RULES.CRATES.size() + 1, "Standard caches and forbidden vault spawned")
+	var vault: Dictionary = caches[caches.size() - 1]
+	_check(bool(vault.get("vault", false)), "Extra cache is the forbidden vault")
+	_check(vault["pos"] == RULES.VAULT_POSITION, "Vault uses authored forbidden-zone position")
+	var guardian_found := false
+	for foe in scene.get("enemies"):
+		if bool(foe.get("vault_guard", false)):
+			guardian_found = true
+			_check(float(foe["max_hp"]) >= 300.0, "Vault guardian is exceptionally strong")
+	_check(guardian_found, "Vault guardian spawns on sortie")
+	# Loot can be stolen without defeating the guardian.
+	scene.set("player", RULES.VAULT_POSITION)
+	var vault_handled: bool = scene.call("interact_expedition_site")
+	_check(vault_handled and bool(vault["opened"]), "Vault can be looted with guardian alive")
 	var first_cache: Dictionary = caches[0]
 	scene.set("player", first_cache["pos"])
 	var handled: bool = scene.call("interact_expedition_site")
