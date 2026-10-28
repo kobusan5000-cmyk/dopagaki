@@ -250,6 +250,7 @@ var broth_meals := 0
 # Expedition mode uses the existing combat engine without automatic wave-clears.
 var expedition_active := false
 var search_crates: Array[Dictionary] = []
+var vault_boss_defeated := false
 var carried_materials: Array[int] = [0, 0, 0]
 var stored_materials: Array[int] = [0, 0, 0]
 var extraction_clock := -1.0
@@ -3299,6 +3300,12 @@ func cleanup_defeated_enemies() -> void:
 		if corpses.size() > 55:
 			corpses.remove_at(0)
 		burst(death_spot, Color("a1cbff") if elite else Color("ff7c9b"), 24 if elite else 12)
+		if bool(enemy.get("vault_guard", false)) and expedition_active and not vault_boss_defeated:
+			vault_boss_defeated = true
+			coins += 250
+			# Guaranteed epic equipment is a ground drop if the backpack is full.
+			spawn_drop(death_spot + Vector2(35, 0), 3)
+			show_status("禁域の守護者を撃破！ +250G、エピック装備が出現！ [E]で回収", Color("ffe5a2"))
 		if bool(enemy["boss"]):
 			emit_impact_sparks(death_spot, Color("ffd38d"), 58, 440.0)
 			emit_impact_ring(death_spot, Color("ffe3a1"), 176.0, 0.60, 11.0)
@@ -4313,8 +4320,11 @@ func start_sortie() -> void:
 	active_exit = -1
 	carried_materials = [0, 0, 0]
 	search_crates.clear()
+	vault_boss_defeated = false
 	for box_data in EXTRACTION_RULES.CRATES:
 		search_crates.append({"pos": box_data["pos"], "tier": box_data["tier"], "opened": false})
+	# The forbidden vault can be robbed while its guardian is alive.
+	search_crates.append({"pos": EXTRACTION_RULES.VAULT_POSITION, "tier": 2, "opened": false, "vault": true})
 	# Guards are placed around specific supply sites, so exploring valuable areas
 	# carries more risk than walking around the entry camp.
 	for box_data in search_crates:
@@ -4332,6 +4342,14 @@ func start_sortie() -> void:
 	for position in [Vector2(3210, 765), Vector2(2850, 1860)]:
 		spawn_brute(position)
 		enemies[enemies.size() - 1]["patrol_center"] = position
+	# Fixed, high-threat guardian. It is not part of the random enemy pool.
+	spawn_reaper(EXTRACTION_RULES.VAULT_GUARD_POSITION)
+	var vault_guard: Dictionary = enemies[enemies.size() - 1]
+	vault_guard["vault_guard"] = true
+	vault_guard["hp"] = 360.0
+	vault_guard["max_hp"] = 360.0
+	vault_guard["speed"] = 128.0
+	vault_guard["patrol_center"] = EXTRACTION_RULES.VAULT_GUARD_POSITION
 	hub_sortie_button.hide()
 	show_status("探索へ出撃！ [E]でコンテナを調査。脱出地点で戦利品を持ち帰ろう", Color("ffd78f"))
 	play_sound(AUDIO_HEAVY, -20.0)
@@ -4447,17 +4465,20 @@ func interact_expedition_site() -> bool:
 			return true
 		box_data["opened"] = true
 		var tier: int = int(box_data["tier"])
+		var is_vault: bool = bool(box_data.get("vault", false))
 		raise_expedition_noise(box_data["pos"], EXTRACTION_RULES.NOISE_SEARCH_RADIUS + float(tier) * 65.0, "search")
 		var count: int = mini(EXTRACTION_RULES.CARGO_CAPACITY - EXTRACTION_RULES.cargo_count(carried_materials), 1 + tier + rng.randi_range(0, 1))
 		for item_index in range(count):
 			var kind: int = EXTRACTION_RULES.material_kind(tier, rng.randf())
 			carried_materials[kind] += 1
 		var gold_amount: int = rng.randi_range(18, 35) * (tier + 1)
+		if is_vault:
+			gold_amount += 180
 		coins += gold_amount
 		var found_gear_name := ""
 		var gear_left_on_ground := false
-		if rng.randf() < (0.17 + float(tier) * 0.24):
-			var rarity: int = mini(3, maxi(1, tier + 1))
+		if is_vault or rng.randf() < (0.17 + float(tier) * 0.24):
+			var rarity: int = 3 if is_vault else mini(3, maxi(1, tier + 1))
 			# Generate the same randomized real gear as regular enemy drops, but
 			# auto-pick it into the 5-slot backpack if there is space.
 			var drop_count: int = drops.size()
@@ -4470,6 +4491,8 @@ func interact_expedition_site() -> bool:
 		var loot_message := "回収！素材+%d / +%dG（素材%d/%d）" % [count, gold_amount, EXTRACTION_RULES.cargo_count(carried_materials), EXTRACTION_RULES.CARGO_CAPACITY]
 		if not found_gear_name.is_empty():
 			loot_message += " | バッグ満杯：装備は地面[E]で回収" if gear_left_on_ground else " | 装備もバッグに獲得！[I]で確認"
+		if is_vault:
+			loot_message = "禁域の保管庫を奪取！ " + loot_message
 		show_status(loot_message, Color("b5f5dd"))
 		refresh_inventory_ui()
 		return true
@@ -4497,7 +4520,8 @@ func draw_expedition_sites() -> void:
 		draw_line(at + Vector2(-27, -9), at + Vector2(27, -9), col.darkened(0.19), 4.0)
 		draw_rect(Rect2(at + Vector2(-5, -9), Vector2(10, 15)), col)
 		if not opened:
-			draw_string(ui_font, at + Vector2(-44, -34), "物資 [E]", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, col)
+			var site_label: String = "禁域保管庫 [E]" if bool(box_data.get("vault", false)) else "物資 [E]"
+			draw_string(ui_font, at + Vector2(-66, -34), site_label, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, col)
 		else:
 			draw_string(ui_font, at + Vector2(-25, -34), "回収済", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("aab6bd"))
 	for i in range(EXTRACTION_RULES.EXITS.size()):
