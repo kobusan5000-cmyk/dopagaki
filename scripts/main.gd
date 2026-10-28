@@ -3929,7 +3929,7 @@ func load_stash() -> void:
 	var decoded: Variant = JSON.parse_string(raw)
 	if typeof(decoded) == TYPE_ARRAY:
 		for entry in decoded:
-			if typeof(entry) == TYPE_DICTIONARY and str(entry.get("type", "")) in ["weapon", "armor"] and stash_items.size() < STASH_MAX:
+			if typeof(entry) == TYPE_DICTIONARY and str(entry.get("type", "")) in ["weapon", "armor"] :
 				stash_items.append(entry.duplicate(true))
 
 func save_stash() -> bool:
@@ -4016,7 +4016,15 @@ func refresh_stash_ui() -> void:
 		bag_button.tooltip_text = "" if item.is_empty() else item_description(item)
 		bag_button.disabled = item.is_empty() or stash_items.size() >= STASH_MAX or wave >= 1
 	stash_equip_button.disabled = stash_items.size() >= STASH_MAX or wave >= 1
-	for i in range(STASH_MAX):
+	# Add visible withdrawal buttons for overflow items loaded from disk.
+	while stash_storage_buttons.size() < stash_items.size():
+		var slot_index: int = stash_storage_buttons.size()
+		var extra_button := make_button("", Color("d0a66f"), Vector2(307, 40))
+		extra_button.add_theme_font_size_override("font_size", 12)
+		extra_button.pressed.connect(stash_withdraw.bind(slot_index))
+		stash_storage_buttons[0].get_parent().add_child(extra_button)
+		stash_storage_buttons.append(extra_button)
+	for i in range(stash_storage_buttons.size()):
 		var button: Button = stash_storage_buttons[i]
 		if i < stash_items.size():
 			var item: Dictionary = stash_items[i]
@@ -4108,11 +4116,8 @@ func extract_alive() -> void:
 		earned_cargo[0] -= EXTRACTION_RULES.HATCH_SCRAP_COST
 		earned_cargo[1] -= EXTRACTION_RULES.HATCH_CORE_COST
 	var bank: Array[Dictionary] = all_in_collect_gear()
-	if stash_items.size() + bank.size() > STASH_MAX:
-		show_status("装備倉庫が満杯！ バッグで不要品を捨てるか入れ替えてから脱出", Color("ffbca5"))
-		active_exit = -1
-		extraction_clock = -1.0
-		return
+	# Extraction must not fail just because the stash is full. Overflow items
+	# remain persisted in the stash and can be withdrawn in the hub.
 	var previous_gear: Array[Dictionary] = stash_items.duplicate(true)
 	var old_gold: int = banked_gold
 	var old_materials: Array[int] = stored_materials.duplicate()
