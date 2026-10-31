@@ -560,6 +560,7 @@ func _ready() -> void:
 	coop.joined_host.connect(_on_coop_joined)
 	coop.join_failed.connect(_on_coop_join_failed)
 	coop.controls_received.connect(_on_coop_guest_controls)
+	coop.interact_requested.connect(_on_coop_guest_interact)
 	coop.snapshot_received.connect(_on_coop_snapshot)
 	build_coop_ui()
 	camera = Camera2D.new()
@@ -689,6 +690,10 @@ func _on_coop_guest_controls(direction: Vector2, angle: float, firing: bool, int
 		coop_guest_interact = true
 	coop_guest_held_interact = interacting
 
+func _on_coop_guest_interact() -> void:
+	if coop != null and coop.is_host() and expedition_active:
+		coop_guest_interact = true
+
 func coop_guest_tick(delta: float) -> void:
 	# Host validates and advances the remote actor; guest gets position corrections.
 	if not coop.is_host() or coop.peer_id <= 1:
@@ -738,8 +743,10 @@ func coop_client_tick(delta: float) -> void:
 	if coop_guest_send_clock <= 0.0 or coop_guest_interact_pending:
 		coop_guest_send_clock = 0.055
 		var angle: float = (get_global_mouse_position() - player).angle()
-		coop.send_controls(direction, angle, Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT), coop_guest_interact_pending)
-		coop_guest_interact_pending = false
+		coop.send_controls(direction, angle, Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT), false)
+		if coop_guest_interact_pending:
+			coop.send_interaction()
+			coop_guest_interact_pending = false
 	if state == "playing":
 		player = (player + direction * 260.0 * delta).clamp(ARENA.position + Vector2(35, 45), ARENA.end - Vector2(35, 35))
 		camera.position = player
@@ -4405,6 +4412,10 @@ func extract_alive() -> void:
 	var exit_point: Vector2 = EXTRACTION_RULES.HATCH_POSITION if extraction_hatch_active else EXTRACTION_RULES.EXITS[active_exit]
 	if not EXTRACTION_RULES.is_near_exit(player, exit_point):
 		return
+	# Alive teammates must extract together. A downed guest is left behind.
+	if coop != null and coop.is_host() and coop.peer_id > 1 and coop_guest_hp > 0.0 and not EXTRACTION_RULES.is_near_exit(coop_guest_pos, exit_point):
+		show_status("仲間が脱出地点から離れている！ 2人揃って脱出しよう", Color("b8e9ff"))
+		return
 	if extraction_hatch_active and not EXTRACTION_RULES.can_use_hatch(carried_materials):
 		show_status("隠し脱出路用の素材が足りない", Color("ffc6a0"))
 		return
@@ -5609,7 +5620,6 @@ func draw_fantasy_ground() -> void:
 
 func _draw() -> void:
 	draw_fantasy_ground()
-	draw_coop_teammate()
 	draw_expedition_sites()
 	draw_farm_and_kitchen()
 	draw_stash_chest()
@@ -5734,6 +5744,7 @@ func _draw() -> void:
 		var alpha := clampf(float(p["life"]) / float(p["total"]), 0.0, 1.0)
 		draw_circle(p["pos"], 2.0 + 3.0 * alpha, Color(p["color"], alpha))
 	draw_impact_fx()
+	draw_coop_teammate()
 	draw_companion()
 	draw_wanderer()
 	draw_rabbit_pet()
