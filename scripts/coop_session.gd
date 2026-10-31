@@ -6,6 +6,7 @@ signal teammate_disconnected(peer_id: int)
 signal joined_host
 signal join_failed
 signal controls_received(direction: Vector2, angle: float, firing: bool, interacting: bool)
+signal teammate_introduced(job: int, name: String)
 signal snapshot_received(snapshot: Dictionary)
 
 const PORT := 24566
@@ -51,6 +52,15 @@ func is_host() -> bool:
 
 func is_guest() -> bool:
 	return multiplayer.has_multiplayer_peer() and not multiplayer.is_server()
+
+func introduce_self(job: int, display_name: String) -> void:
+	if is_guest():
+		guest_introduce.rpc_id(1, clampi(job, 0, 6), display_name.substr(0, 16))
+
+@rpc("any_peer", "call_remote", "reliable")
+func guest_introduce(job: int, display_name: String) -> void:
+	if is_host() and multiplayer.get_remote_sender_id() == peer_id:
+		teammate_introduced.emit(clampi(job, 0, 6), display_name.substr(0, 16))
 
 func send_controls(direction: Vector2, angle: float, firing: bool, interacting: bool) -> void:
 	if is_guest():
