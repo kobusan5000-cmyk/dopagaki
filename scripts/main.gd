@@ -733,6 +733,7 @@ func coop_guest_tick(delta: float) -> void:
 func coop_client_tick(delta: float) -> void:
 	if not coop.is_guest():
 		return
+	refresh_coop_ui()
 	coop_guest_send_clock -= delta
 	var direction := Vector2.ZERO
 	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT): direction.x -= 1.0
@@ -790,6 +791,8 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 	choose_panel.hide()
 	hub_sortie_button.hide()
 	coop_connection_status = "接続済み"
+	coop_panel.visible = state == "playing" and phase == "hub"
+	dead_panel.visible = state == "dead"
 	update_hud()
 	queue_redraw()
 
@@ -4556,6 +4559,8 @@ func return_to_safe_hub() -> void:
 	player = Vector2(1208, 870)
 	companion = player + Vector2(-59, 14)
 	companion_goal = CAMP_STATIONS[0]
+	coop_guest_hp = coop_guest_max_hp
+	coop_guest_pos = player + Vector2(55, 25)
 	rabbit_pet = player + Vector2(52, 48)
 	rabbit_pet_goal = rabbit_pet
 	camera.position = player
@@ -4677,7 +4682,7 @@ func update_expedition(delta: float) -> void:
 			enemies[enemies.size() - 1]["patrol_center"] = enemies[enemies.size() - 1]["pos"]
 	if (active_exit >= 0 or extraction_hatch_active) and extraction_clock > 0.0:
 		var exit_point: Vector2 = EXTRACTION_RULES.HATCH_POSITION if extraction_hatch_active else EXTRACTION_RULES.EXITS[active_exit]
-		if not EXTRACTION_RULES.is_near_exit(player, exit_point):
+		if not EXTRACTION_RULES.is_near_exit(player, exit_point) or (coop != null and coop.is_host() and coop.peer_id > 1 and coop_guest_hp > 0.0 and not EXTRACTION_RULES.is_near_exit(coop_guest_pos, exit_point)):
 			active_exit = -1
 			extraction_hatch_active = false
 			extraction_clock = -1.0
