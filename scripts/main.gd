@@ -2291,6 +2291,12 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			show_status("拠点へ帰還。今回の戦利品は失った", Color("ffb6b6"))
 		return
 	if state == "playing":
+		if coop != null and coop.is_guest():
+			if event.keycode == KEY_E:
+				coop_guest_interact_pending = true
+			elif event.keycode == KEY_G:
+				show_status("出撃はホストが開始するよ", Color("c3eeff"))
+			return
 		if phase == "hub" and event.keycode == KEY_G:
 			start_sortie()
 			return
@@ -2482,6 +2488,12 @@ func update_countdown() -> void:
 
 
 func _process(delta: float) -> void:
+	if coop != null and coop.is_guest():
+		coop_client_tick(delta)
+		return
+	if coop != null and coop.is_host():
+		coop_guest_tick(delta)
+	refresh_coop_ui()
 	if banner_clock > 0.0:
 		banner_clock = maxf(0.0, banner_clock - delta)
 		banner.visible = banner_clock > 0.0
@@ -2504,7 +2516,7 @@ func _process(delta: float) -> void:
 	jump_clock = maxf(0.0, jump_clock - delta)
 	update_guard_state(delta)
 	enemy_sound_cooldown = maxf(0.0, enemy_sound_cooldown - delta)
-	hub_sortie_button.visible = state == "playing" and phase == "hub" and not (all_in_open or inventory_open or cooking_open or slot_open or merchant_open or rabbit_menu_open or upgrade_open or stash_open or controls_open)
+	hub_sortie_button.visible = state == "playing" and phase == "hub" and (coop == null or not coop.is_guest()) and not (all_in_open or inventory_open or cooking_open or slot_open or merchant_open or rabbit_menu_open or upgrade_open or stash_open or controls_open)
 	if state != "playing" or all_in_open or inventory_open or cooking_open or slot_open or merchant_open or rabbit_menu_open or upgrade_open or stash_open:
 		update_hud()
 		queue_redraw()
@@ -3005,6 +3017,9 @@ func update_hostile_orbs(delta: float) -> void:
 			# A projectile can be guarded or perfectly parried from the front.
 			receive_enemy_hit(float(orb.get("damage", 14.0)) * ALL_IN_RULES.danger_multiplier(wave), orb["pos"], str(orb.get("status", "")))
 			gone = true
+		if not gone and coop != null and coop.is_host() and coop.peer_id > 1 and coop_guest_hp > 0.0 and not is_in_safe_camp(coop_guest_pos) and coop_guest_pos.distance_to(orb["pos"]) < 19.0:
+			coop_guest_hp = maxf(0.0, coop_guest_hp - float(orb.get("damage", 11.0)))
+			gone = true
 		if not gone and companion_hp > 0.0 and not is_in_safe_camp(companion) and companion.distance_to(orb["pos"]) < 19.0:
 			companion_take_damage(11.0)
 			gone = true
@@ -3325,7 +3340,8 @@ func update_enemies(delta: float) -> void:
 		if expedition_active:
 			var guard_pos: Vector2 = enemy["pos"]
 			var old_alert: float = maxf(0.0, float(enemy.get("alert_clock", 0.0)) - delta)
-			var detected: bool = EXTRACTION_RULES.enemy_can_detect(guard_pos.distance_to(player), expedition_quiet_move, old_alert > 0.0)
+			var guest_visible: bool = coop != null and coop.is_host() and coop.peer_id > 1 and coop_guest_hp > 0.0 and guard_pos.distance_to(coop_guest_pos) <= EXTRACTION_RULES.PATROL_DETECTION_RADIUS
+			var detected: bool = guest_visible or EXTRACTION_RULES.enemy_can_detect(guard_pos.distance_to(player), expedition_quiet_move, old_alert > 0.0)
 			enemy["alert_clock"] = EXTRACTION_RULES.ALERT_DURATION if detected and guard_pos.distance_to(player) <= (EXTRACTION_RULES.CROUCH_DETECTION_RADIUS if expedition_quiet_move else EXTRACTION_RULES.PATROL_DETECTION_RADIUS) else old_alert
 			if not detected:
 				var home: Vector2 = enemy.get("patrol_center", guard_pos)
@@ -3339,9 +3355,10 @@ func update_enemies(delta: float) -> void:
 				enemy["walk"] = float(enemy["walk"]) + delta * 2.0
 				continue
 		# If Mint shelters in camp, enemies must chase the exposed player instead.
-		var target_rabbit: bool = bool(enemy.get("target_rabbit", false)) and rabbit_pet_enabled and rabbit_hp > 0.0 and not rabbit_carried and not is_in_safe_camp(rabbit_pet)
-		var target_ally: bool = not target_rabbit and bool(enemy["target_ally"]) and companion_hp > 0.0 and not is_in_safe_camp(companion)
-		var target_pos: Vector2 = rabbit_pet if target_rabbit else (companion if target_ally else player)
+		var target_guest: bool = coop != null and coop.is_host() and coop.peer_id > 1 and coop_guest_hp > 0.0 and not is_in_safe_camp(coop_guest_pos) and (enemy["pos"] as Vector2).distance_to(coop_guest_pos) < (enemy["pos"] as Vector2).distance_to(player) + 80.0
+		var target_rabbit: bool = not target_guest and bool(enemy.get("target_rabbit", false)) and rabbit_pet_enabled and rabbit_hp > 0.0 and not rabbit_carried and not is_in_safe_camp(rabbit_pet)
+		var target_ally: bool = not target_guest and not target_rabbit and bool(enemy["target_ally"]) and companion_hp > 0.0 and not is_in_safe_camp(companion)
+		var target_pos: Vector2 = coop_guest_pos if target_guest else (rabbit_pet if target_rabbit else (companion if target_ally else player))
 		var toward: Vector2 = target_pos - enemy["pos"]
 		var elite: bool = bool(enemy["elite"])
 		var boss: bool = bool(enemy["boss"])
@@ -3453,8 +3470,13 @@ func update_enemies(delta: float) -> void:
 			"frost": normal_touch = 8.0
 			"ember": normal_touch = 11.0
 		var raw_damage := (24.0 if boss else (18.0 if elite else normal_touch)) * damage_scale * ALL_IN_RULES.danger_multiplier(wave)
-		if not is_in_safe_camp(target_pos) and (target_rabbit or target_ally or not is_player_airborne()) and target_pos.distance_to(enemy["pos"]) < hit_radius and float(enemy["touch"]) <= 0.0:
-			if target_rabbit:
+		if not is_in_safe_camp(target_pos) and (target_guest or target_rabbit or target_ally or not is_player_airborne()) and target_pos.distance_to(enemy["pos"]) < hit_radius and float(enemy["touch"]) <= 0.0:
+			if target_guest:
+				coop_guest_hp = maxf(0.0, coop_guest_hp - raw_damage)
+				burst(coop_guest_pos, Color("b2dfff"), 8)
+				if coop_guest_hp <= 0.0:
+					show_status("仲間が倒れた！ 先に脱出しよう", Color("ffbaba"))
+			elif target_rabbit:
 				rabbit_take_damage(raw_damage * 0.75)
 			elif target_ally:
 				companion_take_damage(raw_damage * 0.85)
@@ -4563,7 +4585,7 @@ func return_to_safe_hub() -> void:
 	queue_redraw()
 
 func start_sortie() -> void:
-	if state != "playing" or phase != "hub":
+	if state != "playing" or phase != "hub" or (coop != null and coop.is_guest()):
 		return
 	if stash_open or inventory_open or cooking_open or merchant_open or slot_open or rabbit_menu_open or upgrade_open or controls_open:
 		show_status("メニューを閉じてから出撃してね", Color("ffe6b3"))
@@ -4859,6 +4881,8 @@ func update_hud() -> void:
 		phase_label.text = "休憩 あと%d秒  |  Wave %d" % [ceili(phase_clock), wave]
 	else:
 		phase_label.text = "Wave %d  討伐 %d/%d  残敵%d" % [wave, maxi(0, wave_spawned - enemies.size()), wave_target, enemies.size()]
+	if coop != null and (coop.is_host() or coop.is_guest()):
+		phase_label.text += " | 2人協力（%s）" % ("ホスト" if coop.is_host() else "ゲスト")
 	phase_label.add_theme_color_override("font_color", Color("a1ffc4") if phase != "combat" else Color("ffc39b"))
 	var to_shrine := REVIVE_SHRINE - player
 	var to_shop := MERCHANT_POS - player
@@ -5585,6 +5609,7 @@ func draw_fantasy_ground() -> void:
 
 func _draw() -> void:
 	draw_fantasy_ground()
+	draw_coop_teammate()
 	draw_expedition_sites()
 	draw_farm_and_kitchen()
 	draw_stash_chest()
