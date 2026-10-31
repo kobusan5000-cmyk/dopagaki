@@ -135,6 +135,39 @@ jobs:
           }
           cat godot-expedition-inventory.log
 
+      - name: Validate LAN co-op session
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot="$HOME/.cache/dopagaki-godot/godot"
+          timeout 60 "$godot" --headless --path . --script res://tests/test_coop_session.gd > godot-coop-session.log 2>&1 || {
+            cat godot-coop-session.log
+            echo "::error::Co-op LAN session regression"
+            exit 1
+          }
+          cat godot-coop-session.log
+
+      - name: Test 2-process LAN host and guest
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot="$HOME/.cache/dopagaki-godot/godot"
+          timeout 24 "$godot" --headless --path . --script res://tests/test_coop_pair.gd -- --host > godot-coop-host.log 2>&1 &
+          host_pid=$!
+          sleep 1
+          timeout 22 "$godot" --headless --path . --script res://tests/test_coop_pair.gd -- --guest > godot-coop-guest.log 2>&1 &
+          guest_pid=$!
+          host_result=0
+          guest_result=0
+          wait "$host_pid" || host_result=$?
+          wait "$guest_pid" || guest_result=$?
+          cat godot-coop-host.log
+          cat godot-coop-guest.log
+          if [ "$host_result" -ne 0 ] || [ "$guest_result" -ne 0 ]; then
+            echo "::error::Two-process co-op connection or world replication failed"
+            exit 1
+          fi
+
       - name: Launch Godot and smoke-test main scene
         shell: bash
         run: |
@@ -163,6 +196,9 @@ jobs:
             godot-safe-hub-flow.log
             godot-extraction-flow.log
             godot-expedition-inventory.log
+            godot-coop-session.log
+            godot-coop-host.log
+            godot-coop-guest.log
             godot-run.log
           if-no-files-found: ignore
           retention-days: 7

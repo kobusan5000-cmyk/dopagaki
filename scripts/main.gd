@@ -60,6 +60,7 @@ const SLOT_COST := 25
 const LUMI_SLOT_SCRIPT = preload("res://scripts/lumi_slot.gd")
 const ALL_IN_RULES = preload("res://scripts/all_in_rules.gd")
 const EXTRACTION_RULES = preload("res://scripts/extraction_rules.gd")
+const COOP_SESSION = preload("res://scripts/coop_session.gd")
 const MATERIALS_SAVE := "user://dopagaki_stored_materials_v025.json"
 const SLOT_POS := Vector2(865, 895)
 const REVIVE_SHRINE := Vector2(3060, 1860)
@@ -218,6 +219,33 @@ var rng := RandomNumberGenerator.new()
 var star_duo_art: Texture2D
 var ui_font: SystemFont
 var state := "choose" # choose, playing, upgrade, dead
+# LAN/ENet co-op: the host owns enemies, loot and extraction state.
+var coop: Node
+var coop_panel: PanelContainer
+var coop_status: Label
+var coop_ip_input: LineEdit
+var coop_host_button: Button
+var coop_join_button: Button
+var coop_leave_button: Button
+var coop_guest_pos := Vector2(1270, 890)
+var coop_guest_hp := 100.0
+var coop_guest_max_hp := 100.0
+var coop_guest_job := 0
+var coop_guest_name := "仲間"
+var coop_guest_aim := 0.0
+var coop_guest_dir := Vector2.ZERO
+var coop_guest_shoot := false
+var coop_guest_interact := false
+var coop_guest_held_interact := false
+var coop_guest_fire_clock := 0.0
+var coop_guest_send_clock := 0.0
+var coop_snapshot_clock := 0.0
+var coop_guest_interact_pending := false
+var coop_remote_host_pos := Vector2(1208, 870)
+var coop_remote_host_aim := 0.0
+var coop_remote_host_job := 0
+var coop_remote_host_name := "ホスト"
+var coop_connection_status := ""
 var class_id := 0
 var palette_id := 0
 var accessory_id := 0
@@ -522,6 +550,19 @@ func _ready() -> void:
 	ui_font = SystemFont.new()
 	ui_font.font_names = PackedStringArray(["Yu Gothic", "Meiryo", "Noto Sans CJK JP", "Arial"])
 	build_ui()
+	coop = Node.new()
+	coop.name = "CoopSession"
+	coop.set_script(COOP_SESSION)
+	add_child(coop)
+	coop.teammate_connected.connect(_on_coop_peer_connected)
+	coop.teammate_disconnected.connect(_on_coop_peer_disconnected)
+	coop.teammate_introduced.connect(_on_coop_introduced)
+	coop.joined_host.connect(_on_coop_joined)
+	coop.join_failed.connect(_on_coop_join_failed)
+	coop.controls_received.connect(_on_coop_guest_controls)
+	coop.interact_requested.connect(_on_coop_guest_interact)
+	coop.snapshot_received.connect(_on_coop_snapshot)
+	build_coop_ui()
 	camera = Camera2D.new()
 	camera.enabled = true
 	camera.position_smoothing_enabled = true
@@ -535,6 +576,243 @@ func _ready() -> void:
 	load_banked_gold()
 	load_stored_materials()
 	reset_game()
+
+# The first multiplayer milestone is 2-player host-authoritative LAN co-op.
+func build_coop_ui() -> void:
+	var overlay := CanvasLayer.new()
+	overlay.layer = 3
+	add_child(overlay)
+	coop_panel = make_panel(Vector2(12, 140), Vector2(350, 235), Color("83b9ed"))
+	overlay.add_child(coop_panel)
+	var content := VBoxContainer.new()
+	content.add_theme_constant_override("separation", 8)
+	coop_panel.get_child(0).add_child(content)
+	content.add_child(make_label("2人協力プレイ（LAN / IP）", 21, Color("cceaff"), true))
+	coop_status = make_label("ソロモード", 15, Color("b8efd6"))
+	content.add_child(coop_status)
+	coop_ip_input = LineEdit.new()
+	coop_ip_input.placeholder_text = "ホストのIPアドレス（例: 192.168.1.10）"
+	coop_ip_input.text = "127.0.0.1"
+	coop_ip_input.custom_minimum_size = Vector2(305, 32)
+	content.add_child(coop_ip_input)
+	var buttons := HBoxContainer.new()
+	content.add_child(buttons)
+	coop_host_button = make_button("ホスト", Color("9ed5f5"), Vector2(100, 39))
+	coop_host_button.pressed.connect(coop_host_pressed)
+	buttons.add_child(coop_host_button)
+	coop_join_button = make_button("参加", Color("ade8b5"), Vector2(100, 39))
+	coop_join_button.pressed.connect(coop_join_pressed)
+	buttons.add_child(coop_join_button)
+	coop_leave_button = make_button("切断", Color("efb5a8"), Vector2(88, 39))
+	coop_leave_button.pressed.connect(coop_leave_pressed)
+	buttons.add_child(coop_leave_button)
+	content.add_child(make_label("UDP 24566 / 同じWi-FiならホストのLAN IP", 12, Color("9eaccc")))
+	coop_panel.hide()
+
+func refresh_coop_ui() -> void:
+	if coop_panel == null:
+		return
+	coop_panel.visible = state == "playing" and phase == "hub"
+	coop_host_button.disabled = coop.is_host() or coop.is_guest()
+	coop_join_button.disabled = coop.is_host() or coop.is_guest()
+	coop_leave_button.disabled = not (coop.is_host() or coop.is_guest())
+	if coop.is_host():
+		coop_status.text = "ホスト接続中：2人目参加済み" if coop.peer_id > 1 else "ホスト待機中：参加待ち"
+	elif coop.is_guest():
+		coop_status.text = "ゲスト：%s" % coop_connection_status
+	else:
+		coop_status.text = "ソロモード"
+
+func coop_host_pressed() -> void:
+	if state != "playing" or phase != "hub":
+		return
+	var result: Error = coop.host_game()
+	if result != OK:
+		show_status("ホスト開始に失敗：UDP24566を確認 (%s)" % str(result), Color("ffb2af"))
+		return
+	coop_connection_status = "ホスト起動済み"
+	show_status("ホスト開始！ 同じネットワークの友達にIPとUDP24566を伝えてね", Color("b5e8ff"))
+	refresh_coop_ui()
+
+func coop_join_pressed() -> void:
+	if state != "playing" or phase != "hub":
+		return
+	var err: Error = coop.join_game(coop_ip_input.text)
+	if err != OK:
+		show_status("接続失敗：IPアドレスを確認 (%s)" % str(err), Color("ffb1ab"))
+		return
+	coop_connection_status = "接続中..."
+	refresh_coop_ui()
+
+func coop_leave_pressed() -> void:
+	if expedition_active:
+		show_status("出撃中は切断できない。脱出後に切断してね", Color("ffb5ac"))
+		return
+	coop.close_game()
+	coop_connection_status = ""
+	show_status("2人プレイを終了したよ", Color("cbe7fa"))
+	refresh_coop_ui()
+
+func _on_coop_peer_connected(id: int) -> void:
+	coop_guest_pos = player + Vector2(62, 34)
+	coop_guest_hp = 100.0
+	coop_guest_fire_clock = 0.0
+	show_status("2人目が参加！ 一緒に出撃できるよ", Color("a9f4ca"))
+
+func _on_coop_peer_disconnected(_id: int) -> void:
+	coop_guest_dir = Vector2.ZERO
+	coop_guest_shoot = false
+	show_status("仲間が切断した。ソロプレイに戻る", Color("ffd4a8"))
+
+func _on_coop_introduced(job: int, display_name: String) -> void:
+	coop_guest_job = clampi(job, 0, 6)
+	coop_guest_name = display_name if not display_name.is_empty() else "仲間"
+	show_status("%s（%s）が合流した！" % [coop_guest_name, CLASS_NAMES[coop_guest_job]], Color("a9f4ca"))
+
+func _on_coop_joined() -> void:
+	coop_connection_status = "接続成功"
+	coop.introduce_self(class_id, character_name)
+	show_status("ホストと接続！ 2人で探索しよう", Color("a7f4c4"))
+	refresh_coop_ui()
+
+func _on_coop_join_failed() -> void:
+	coop_connection_status = "接続に失敗・切断"
+	show_status("接続できなかった。IP / UDPポートを確認してね", Color("ffc2b1"))
+	refresh_coop_ui()
+
+func _on_coop_guest_controls(direction: Vector2, angle: float, firing: bool, interacting: bool) -> void:
+	if not coop.is_host():
+		return
+	coop_guest_dir = direction
+	coop_guest_aim = angle
+	coop_guest_shoot = firing
+	if interacting and not coop_guest_held_interact:
+		coop_guest_interact = true
+	coop_guest_held_interact = interacting
+
+func _on_coop_guest_interact() -> void:
+	if coop != null and coop.is_host() and expedition_active:
+		coop_guest_interact = true
+
+func coop_guest_tick(delta: float) -> void:
+	# Host validates and advances the remote actor; guest gets position corrections.
+	if not coop.is_host() or coop.peer_id <= 1:
+		return
+	coop_guest_fire_clock = maxf(0.0, coop_guest_fire_clock - delta)
+	if state == "playing" and coop_guest_hp > 0.0:
+		coop_guest_pos = (coop_guest_pos + coop_guest_dir.limit_length(1.0) * 260.0 * delta).clamp(ARENA.position + Vector2(35, 45), ARENA.end - Vector2(35, 35))
+		if expedition_active and coop_guest_shoot and coop_guest_fire_clock <= 0.0 and not is_in_safe_camp(coop_guest_pos):
+			coop_guest_fire_clock = 0.42
+			var dir: Vector2 = Vector2.RIGHT.rotated(coop_guest_aim)
+			var weapon_kind := "kunai" if coop_guest_job == 6 else ("magic" if coop_guest_job in [3, 5] else "bullet")
+			projectiles.append({"pos": coop_guest_pos + dir * 37.0, "vel": dir * 850.0, "dmg": 8.0, "accuracy": 0.96, "radius": 5.0, "pierce": 1, "kind": weapon_kind, "tint": Color("b8f1ff"), "life": 1.25, "hit_ids": [], "crit_chance": 0.09, "trait": -1, "owner": "hero"})
+			raise_expedition_noise(coop_guest_pos, EXTRACTION_RULES.NOISE_SHOT_RADIUS, "attack")
+			play_sound(AUDIO_BOW, -23.0)
+	if coop_guest_interact:
+		coop_guest_interact = false
+		if expedition_active and coop_guest_hp > 0.0:
+			var host_pos := player
+			player = coop_guest_pos
+			interact_expedition_site()
+			player = host_pos
+	coop_snapshot_clock -= delta
+	if coop_snapshot_clock <= 0.0:
+		coop_snapshot_clock = 0.12
+		coop.send_snapshot({
+			"host_pos": player, "host_aim": aim_angle, "host_job": class_id, "host_name": character_name,
+			"guest_pos": coop_guest_pos, "guest_hp": coop_guest_hp, "guest_job": coop_guest_job,
+			"phase": phase, "state": state, "expedition": expedition_active, "wave": wave,
+			"enemies": enemies, "projectiles": projectiles, "orbs": hostile_orbs,
+			"drops": drops, "coins_on_ground": coin_drops, "crates": search_crates,
+			"materials": carried_materials, "coins": coins,
+			"extract_clock": extraction_clock, "active_exit": active_exit,
+			"hatch_active": extraction_hatch_active, "elapsed": expedition_elapsed,
+			"mint_pos": companion, "mint_hp": companion_hp, "rabbit_pos": rabbit_pet, "rabbit_hp": rabbit_hp
+		})
+
+func coop_client_tick(delta: float) -> void:
+	if not coop.is_guest():
+		return
+	refresh_coop_ui()
+	coop_guest_send_clock -= delta
+	var direction := Vector2.ZERO
+	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT): direction.x -= 1.0
+	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT): direction.x += 1.0
+	if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP): direction.y -= 1.0
+	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN): direction.y += 1.0
+	direction = direction.normalized()
+	if coop_guest_send_clock <= 0.0 or coop_guest_interact_pending:
+		coop_guest_send_clock = 0.055
+		var angle: float = (get_global_mouse_position() - player).angle()
+		coop.send_controls(direction, angle, Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT), false)
+		if coop_guest_interact_pending:
+			coop.send_interaction()
+			coop_guest_interact_pending = false
+	if state == "playing":
+		player = (player + direction * 260.0 * delta).clamp(ARENA.position + Vector2(35, 45), ARENA.end - Vector2(35, 35))
+		camera.position = player
+	update_hud()
+	queue_redraw()
+
+func _on_coop_snapshot(data: Dictionary) -> void:
+	if not coop.is_guest():
+		return
+	coop_remote_host_pos = data.get("host_pos", coop_remote_host_pos)
+	coop_remote_host_aim = float(data.get("host_aim", 0.0))
+	coop_remote_host_job = int(data.get("host_job", 0))
+	coop_remote_host_name = str(data.get("host_name", "ホスト"))
+	var incoming: Vector2 = data.get("guest_pos", player)
+	# Blend small discrepancies; correct large drift immediately.
+	player = incoming if player.distance_to(incoming) > 110.0 else player.lerp(incoming, 0.48)
+	coop_guest_hp = float(data.get("guest_hp", 100.0))
+	hp = coop_guest_hp
+	phase = str(data.get("phase", "hub"))
+	state = "playing" if str(data.get("state", "playing")) == "playing" else "dead"
+	expedition_active = bool(data.get("expedition", false))
+	wave = int(data.get("wave", 0))
+	coins = int(data.get("coins", 0))
+	expedition_elapsed = float(data.get("elapsed", 0.0))
+	extraction_clock = float(data.get("extract_clock", -1.0))
+	active_exit = int(data.get("active_exit", -1))
+	extraction_hatch_active = bool(data.get("hatch_active", false))
+	for entry in [["enemies", enemies], ["projectiles", projectiles], ["orbs", hostile_orbs], ["drops", drops], ["coins_on_ground", coin_drops], ["crates", search_crates]]:
+		var destination: Array = entry[1]
+		destination.clear()
+		for item in data.get(entry[0], []):
+			destination.append(item)
+	carried_materials.clear()
+	for amount in data.get("materials", [0, 0, 0]):
+		carried_materials.append(int(amount))
+	companion = data.get("mint_pos", companion)
+	companion_hp = float(data.get("mint_hp", companion_hp))
+	rabbit_pet = data.get("rabbit_pos", rabbit_pet)
+	rabbit_hp = float(data.get("rabbit_hp", rabbit_hp))
+	camera.position = player
+	choose_panel.hide()
+	hub_sortie_button.hide()
+	coop_connection_status = "接続済み"
+	coop_panel.visible = state == "playing" and phase == "hub"
+	dead_panel.visible = state == "dead"
+	update_hud()
+	queue_redraw()
+
+func draw_coop_teammate() -> void:
+	if coop == null or (not coop.is_guest() and (not coop.is_host() or coop.peer_id <= 1)):
+		return
+	var at: Vector2 = coop_remote_host_pos if coop.is_guest() else coop_guest_pos
+	var job: int = coop_remote_host_job if coop.is_guest() else coop_guest_job
+	var look: float = coop_remote_host_aim if coop.is_guest() else coop_guest_aim
+	var name: String = coop_remote_host_name if coop.is_guest() else coop_guest_name
+	draw_circle(at + Vector2(0, 18), 19.0, Color("0e2839", 0.43))
+	if job == 6:
+		draw_ninja_sprite(at, 4, cos(look) > 0.0, Color("b8eeff"))
+	elif job == 5:
+		draw_set_transform(at, 0.0, Vector2(1.0 if cos(look) > 0.0 else -1.0, 1.0))
+		draw_texture_rect_region(HEALER_ART, Rect2(-41, -75, 82, 82), Rect2(0, 0, 48, 48), Color("b8eeff"))
+		draw_set_transform(Vector2.ZERO)
+	else:
+		draw_character(WOLF_WALK, at, int(elapsed * 6.0) % 4, cos(look) > 0.0, 1.85, Color("a5e6ff"))
+	draw_string(ui_font, at + Vector2(-37, -82), name + " (2P)" if not coop.is_guest() else name + " (1P)", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("b9efff"))
 
 func make_style(fill: Color, border: Color, radius: int = 14) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
@@ -2023,6 +2301,12 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			show_status("拠点へ帰還。今回の戦利品は失った", Color("ffb6b6"))
 		return
 	if state == "playing":
+		if coop != null and coop.is_guest():
+			if event.keycode == KEY_E:
+				coop_guest_interact_pending = true
+			elif event.keycode == KEY_G:
+				show_status("出撃はホストが開始するよ", Color("c3eeff"))
+			return
 		if phase == "hub" and event.keycode == KEY_G:
 			start_sortie()
 			return
@@ -2214,6 +2498,12 @@ func update_countdown() -> void:
 
 
 func _process(delta: float) -> void:
+	if coop != null and coop.is_guest():
+		coop_client_tick(delta)
+		return
+	if coop != null and coop.is_host():
+		coop_guest_tick(delta)
+	refresh_coop_ui()
 	if banner_clock > 0.0:
 		banner_clock = maxf(0.0, banner_clock - delta)
 		banner.visible = banner_clock > 0.0
@@ -2236,7 +2526,7 @@ func _process(delta: float) -> void:
 	jump_clock = maxf(0.0, jump_clock - delta)
 	update_guard_state(delta)
 	enemy_sound_cooldown = maxf(0.0, enemy_sound_cooldown - delta)
-	hub_sortie_button.visible = state == "playing" and phase == "hub" and not (all_in_open or inventory_open or cooking_open or slot_open or merchant_open or rabbit_menu_open or upgrade_open or stash_open or controls_open)
+	hub_sortie_button.visible = state == "playing" and phase == "hub" and (coop == null or not coop.is_guest()) and not (all_in_open or inventory_open or cooking_open or slot_open or merchant_open or rabbit_menu_open or upgrade_open or stash_open or controls_open)
 	if state != "playing" or all_in_open or inventory_open or cooking_open or slot_open or merchant_open or rabbit_menu_open or upgrade_open or stash_open:
 		update_hud()
 		queue_redraw()
@@ -2737,6 +3027,9 @@ func update_hostile_orbs(delta: float) -> void:
 			# A projectile can be guarded or perfectly parried from the front.
 			receive_enemy_hit(float(orb.get("damage", 14.0)) * ALL_IN_RULES.danger_multiplier(wave), orb["pos"], str(orb.get("status", "")))
 			gone = true
+		if not gone and coop != null and coop.is_host() and coop.peer_id > 1 and coop_guest_hp > 0.0 and not is_in_safe_camp(coop_guest_pos) and coop_guest_pos.distance_to(orb["pos"]) < 19.0:
+			coop_guest_hp = maxf(0.0, coop_guest_hp - float(orb.get("damage", 11.0)))
+			gone = true
 		if not gone and companion_hp > 0.0 and not is_in_safe_camp(companion) and companion.distance_to(orb["pos"]) < 19.0:
 			companion_take_damage(11.0)
 			gone = true
@@ -3057,7 +3350,8 @@ func update_enemies(delta: float) -> void:
 		if expedition_active:
 			var guard_pos: Vector2 = enemy["pos"]
 			var old_alert: float = maxf(0.0, float(enemy.get("alert_clock", 0.0)) - delta)
-			var detected: bool = EXTRACTION_RULES.enemy_can_detect(guard_pos.distance_to(player), expedition_quiet_move, old_alert > 0.0)
+			var guest_visible: bool = coop != null and coop.is_host() and coop.peer_id > 1 and coop_guest_hp > 0.0 and guard_pos.distance_to(coop_guest_pos) <= EXTRACTION_RULES.PATROL_DETECTION_RADIUS
+			var detected: bool = guest_visible or EXTRACTION_RULES.enemy_can_detect(guard_pos.distance_to(player), expedition_quiet_move, old_alert > 0.0)
 			enemy["alert_clock"] = EXTRACTION_RULES.ALERT_DURATION if detected and guard_pos.distance_to(player) <= (EXTRACTION_RULES.CROUCH_DETECTION_RADIUS if expedition_quiet_move else EXTRACTION_RULES.PATROL_DETECTION_RADIUS) else old_alert
 			if not detected:
 				var home: Vector2 = enemy.get("patrol_center", guard_pos)
@@ -3071,9 +3365,10 @@ func update_enemies(delta: float) -> void:
 				enemy["walk"] = float(enemy["walk"]) + delta * 2.0
 				continue
 		# If Mint shelters in camp, enemies must chase the exposed player instead.
-		var target_rabbit: bool = bool(enemy.get("target_rabbit", false)) and rabbit_pet_enabled and rabbit_hp > 0.0 and not rabbit_carried and not is_in_safe_camp(rabbit_pet)
-		var target_ally: bool = not target_rabbit and bool(enemy["target_ally"]) and companion_hp > 0.0 and not is_in_safe_camp(companion)
-		var target_pos: Vector2 = rabbit_pet if target_rabbit else (companion if target_ally else player)
+		var target_guest: bool = coop != null and coop.is_host() and coop.peer_id > 1 and coop_guest_hp > 0.0 and not is_in_safe_camp(coop_guest_pos) and (enemy["pos"] as Vector2).distance_to(coop_guest_pos) < (enemy["pos"] as Vector2).distance_to(player) + 80.0
+		var target_rabbit: bool = not target_guest and bool(enemy.get("target_rabbit", false)) and rabbit_pet_enabled and rabbit_hp > 0.0 and not rabbit_carried and not is_in_safe_camp(rabbit_pet)
+		var target_ally: bool = not target_guest and not target_rabbit and bool(enemy["target_ally"]) and companion_hp > 0.0 and not is_in_safe_camp(companion)
+		var target_pos: Vector2 = coop_guest_pos if target_guest else (rabbit_pet if target_rabbit else (companion if target_ally else player))
 		var toward: Vector2 = target_pos - enemy["pos"]
 		var elite: bool = bool(enemy["elite"])
 		var boss: bool = bool(enemy["boss"])
@@ -3185,8 +3480,13 @@ func update_enemies(delta: float) -> void:
 			"frost": normal_touch = 8.0
 			"ember": normal_touch = 11.0
 		var raw_damage := (24.0 if boss else (18.0 if elite else normal_touch)) * damage_scale * ALL_IN_RULES.danger_multiplier(wave)
-		if not is_in_safe_camp(target_pos) and (target_rabbit or target_ally or not is_player_airborne()) and target_pos.distance_to(enemy["pos"]) < hit_radius and float(enemy["touch"]) <= 0.0:
-			if target_rabbit:
+		if not is_in_safe_camp(target_pos) and (target_guest or target_rabbit or target_ally or not is_player_airborne()) and target_pos.distance_to(enemy["pos"]) < hit_radius and float(enemy["touch"]) <= 0.0:
+			if target_guest:
+				coop_guest_hp = maxf(0.0, coop_guest_hp - raw_damage)
+				burst(coop_guest_pos, Color("b2dfff"), 8)
+				if coop_guest_hp <= 0.0:
+					show_status("仲間が倒れた！ 先に脱出しよう", Color("ffbaba"))
+			elif target_rabbit:
 				rabbit_take_damage(raw_damage * 0.75)
 			elif target_ally:
 				companion_take_damage(raw_damage * 0.85)
@@ -4115,6 +4415,10 @@ func extract_alive() -> void:
 	var exit_point: Vector2 = EXTRACTION_RULES.HATCH_POSITION if extraction_hatch_active else EXTRACTION_RULES.EXITS[active_exit]
 	if not EXTRACTION_RULES.is_near_exit(player, exit_point):
 		return
+	# Alive teammates must extract together. A downed guest is left behind.
+	if coop != null and coop.is_host() and coop.peer_id > 1 and coop_guest_hp > 0.0 and not EXTRACTION_RULES.is_near_exit(coop_guest_pos, exit_point):
+		show_status("仲間が脱出地点から離れている！ 2人揃って脱出しよう", Color("b8e9ff"))
+		return
 	if extraction_hatch_active and not EXTRACTION_RULES.can_use_hatch(carried_materials):
 		show_status("隠し脱出路用の素材が足りない", Color("ffc6a0"))
 		return
@@ -4255,6 +4559,8 @@ func return_to_safe_hub() -> void:
 	player = Vector2(1208, 870)
 	companion = player + Vector2(-59, 14)
 	companion_goal = CAMP_STATIONS[0]
+	coop_guest_hp = coop_guest_max_hp
+	coop_guest_pos = player + Vector2(55, 25)
 	rabbit_pet = player + Vector2(52, 48)
 	rabbit_pet_goal = rabbit_pet
 	camera.position = player
@@ -4295,7 +4601,7 @@ func return_to_safe_hub() -> void:
 	queue_redraw()
 
 func start_sortie() -> void:
-	if state != "playing" or phase != "hub":
+	if state != "playing" or phase != "hub" or (coop != null and coop.is_guest()):
 		return
 	if stash_open or inventory_open or cooking_open or merchant_open or slot_open or rabbit_menu_open or upgrade_open or controls_open:
 		show_status("メニューを閉じてから出撃してね", Color("ffe6b3"))
@@ -4376,7 +4682,7 @@ func update_expedition(delta: float) -> void:
 			enemies[enemies.size() - 1]["patrol_center"] = enemies[enemies.size() - 1]["pos"]
 	if (active_exit >= 0 or extraction_hatch_active) and extraction_clock > 0.0:
 		var exit_point: Vector2 = EXTRACTION_RULES.HATCH_POSITION if extraction_hatch_active else EXTRACTION_RULES.EXITS[active_exit]
-		if not EXTRACTION_RULES.is_near_exit(player, exit_point):
+		if not EXTRACTION_RULES.is_near_exit(player, exit_point) or (coop != null and coop.is_host() and coop.peer_id > 1 and coop_guest_hp > 0.0 and not EXTRACTION_RULES.is_near_exit(coop_guest_pos, exit_point)):
 			active_exit = -1
 			extraction_hatch_active = false
 			extraction_clock = -1.0
@@ -4591,6 +4897,8 @@ func update_hud() -> void:
 		phase_label.text = "休憩 あと%d秒  |  Wave %d" % [ceili(phase_clock), wave]
 	else:
 		phase_label.text = "Wave %d  討伐 %d/%d  残敵%d" % [wave, maxi(0, wave_spawned - enemies.size()), wave_target, enemies.size()]
+	if coop != null and (coop.is_host() or coop.is_guest()):
+		phase_label.text += " | 2人協力（%s）" % ("ホスト" if coop.is_host() else "ゲスト")
 	phase_label.add_theme_color_override("font_color", Color("a1ffc4") if phase != "combat" else Color("ffc39b"))
 	var to_shrine := REVIVE_SHRINE - player
 	var to_shop := MERCHANT_POS - player
@@ -5441,6 +5749,7 @@ func _draw() -> void:
 		var alpha := clampf(float(p["life"]) / float(p["total"]), 0.0, 1.0)
 		draw_circle(p["pos"], 2.0 + 3.0 * alpha, Color(p["color"], alpha))
 	draw_impact_fx()
+	draw_coop_teammate()
 	draw_companion()
 	draw_wanderer()
 	draw_rabbit_pet()
