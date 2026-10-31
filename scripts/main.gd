@@ -60,6 +60,7 @@ const SLOT_COST := 25
 const LUMI_SLOT_SCRIPT = preload("res://scripts/lumi_slot.gd")
 const ALL_IN_RULES = preload("res://scripts/all_in_rules.gd")
 const EXTRACTION_RULES = preload("res://scripts/extraction_rules.gd")
+const COOP_SESSION = preload("res://scripts/coop_session.gd")
 const MATERIALS_SAVE := "user://dopagaki_stored_materials_v025.json"
 const SLOT_POS := Vector2(865, 895)
 const REVIVE_SHRINE := Vector2(3060, 1860)
@@ -218,6 +219,33 @@ var rng := RandomNumberGenerator.new()
 var star_duo_art: Texture2D
 var ui_font: SystemFont
 var state := "choose" # choose, playing, upgrade, dead
+# LAN/ENet co-op: the host owns enemies, loot and extraction state.
+var coop: Node
+var coop_panel: PanelContainer
+var coop_status: Label
+var coop_ip_input: LineEdit
+var coop_host_button: Button
+var coop_join_button: Button
+var coop_leave_button: Button
+var coop_guest_pos := Vector2(1270, 890)
+var coop_guest_hp := 100.0
+var coop_guest_max_hp := 100.0
+var coop_guest_job := 0
+var coop_guest_name := "仲間"
+var coop_guest_aim := 0.0
+var coop_guest_dir := Vector2.ZERO
+var coop_guest_shoot := false
+var coop_guest_interact := false
+var coop_guest_held_interact := false
+var coop_guest_fire_clock := 0.0
+var coop_guest_send_clock := 0.0
+var coop_snapshot_clock := 0.0
+var coop_guest_interact_pending := false
+var coop_remote_host_pos := Vector2(1208, 870)
+var coop_remote_host_aim := 0.0
+var coop_remote_host_job := 0
+var coop_remote_host_name := "ホスト"
+var coop_connection_status := ""
 var class_id := 0
 var palette_id := 0
 var accessory_id := 0
@@ -522,6 +550,18 @@ func _ready() -> void:
 	ui_font = SystemFont.new()
 	ui_font.font_names = PackedStringArray(["Yu Gothic", "Meiryo", "Noto Sans CJK JP", "Arial"])
 	build_ui()
+	coop = Node.new()
+	coop.name = "CoopSession"
+	coop.set_script(COOP_SESSION)
+	add_child(coop)
+	coop.teammate_connected.connect(_on_coop_peer_connected)
+	coop.teammate_disconnected.connect(_on_coop_peer_disconnected)
+	coop.teammate_introduced.connect(_on_coop_introduced)
+	coop.joined_host.connect(_on_coop_joined)
+	coop.join_failed.connect(_on_coop_join_failed)
+	coop.controls_received.connect(_on_coop_guest_controls)
+	coop.snapshot_received.connect(_on_coop_snapshot)
+	build_coop_ui()
 	camera = Camera2D.new()
 	camera.enabled = true
 	camera.position_smoothing_enabled = true
