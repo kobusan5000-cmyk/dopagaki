@@ -135,6 +135,18 @@ jobs:
           }
           cat godot-expedition-inventory.log
 
+      - name: Validate LAN co-op session
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot="$HOME/.cache/dopagaki-godot/godot"
+          timeout 60 "$godot" --headless --path . --script res://tests/test_coop_session.gd > godot-coop-session.log 2>&1 || {
+            cat godot-coop-session.log
+            echo "::error::Co-op LAN session regression"
+            exit 1
+          }
+          cat godot-coop-session.log
+
       - name: Launch Godot and smoke-test main scene
         shell: bash
         run: |
@@ -163,6 +175,7 @@ jobs:
             godot-safe-hub-flow.log
             godot-extraction-flow.log
             godot-expedition-inventory.log
+            godot-coop-session.log
             godot-run.log
           if-no-files-found: ignore
           retention-days: 7
