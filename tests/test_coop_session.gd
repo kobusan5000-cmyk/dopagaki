@@ -26,6 +26,10 @@ func _run() -> void:
 	# Input is normally validated by transport; host never trusts oversized moves.
 	scene.call("coop_guest_tick", 0.05)
 	_check((scene.get("coop_guest_pos") as Vector2).distance_to(before_pos) < 15.0, "Remote movement bounded per tick")
+	_check(float(scene.get("coop_guest_input_timeout")) > 0.0, "Host tracks freshness of remote input")
+	scene.call("coop_guest_tick", 0.40)
+	_check(scene.get("coop_guest_dir") == Vector2.ZERO, "Stale remote movement is stopped")
+	_check(not bool(scene.get("coop_guest_shoot")), "Stale remote firing is stopped")
 	scene.call("coop_leave_pressed")
 	_check(not session.is_host(), "Closing session restores solo")
 	_check(not session.is_guest(), "Closing session disconnects guest")
