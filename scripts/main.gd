@@ -453,6 +453,9 @@ var equipped: Dictionary = {"type": "weapon", "kind": 0, "rarity": 0, "name": "P
 var backpack: Array[Dictionary] = []
 var armor_equipped: Array[Dictionary] = [{}, {}, {}, {}]
 var coop_remote_host_equipped: Dictionary = {"type": "weapon", "kind": 0, "rarity": 0, "name": "PISTOL"}
+var coop_guest_downed_clock := 0.0
+var coop_guest_jailed := false
+var coop_guest_jump_dir := Vector2.RIGHT
 var coop_guest_jump_clock := 0.0
 var coop_guest_jump_cooldown := 0.0
 var coop_guest_guard := false
@@ -699,6 +702,8 @@ func _on_coop_peer_connected(id: int) -> void:
 	coop_guest_render_pos = coop_guest_pos
 	coop_panel_expanded = false
 	coop_guest_hp = 100.0
+	coop_guest_downed_clock = 0.0
+	coop_guest_jailed = false
 	coop_guest_jump_clock = 0.0
 	coop_guest_jump_cooldown = 0.0
 	coop_guest_guard = false
@@ -755,11 +760,12 @@ func _on_coop_guest_interact() -> void:
 		coop_guest_interact = true
 
 func _on_coop_guest_action(action: String, value: int) -> void:
-	if not coop.is_host() or coop_guest_hp <= 0.0 or state != "playing":
+	if not coop.is_host() or coop_guest_hp <= 0.0 or coop_guest_jailed or state != "playing":
 		return
 	if action == "jump":
 		if coop_guest_jump_cooldown <= 0.0 and not coop_guest_guard:
 			coop_guest_jump_clock = 0.62
+			coop_guest_jump_dir = coop_guest_dir.normalized() if coop_guest_dir.length_squared() > 0.01 else Vector2.RIGHT.rotated(coop_guest_aim)
 			coop_guest_jump_cooldown = 1.55
 	elif action == "guard":
 		coop_guest_guard = value != 0
@@ -797,6 +803,15 @@ func _on_coop_guest_action(action: String, value: int) -> void:
 				var pos: Vector2 = CAMP_STATIONS[camp_i] + Vector2(-105.0 + float(spot % 4) * 70.0, 145.0 + float(spot / 4) * 72.0)
 				meal_displays.append({"camp": camp_i, "spot": spot, "kind": value, "pos": pos})
 				break
+
+func coop_revive_guest() -> void:
+	if coop_guest_downed_clock <= 0.0 or coop_guest_jailed:
+		return
+	coop_guest_downed_clock = 0.0
+	coop_guest_hp = 45.0
+	coop_guest_pos += Vector2(34, 0)
+	coop_emit_fx("revive", coop_guest_pos)
+	show_status("仲間を救助した！ HP45で復活", Color("a9f4ca"))
 
 func coop_process_guest_interaction() -> void:
 	# Temporarily use the guest's position and inventory for host-authoritative
@@ -860,8 +875,8 @@ func coop_guest_tick(delta: float) -> void:
 	if coop_guest_input_timeout <= 0.0:
 		coop_guest_dir = Vector2.ZERO
 		coop_guest_shoot = false
-	if state == "playing" and coop_guest_hp > 0.0:
-		coop_guest_pos = (coop_guest_pos + coop_guest_dir.limit_length(1.0) * 260.0 * delta).clamp(ARENA.position + Vector2(35, 45), ARENA.end - Vector2(35, 35))
+	if state == "playing" and coop_guest_hp > 0.0 and not coop_guest_jailed:
+		coop_guest_pos = (coop_guest_pos + coop_guest_dir.limit_length(1.0) * 260.0 * delta + (coop_guest_jump_dir * 270.0 * delta if coop_guest_jump_clock > 0.0 else Vector2.ZERO)).clamp(ARENA.position + Vector2(35, 45), ARENA.end - Vector2(35, 35))
 		# Coins are auto-collected for either player, not only the host.
 		for coin_i in range(coin_drops.size() - 1, -1, -1):
 			if coop_guest_pos.distance_to(coin_drops[coin_i]["pos"]) < 44.0:
@@ -874,9 +889,15 @@ func coop_guest_tick(delta: float) -> void:
 			projectiles.append({"pos": coop_guest_pos + dir * 37.0, "vel": dir * 850.0, "dmg": 8.0, "accuracy": 0.96, "radius": 5.0, "pierce": 1, "kind": weapon_kind, "tint": Color("b8f1ff"), "life": 1.25, "hit_ids": [], "crit_chance": 0.09, "trait": -1, "owner": "hero"})
 			raise_expedition_noise(coop_guest_pos, EXTRACTION_RULES.NOISE_SHOT_RADIUS, "attack")
 			play_sound(AUDIO_BOW, -23.0)
+	if coop_guest_downed_clock > 0.0:
+		coop_guest_downed_clock = maxf(0.0, coop_guest_downed_clock - delta)
+		if coop_guest_downed_clock <= 0.0:
+			coop_guest_jailed = true
+			coop_guest_pos = ARENA.position + Vector2(140, 150)
+			show_status("仲間の救助時間切れ！ 牢屋へ送られた", Color("ffbaba"))
 	if coop_guest_interact:
 		coop_guest_interact = false
-		if coop_guest_hp > 0.0:
+		if coop_guest_hp > 0.0 and not coop_guest_jailed:
 			coop_process_guest_interaction()
 	coop_snapshot_clock -= delta
 	if coop_snapshot_clock <= 0.0:
@@ -894,6 +915,7 @@ func coop_guest_tick(delta: float) -> void:
 			"farm_plots": farm_plots, "meal_displays": meal_displays, "guest_backpack": coop_guest_backpack,
 			"guest_equipped": coop_guest_equipped, "guest_armor": coop_guest_armor,
 			"guest_jump": coop_guest_jump_clock, "guest_guard": coop_guest_guard,
+			"guest_downed": coop_guest_downed_clock, "guest_jailed": coop_guest_jailed,
 			"fx_events": coop_fx_events, "fx_serial": coop_fx_serial,
 			"guest_seeds": coop_guest_seeds, "guest_melon_seeds": coop_guest_melon_seeds,
 			"guest_watermelon_seeds": coop_guest_watermelon_seeds,
@@ -970,7 +992,9 @@ func coop_client_tick(delta: float) -> void:
 			coop.send_interaction()
 			coop_guest_interact_pending = false
 	if state == "playing":
-		player = (player + direction * 260.0 * delta).clamp(ARENA.position + Vector2(35, 45), ARENA.end - Vector2(35, 35))
+		jump_clock = maxf(0.0, jump_clock - delta)
+		jump_cooldown = maxf(0.0, jump_cooldown - delta)
+		player = (player + (direction * 260.0 * delta + jump_direction * 270.0 * delta if jump_clock > 0.0 else direction * 260.0 * delta) if coop_guest_hp > 0.0 and not coop_guest_jailed else player).clamp(ARENA.position + Vector2(35, 45), ARENA.end - Vector2(35, 35))
 		camera.position = player
 		# The guest does not run the host simulation, so update proximity hints locally.
 		pickup_hint.text = ""
@@ -1003,6 +1027,8 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 	# Blend small discrepancies; correct large drift immediately.
 	player = incoming if player.distance_to(incoming) > 110.0 else player.lerp(incoming, 0.48)
 	coop_guest_hp = float(data.get("guest_hp", 100.0))
+	coop_guest_downed_clock = float(data.get("guest_downed", 0.0))
+	coop_guest_jailed = bool(data.get("guest_jailed", false))
 	jump_clock = float(data.get("guest_jump", 0.0))
 	guard_active = bool(data.get("guest_guard", false))
 	hp = coop_guest_hp
@@ -1082,6 +1108,16 @@ func draw_coop_teammate() -> void:
 	if coop == null or (not coop.is_guest() and (not coop.is_host() or coop.peer_id <= 1)):
 		return
 	var at: Vector2 = coop_remote_host_render_pos if coop.is_guest() else coop_guest_render_pos
+	if not coop.is_guest() and coop_guest_downed_clock > 0.0:
+		draw_rect(Rect2(at - Vector2(19, 31), Vector2(38, 47)), Color("8a919b"))
+		draw_circle(at - Vector2(0, 19), 8.0, Color("dbe1e8"))
+		draw_string(ThemeDB.fallback_font, at + Vector2(-35, -43), "E 救助 %ds" % ceili(coop_guest_downed_clock), HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("fff2bd"))
+		return
+	if not coop.is_guest() and coop_guest_jailed:
+		draw_rect(Rect2(at - Vector2(33, 48), Vector2(66, 76)), Color("627282", 0.65))
+		for bar in range(4):
+			draw_line(at + Vector2(-25 + bar * 16, -44), at + Vector2(-25 + bar * 16, 23), Color("d4dde8"), 4.0)
+		return
 	if not coop.is_guest() and coop_guest_jump_clock > 0.18:
 		at += Vector2(0, -sin((0.62 - coop_guest_jump_clock) / 0.62 * PI) * 35.0)
 	var job: int = coop_remote_host_job if coop.is_guest() else coop_guest_job
@@ -1983,6 +2019,9 @@ func nearest_plot_index() -> int:
 	return best
 
 func interact_nearby() -> void:
+	if coop != null and coop.is_host() and coop_guest_downed_clock > 0.0 and player.distance_to(coop_guest_pos) < 100.0:
+		coop_revive_guest()
+		return
 	if expedition_active and interact_expedition_site():
 		return
 	# Both companions use the same moon shrine. One E can revive both carried souls.
@@ -3848,8 +3887,10 @@ func update_enemies(delta: float) -> void:
 			if target_guest:
 				coop_guest_hp = maxf(0.0, coop_guest_hp - raw_damage)
 				burst(coop_guest_pos, Color("b2dfff"), 8)
-				if coop_guest_hp <= 0.0:
-					show_status("仲間が倒れた！ 先に脱出しよう", Color("ffbaba"))
+				if coop_guest_hp <= 0.0 and coop_guest_downed_clock <= 0.0 and not coop_guest_jailed:
+					coop_guest_downed_clock = 20.0
+					coop_guest_shoot = false
+					show_status("仲間がダウン！ 20秒以内に墓へ近づき[E]で救助", Color("ffbaba"))
 			elif target_rabbit:
 				rabbit_take_damage(raw_damage * 0.75)
 			elif target_ally:
