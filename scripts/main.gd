@@ -467,6 +467,8 @@ var armor_equipped: Array[Dictionary] = [{}, {}, {}, {}]
 var coop_remote_host_equipped: Dictionary = {"type": "weapon", "kind": 0, "rarity": 0, "name": "PISTOL"}
 var coop_guest_downed_clock := 0.0
 var coop_guest_jailed := false
+var coop_host_downed_clock := 0.0
+var coop_host_jailed := false
 var coop_guest_jump_dir := Vector2.RIGHT
 var coop_guest_jump_clock := 0.0
 var coop_guest_jump_cooldown := 0.0
@@ -728,6 +730,8 @@ func _on_coop_peer_connected(id: int) -> void:
 	coop_guest_heal_spell_clock = 0.0
 	coop_guest_downed_clock = 0.0
 	coop_guest_jailed = false
+	coop_host_downed_clock = 0.0
+	coop_host_jailed = false
 	coop_guest_jump_clock = 0.0
 	coop_guest_jump_cooldown = 0.0
 	coop_guest_guard = false
@@ -844,6 +848,47 @@ func _on_coop_guest_action(action: String, value: int) -> void:
 				meal_displays.append({"camp": camp_i, "spot": spot, "kind": value, "pos": pos})
 				break
 
+# Both remote and local actors follow the same 20-second rescue rule.
+func coop_revive_host() -> void:
+	if coop_host_downed_clock <= 0.0 or coop_host_jailed:
+		return
+	coop_host_downed_clock = 0.0
+	hp = minf(max_hp, 45.0)
+	player += Vector2(-34.0, 0.0)
+	coop_emit_fx("revive", player)
+	show_status("仲間がホストを救助！ HP45で復活", Color("a9f4ca"))
+
+func coop_guest_receive_hit(raw_damage: float, origin_pos: Vector2, attacker: Dictionary = {}) -> void:
+	if coop_guest_hp <= 0.0 or coop_guest_jailed or coop_guest_downed_clock > 0.0 or coop_guest_jump_clock > 0.18:
+		return
+	var facing: Vector2 = Vector2.RIGHT.rotated(coop_guest_aim)
+	var incoming: Vector2 = origin_pos - coop_guest_pos
+	var guarded := coop_guest_guard and (incoming.length_squared() < 0.01 or facing.dot(incoming.normalized()) >= cos(GUARD_HALF_ANGLE))
+	if guarded and coop_guest_guard_parry_clock > 0.0:
+		coop_guest_guard_parry_clock = 0.0
+		emit_impact_sparks(coop_guest_pos + facing * 47.0, Color("ffe6a1"), 30, 320.0)
+		emit_impact_ring(coop_guest_pos + facing * 47.0, Color("fff0a6"), 68.0, 0.34, 6.0)
+		play_sound(AUDIO_PARRY, -8.0)
+		if not attacker.is_empty() and float(attacker.get("hp", 0.0)) > 0.0:
+			attacker["stun"] = maxf(float(attacker.get("stun", 0.0)), 0.75)
+			attacker["touch"] = maxf(float(attacker.get("touch", 0.0)), 1.0)
+			deal_enemy_damage(attacker, 4.0 + float(coop_guest_level) * 0.45, attacker["pos"], 0.0, -1)
+		return
+	var defense := 0.0
+	for armor in coop_guest_armor:
+		if not armor.is_empty():
+			defense += float(armor.get("defense", 0))
+	var reduction := minf(0.75, defense / (defense + 25.0))
+	var guard_factor := GUARD_DAMAGE_MULT if guarded else 1.0
+	var skill_factor := 0.55 if coop_guest_skill_guard_clock > 0.0 else 1.0
+	var dealt := maxf(1.0, raw_damage * (1.0 - reduction) * guard_factor * skill_factor)
+	coop_guest_hp = maxf(0.0, coop_guest_hp - dealt)
+	burst(coop_guest_pos, Color("94dcff") if guarded else Color("ff6393"), 9)
+	if coop_guest_hp <= 0.0:
+		coop_guest_downed_clock = 20.0
+		coop_guest_shoot = false
+		show_status("仲間がダウン！ 20秒以内に墓へ近づき[E]で救助", Color("ffbaba"))
+
 func coop_revive_guest() -> void:
 	if coop_guest_downed_clock <= 0.0 or coop_guest_jailed:
 		return
@@ -854,6 +899,9 @@ func coop_revive_guest() -> void:
 	show_status("仲間を救助した！ HP45で復活", Color("a9f4ca"))
 
 func coop_process_guest_interaction() -> void:
+	if coop_host_downed_clock > 0.0 and coop_guest_pos.distance_to(player) < 100.0:
+		coop_revive_host()
+		return
 	# Temporarily use the guest's position and inventory for host-authoritative
 	# pickups/farming. Restore host state before the next simulation step.
 	var host_pos: Vector2 = player
@@ -935,12 +983,29 @@ func coop_guest_tick(delta: float) -> void:
 				collect_coin(coin_i)
 		if expedition_active and coop_guest_shoot and coop_guest_fire_clock <= 0.0 and not is_in_safe_camp(coop_guest_pos):
 			coop_guest_attack()
+	if coop_host_downed_clock > 0.0:
+		coop_host_downed_clock = maxf(0.0, coop_host_downed_clock - delta)
+		if coop_host_downed_clock <= 0.0:
+			coop_host_jailed = true
+			player = ARENA.position + Vector2(90, 150)
+			hp = 0.0
+			backpack.clear()
+			for item_i in range(BAG_CAPACITY):
+				backpack.append({})
+			equipped = {"type": "weapon", "kind": CLASS_WEAPONS[class_id], "rarity": 0, "name": WEAPONS[CLASS_WEAPONS[class_id]]}
+			armor_equipped = [{}, {}, {}, {}]
+			show_status("ホストの救助時間切れ！ 装備を失い牢屋へ", Color("ffbaba"))
 	if coop_guest_downed_clock > 0.0:
 		coop_guest_downed_clock = maxf(0.0, coop_guest_downed_clock - delta)
 		if coop_guest_downed_clock <= 0.0:
 			coop_guest_jailed = true
 			coop_guest_pos = ARENA.position + Vector2(140, 150)
-			show_status("仲間の救助時間切れ！ 牢屋へ送られた", Color("ffbaba"))
+			coop_guest_backpack.clear()
+			for item_i in range(BAG_CAPACITY):
+				coop_guest_backpack.append({})
+			coop_guest_equipped = {"type": "weapon", "kind": CLASS_WEAPONS[coop_guest_job], "rarity": 0, "name": WEAPONS[CLASS_WEAPONS[coop_guest_job]]}
+			coop_guest_armor = [{}, {}, {}, {}]
+			show_status("仲間の救助時間切れ！ 装備を失い牢屋へ", Color("ffbaba"))
 	if coop_guest_interact:
 		coop_guest_interact = false
 		if coop_guest_hp > 0.0 and not coop_guest_jailed:
@@ -951,6 +1016,7 @@ func coop_guest_tick(delta: float) -> void:
 		coop.send_snapshot({
 			"host_pos": player, "host_aim": aim_angle, "host_job": class_id, "host_name": character_name,
 			"host_equipped": equipped, "host_armor": armor_equipped,
+			"host_downed": coop_host_downed_clock, "host_jailed": coop_host_jailed,
 			"host_moving": Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_UP) or Input.is_key_pressed(KEY_DOWN),
 			"host_attacking": Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT),
 			"guest_pos": coop_guest_pos, "guest_hp": coop_guest_hp, "guest_job": coop_guest_job,
@@ -1178,6 +1244,8 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 		return
 	coop_apply_fx(data)
 	coop_remote_host_pos = data.get("host_pos", coop_remote_host_pos)
+	coop_host_downed_clock = float(data.get("host_downed", 0.0))
+	coop_host_jailed = bool(data.get("host_jailed", false))
 	coop_remote_host_aim = float(data.get("host_aim", 0.0))
 	coop_remote_host_job = int(data.get("host_job", 0))
 	coop_remote_host_name = str(data.get("host_name", "ホスト"))
@@ -1286,12 +1354,14 @@ func draw_coop_teammate() -> void:
 	if coop == null or (not coop.is_guest() and (not coop.is_host() or coop.peer_id <= 1)):
 		return
 	var at: Vector2 = coop_remote_host_render_pos if coop.is_guest() else coop_guest_render_pos
-	if not coop.is_guest() and coop_guest_downed_clock > 0.0:
+	var teammate_downed := coop_host_downed_clock if coop.is_guest() else coop_guest_downed_clock
+	var teammate_jailed := coop_host_jailed if coop.is_guest() else coop_guest_jailed
+	if teammate_downed > 0.0:
 		draw_rect(Rect2(at - Vector2(19, 31), Vector2(38, 47)), Color("8a919b"))
 		draw_circle(at - Vector2(0, 19), 8.0, Color("dbe1e8"))
-		draw_string(ThemeDB.fallback_font, at + Vector2(-35, -43), "E 救助 %ds" % ceili(coop_guest_downed_clock), HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("fff2bd"))
+		draw_string(ThemeDB.fallback_font, at + Vector2(-35, -43), "E 救助 %ds" % ceili(teammate_downed), HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("fff2bd"))
 		return
-	if not coop.is_guest() and coop_guest_jailed:
+	if teammate_jailed:
 		draw_rect(Rect2(at - Vector2(33, 48), Vector2(66, 76)), Color("627282", 0.65))
 		for bar in range(4):
 			draw_line(at + Vector2(-25 + bar * 16, -44), at + Vector2(-25 + bar * 16, 23), Color("d4dde8"), 4.0)
@@ -2744,6 +2814,8 @@ func incoming_from_front(origin_pos: Vector2) -> bool:
 
 # Returns true on perfect parry; callers use it to cancel missiles/contact as appropriate.
 func receive_enemy_hit(raw_damage: float, origin_pos: Vector2, status_name: String = "", attacker: Dictionary = {}) -> bool:
+	if coop_host_downed_clock > 0.0 or coop_host_jailed:
+		return false
 	var guarded: bool = guard_active and incoming_from_front(origin_pos)
 	if guarded and guard_parry_clock > 0.0:
 		guard_parry_clock = 0.0 # one parry per right-click press
@@ -2858,6 +2930,11 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			show_status("拠点へ帰還。今回の戦利品は失った", Color("ffb6b6"))
 		return
 	if state == "playing":
+		if coop != null and coop.is_host() and coop_host_jailed and event.keycode == KEY_R and phase == "hub":
+			coop_host_jailed = false
+			hp = max_hp
+			player = CAMP_STATIONS[0] + Vector2(0, 55)
+			return
 		if coop != null and coop.is_guest():
 			if event.keycode == KEY_E:
 				if slot_open:
@@ -3163,12 +3240,14 @@ func _process(delta: float) -> void:
 	if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP): movement.y -= 1.0
 	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN): movement.y += 1.0
 	expedition_quiet_move = expedition_active and Input.is_key_pressed(KEY_SHIFT)
+	if coop_host_downed_clock > 0.0 or coop_host_jailed:
+		movement = Vector2.ZERO
 	if movement.length_squared() > 0.1:
 		walk_clock += delta * (5.0 if expedition_quiet_move else 10.0)
 		player += movement.normalized() * move_speed * (0.43 if expedition_quiet_move else 1.0) * (0.64 if guard_active else 1.0) * (0.0 if freeze_lock_clock > 0.0 else (0.52 if freeze_clock > 0.0 else 1.0)) * (1.0 + float(hero_stats[1]) * 0.04) * (1.25 if food_buff_clock > 0.0 else 1.0) * (1.3 if skill_buff_clock > 0.0 else 1.0) * delta
 	else:
 		walk_clock = 0.0
-	if jump_clock > 0.0:
+	if jump_clock > 0.0 and coop_host_downed_clock <= 0.0 and not coop_host_jailed:
 		player += jump_direction * 270.0 * delta
 	player = player.clamp(ARENA.position + Vector2(35, 45), ARENA.end - Vector2(35, 35))
 	camera.position = player
@@ -3176,7 +3255,7 @@ func _process(delta: float) -> void:
 	if aim.length() > 3.0:
 		aim_angle = aim.angle()
 	# The sanctuary is safe, but weapons are disabled inside it to prevent free farming.
-	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not guard_active and freeze_lock_clock <= 0.0 and fire_clock <= 0.0 and jump_clock <= 0.0 and phase == "combat" and not is_in_safe_camp(player):
+	if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and coop_host_downed_clock <= 0.0 and not coop_host_jailed and not guard_active and freeze_lock_clock <= 0.0 and fire_clock <= 0.0 and jump_clock <= 0.0 and phase == "combat" and not is_in_safe_camp(player):
 		attack()
 	if phase == "combat":
 		combat_elapsed += delta
@@ -3610,12 +3689,12 @@ func update_hostile_orbs(delta: float) -> void:
 		orb["life"] = float(orb["life"]) - delta
 		# Hostile projectiles are absorbed at the sanctuary perimeter.
 		var gone := float(orb["life"]) <= 0.0 or not ARENA.has_point(orb["pos"]) or is_in_safe_camp(orb["pos"])
-		if not gone and not is_in_safe_camp(player) and not is_player_airborne() and player.distance_to(orb["pos"]) < 20.0:
+		if not gone and hp > 0.0 and not is_in_safe_camp(player) and not is_player_airborne() and player.distance_to(orb["pos"]) < 20.0:
 			# A projectile can be guarded or perfectly parried from the front.
 			receive_enemy_hit(float(orb.get("damage", 14.0)) * ALL_IN_RULES.danger_multiplier(wave), orb["pos"], str(orb.get("status", "")))
 			gone = true
 		if not gone and coop != null and coop.is_host() and coop.peer_id > 1 and coop_guest_hp > 0.0 and not is_in_safe_camp(coop_guest_pos) and coop_guest_pos.distance_to(orb["pos"]) < 19.0:
-			coop_guest_hp = maxf(0.0, coop_guest_hp - float(orb.get("damage", 11.0)))
+			coop_guest_receive_hit(float(orb.get("damage", 11.0)) * ALL_IN_RULES.danger_multiplier(wave), orb["pos"])
 			gone = true
 		if not gone and companion_hp > 0.0 and not is_in_safe_camp(companion) and companion.distance_to(orb["pos"]) < 19.0:
 			companion_take_damage(11.0)
@@ -3638,6 +3717,12 @@ func companion_take_damage(amount: float) -> void:
 		show_status("ミントが倒れた！ ハートを拾い、南東の月の祭壇へ", Color("ffb0cb"))
 
 func player_died() -> void:
+	if coop != null and coop.is_host() and coop.peer_id > 1:
+		if coop_host_downed_clock <= 0.0 and not coop_host_jailed:
+			coop_host_downed_clock = 20.0
+			hp = 0.0
+			show_status("ホストがダウン！ 仲間が20秒以内に[E]で救助できる", Color("ffbaba"))
+		return
 	state = "dead"
 	dead_panel.show()
 	controls_open = false
@@ -4070,25 +4155,7 @@ func update_enemies(delta: float) -> void:
 		var raw_damage := (24.0 if boss else (18.0 if elite else normal_touch)) * damage_scale * ALL_IN_RULES.danger_multiplier(wave)
 		if not is_in_safe_camp(target_pos) and (target_rabbit or target_ally or (not (coop_guest_jump_clock > 0.18) if target_guest else not is_player_airborne())) and target_pos.distance_to(enemy["pos"]) < hit_radius and float(enemy["touch"]) <= 0.0:
 			if target_guest:
-				# Apply the same directional guard/parry concept to the remote player.
-				var guest_damage := raw_damage
-				if coop_guest_guard:
-					var facing := Vector2.RIGHT.rotated(coop_guest_aim)
-					var incoming := (enemy["pos"] as Vector2) - coop_guest_pos
-					if incoming.length_squared() > 0.01 and facing.dot(incoming.normalized()) > 0.0:
-						if coop_guest_guard_parry_clock > 0.0:
-							guest_damage = 0.0
-							coop_guest_guard_parry_clock = 0.0
-							coop_emit_fx("hit", coop_guest_pos)
-						else:
-							guest_damage *= 0.35
-				coop_guest_hp = maxf(0.0, coop_guest_hp - guest_damage)
-				if guest_damage > 0.0:
-					burst(coop_guest_pos, Color("b2dfff"), 8)
-				if coop_guest_hp <= 0.0 and coop_guest_downed_clock <= 0.0 and not coop_guest_jailed:
-					coop_guest_downed_clock = 20.0
-					coop_guest_shoot = false
-					show_status("仲間がダウン！ 20秒以内に墓へ近づき[E]で救助", Color("ffbaba"))
+				coop_guest_receive_hit(raw_damage, enemy["pos"], enemy)
 			elif target_rabbit:
 				rabbit_take_damage(raw_damage * 0.75)
 			elif target_ally:
@@ -5181,6 +5248,10 @@ func return_to_safe_hub() -> void:
 	player = Vector2(1208, 870)
 	companion = player + Vector2(-59, 14)
 	companion_goal = CAMP_STATIONS[0]
+	coop_host_downed_clock = 0.0
+	coop_host_jailed = false
+	coop_guest_downed_clock = 0.0
+	coop_guest_jailed = false
 	coop_guest_hp = coop_guest_max_hp
 	coop_guest_mp = coop_guest_max_mp
 	coop_guest_level = 1
@@ -5487,7 +5558,7 @@ func compass(v: Vector2) -> String:
 	return vertical + horizontal if vertical + horizontal != "" else "近く"
 
 func apply_status_damage(amount: float, color: Color) -> void:
-	if state != "playing" or is_in_safe_camp(player):
+	if state != "playing" or is_in_safe_camp(player) or coop_host_downed_clock > 0.0 or coop_host_jailed:
 		return
 	hp -= amount
 	if phase == "combat": wave_damage_taken += amount
