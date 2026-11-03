@@ -98,6 +98,7 @@ func _run() -> void:
 	_check((scene.get("weapon_inventory") as Array).is_empty(), "New survivor does not inherit deceased weapons")
 	_check((scene.get("armor") as Array)[1].is_empty(), "New survivor does not inherit deceased armor")
 
+	scene.set("stamina", 32.0)
 	scene.call("save_survivor")
 	scene.queue_free()
 	await process_frame
@@ -106,6 +107,7 @@ func _run() -> void:
 	await process_frame
 	_check(int((reopened.get("stored") as Dictionary)["木材"]) == 2, "Stashed items survive reload")
 	_check((reopened.get("shelters") as Array).size() == 1, "Built shelter survives reload")
+	_check(float(reopened.get("stamina")) > 30.0 and float(reopened.get("stamina")) < 35.0, "Stamina persists across reload")
 	_check((reopened.get("corpses") as Array).size() == 1, "Death loot and item records survive reload")
 	var body: Dictionary = (reopened.get("corpses") as Array)[0]
 	reopened.set("survivor", body["position"])
