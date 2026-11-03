@@ -82,6 +82,8 @@ const MEAL_NAMES := ["ニンジンシチュー", "ハンタースープ", "メ�
 const RABBIT_NAME := "ちゅぶら"
 const RABBIT_GEAR_NAMES := ["なし", "赤いリボン", "探検ハーネス", "月の首飾り"]
 const RABBIT_GEAR_COSTS := [0, 12, 40, 80]
+const RABBIT_CARROT_HEAL := 25.0
+const RABBIT_FEED_COOLDOWN := 5.0
 const CROP_GROW := [10.0, 22.0, 35.0]
 const CROP_COLORS := [Color("ffa665"), Color("aaff8d"), Color("79d7b0")]
 const WEAPON_SHORT := ["銃", "弓", "剣", "大剣", "連弩", "魔杖", "癒杖", "クナイ"]
@@ -451,6 +453,7 @@ var rabbit_pet_attack_clock := 0.0
 var rabbit_pet_walk_clock := 0.0
 var rabbit_patrol_clock := 0.0
 var rabbit_pet_meal_clock := 0.0
+var rabbit_feed_cooldown := 0.0
 var rabbit_pet_bob_clock := 0.0
 var rabbit_pet_was_moving := false
 var rabbit_pet_enabled := true
@@ -2227,7 +2230,7 @@ func build_ui() -> void:
 	rabbit_box.add_child(make_label("🐇 ちゅぶらのお世話", 29, Color("eac7ff"), true))
 	rabbit_menu_info = make_label("", 16, Color("e8eaf6"), true)
 	rabbit_box.add_child(rabbit_menu_info)
-	var rabbit_titles := ["[1] なでる  ♥", "[2] 抱っこ / おろす", "[3] にんじんをあげる", "[4] ペット装備を購入・装着"]
+	var rabbit_titles := ["[1] なでる  ♥", "[2] 抱っこ / おろす", "[3] にんじん（HP+25回復）", "[4] ペット装備を購入・装着"]
 	for rabbit_action in range(4):
 		var rabbit_button := make_button(rabbit_titles[rabbit_action], Color("b6a1ed"), Vector2(502, 46))
 		rabbit_button.pressed.connect(rabbit_action_selected.bind(rabbit_action))
@@ -2678,6 +2681,7 @@ func reset_game() -> void:
 	rabbit_pet_walk_clock = 0.0
 	rabbit_patrol_clock = 0.0
 	rabbit_pet_meal_clock = 2.0
+	rabbit_feed_cooldown = 0.0
 	rabbit_pet_bob_clock = 0.0
 	rabbit_pet_was_moving = false
 	rabbit_pet_enabled = true
@@ -3861,6 +3865,11 @@ func _process(delta: float) -> void:
 	if brute_flash_clock > 0.0:
 		brute_flash_clock = maxf(0.0, brute_flash_clock - delta)
 	attack_clock = maxf(0.0, attack_clock - delta)
+	# Continue Chubura's carrot cooldown while her interaction menu is open.
+	var feed_was_cooling := rabbit_feed_cooldown > 0.0
+	rabbit_feed_cooldown = maxf(0.0, rabbit_feed_cooldown - delta)
+	if feed_was_cooling and rabbit_feed_cooldown <= 0.0 and rabbit_menu_open:
+		refresh_rabbit_menu()
 	jump_cooldown = maxf(0.0, jump_cooldown - delta)
 	jump_clock = maxf(0.0, jump_clock - delta)
 	update_guard_state(delta)
@@ -7016,7 +7025,8 @@ func refresh_rabbit_menu() -> void:
 	var gear_next := mini(3, rabbit_gear_level + 1)
 	var gear_line := "装備は最上級まで購入済" if rabbit_gear_level >= 3 else "次の装備: %s (%dG)" % [RABBIT_GEAR_NAMES[gear_next], RABBIT_GEAR_COSTS[gear_next]]
 	rabbit_menu_info.text = "名前: %s　HP: %d/%d　好物: にんじん\nなかよし度: %d/100  満腹度: %d/100　にんじん: %d個\n装備: %s　%s\n状態: %s" % [RABBIT_NAME, roundi(rabbit_hp), roundi(RABBIT_MAX_HP), roundi(rabbit_affection), roundi(rabbit_hunger), carrots, RABBIT_GEAR_NAMES[rabbit_gear_level], gear_line, "抱っこ中" if rabbit_carried else rabbit_pet_mode]
-	rabbit_menu_buttons[2].disabled = carrots <= 0 or rabbit_hunger >= 98.0
+	rabbit_menu_buttons[2].disabled = carrots <= 0 or rabbit_feed_cooldown > 0.0 or (rabbit_hunger >= 98.0 and rabbit_hp >= RABBIT_MAX_HP - 0.01)
+	rabbit_menu_buttons[2].text = "[3] にんじん治療：あと%d秒" % ceili(rabbit_feed_cooldown) if rabbit_feed_cooldown > 0.0 else "[3] にんじん（HP+25・空腹回復）"
 	rabbit_menu_buttons[3].disabled = rabbit_gear_level >= 3 or coins < RABBIT_GEAR_COSTS[gear_next]
 	rabbit_menu_buttons[3].text = "[4] 次の装備を購入 (%dG)" % RABBIT_GEAR_COSTS[gear_next] if rabbit_gear_level < 3 else "[4] すべての装備を購入済"
 
@@ -7042,20 +7052,30 @@ func rabbit_action_selected(action: int) -> void:
 			else:
 				rabbit_pet = (player + Vector2(57, 20)).clamp(ARENA.position + Vector2(40, 40), ARENA.end - Vector2(40, 40))
 				show_status("%sをそっとおろした" % RABBIT_NAME, Color("ead6ff"))
-		2: # Raw carrot treat
+		2: # Raw carrot restores hunger and heals an injured living Chubura.
+			# Host also validates the guest's actual distance for multiplayer.
+			if player.distance_to(rabbit_pet) > 125.0:
+				show_status("ちゅぶらの近くで[T]からにんじんをあげてね", Color("ffcdb8"))
+				return
 			if carrots <= 0:
 				show_status("にんじんがない！ 畑で収穫しよう", Color("ffcdb8"))
 				return
-			if rabbit_hunger >= 98.0:
-				show_status("%sはおなかいっぱい！" % RABBIT_NAME, Color("ffe9cd"))
+			if rabbit_feed_cooldown > 0.0:
+				show_status("ちゅぶらは休憩中！ あと%d秒" % ceili(rabbit_feed_cooldown), Color("ffe9cd"))
 				return
+			if rabbit_hunger >= 98.0 and rabbit_hp >= RABBIT_MAX_HP - 0.01:
+				show_status("%sは元気でおなかいっぱい！" % RABBIT_NAME, Color("ffe9cd"))
+				return
+			var hp_before := rabbit_hp
 			carrots -= 1
+			rabbit_hp = minf(RABBIT_MAX_HP, rabbit_hp + RABBIT_CARROT_HEAL)
 			rabbit_hunger = minf(100.0, rabbit_hunger + 38.0)
 			rabbit_affection = minf(100.0, rabbit_affection + 15.0)
-			rabbit_pet_glow = 1.5
-			burst(rabbit_pet, Color("ffac6d"), 20)
+			rabbit_feed_cooldown = RABBIT_FEED_COOLDOWN
+			rabbit_pet_glow = 1.8
+			burst(rabbit_pet, Color("ff9edf"), 22)
 			play_sound(AUDIO_PICKUP, -13.0, 1.3)
-			show_status("%sはにんじんが大好き！ ♥+15" % RABBIT_NAME, Color("ffdeb0"))
+			show_status("%sににんじん！ HP+%d / %d、なかよし度+15" % [RABBIT_NAME, roundi(rabbit_hp - hp_before), roundi(RABBIT_MAX_HP)], Color("ffdeb0"))
 		3: # Sequential small pet gear upgrades from in-game coins
 			if rabbit_gear_level >= 3:
 				show_status("%sの装備はすべて揃っているよ" % RABBIT_NAME, Color("d9cfff"))
