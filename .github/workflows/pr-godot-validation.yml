@@ -195,6 +195,18 @@ jobs:
           }
           cat godot-survival-journal.log
 
+      - name: Validate Chubura carrot healing and guest supplies
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot="$HOME/.cache/dopagaki-godot/godot"
+          timeout 75 "$godot" --headless --path . --script res://tests/test_chubura_carrot_heal.gd > godot-chubura-healing.log 2>&1 || {
+            cat godot-chubura-healing.log
+            echo "::error::Chubura carrot healing or co-op regression failed"
+            exit 1
+          }
+          cat godot-chubura-healing.log
+
       - name: Validate rainbow 777 bonus animation and single payout
         shell: bash
         run: |
@@ -301,6 +313,7 @@ jobs:
             godot-enemy-hitboxes.log
             godot-camera-edge.log
             godot-slot-777.log
+            godot-chubura-healing.log
             godot-coop-host.log
             godot-coop-guest.log
             godot-run.log
