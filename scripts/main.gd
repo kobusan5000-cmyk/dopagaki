@@ -60,6 +60,7 @@ const SLOT_COST := 25
 const LUMI_SLOT_SCRIPT = preload("res://scripts/lumi_slot.gd")
 const ALL_IN_RULES = preload("res://scripts/all_in_rules.gd")
 const EXTRACTION_RULES = preload("res://scripts/extraction_rules.gd")
+const SURVIVAL_RULES = preload("res://scripts/survival_rules.gd")
 const COOP_SESSION = preload("res://scripts/coop_session.gd")
 const MATERIALS_SAVE := "user://dopagaki_stored_materials_v025.json"
 const SLOT_POS := Vector2(865, 895)
@@ -246,6 +247,11 @@ var coop_guest_broth_meals := 0
 var coop_guest_melon_meals := 0
 var coop_guest_watermelon_meals := 0
 var coop_guest_food_buff_clock := 0.0
+var coop_guest_hunger := 100.0
+var coop_guest_thirst := 100.0
+var coop_guest_rations := 2
+var coop_guest_water := 2
+var coop_guest_survival_damage_clock := 0.0
 var coop_guest_crop_selection := 0
 var coop_guest_stash: Array[Dictionary] = []
 var coop_guest_slot_serial := 0
@@ -333,6 +339,13 @@ var search_crates: Array[Dictionary] = []
 var vault_boss_defeated := false
 var carried_materials: Array[int] = [0, 0, 0]
 var stored_materials: Array[int] = [0, 0, 0]
+# Scrap/cores/crystals are 12 team cargo slots; weapons/armor have five
+# independent slots. Food and drinking water are third, small survival supplies.
+var survival_hunger := 100.0
+var survival_thirst := 100.0
+var survival_rations := 2
+var survival_water := 2
+var survival_damage_clock := 0.0
 var extraction_clock := -1.0
 var active_exit := -1
 var expedition_elapsed := 0.0
@@ -592,6 +605,8 @@ var meal_display_buttons: Array[Button] = []
 var defense_label: Label
 var inventory_status: Label
 var inventory_materials_label: Label
+var cargo_discard_buttons: Array[Button] = []
+var survival_status_label: Label
 var minimap_panel: Control
 var minimap_marker: Panel
 
@@ -895,6 +910,12 @@ func _on_coop_guest_action(action: String, value: int) -> void:
 				coop_guest_mp = minf(coop_guest_max_mp, coop_guest_mp + 12.0)
 	elif action == "crop" and value >= 0 and value < CROP_NAMES.size():
 		coop_guest_crop_selection = value
+	elif action == "survival_use" and value in [0, 1]:
+		coop_guest_use_survival_supply(value)
+	elif action == "discard_material" and value >= 0 and value < carried_materials.size():
+		# Both explorers share a limited salvage pouch in the current co-op mode.
+		if expedition_active and carried_materials[value] > 0:
+			carried_materials[value] -= 1
 	elif action == "slot_wager":
 		coop_guest_slot_wager(value)
 	elif action == "slot_claim":
@@ -1247,6 +1268,8 @@ func coop_process_guest_interaction() -> void:
 	var host_melon_seeds: int = melon_seeds
 	var host_watermelon_seeds: int = watermelon_seeds
 	var host_carrots: int = carrots
+	var host_rations: int = survival_rations
+	var host_water: int = survival_water
 	var host_mushrooms: int = mushrooms
 	var host_crop_selection: int = crop_selection
 	var host_melons: int = melons
@@ -1257,6 +1280,8 @@ func coop_process_guest_interaction() -> void:
 	melon_seeds = coop_guest_melon_seeds
 	watermelon_seeds = coop_guest_watermelon_seeds
 	carrots = coop_guest_carrots
+	survival_rations = coop_guest_rations
+	survival_water = coop_guest_water
 	mushrooms = coop_guest_mushrooms
 	crop_selection = coop_guest_crop_selection
 	melons = coop_guest_melons
@@ -1285,6 +1310,8 @@ func coop_process_guest_interaction() -> void:
 	coop_guest_melon_seeds = melon_seeds
 	coop_guest_watermelon_seeds = watermelon_seeds
 	coop_guest_carrots = carrots
+	coop_guest_rations = survival_rations
+	coop_guest_water = survival_water
 	coop_guest_mushrooms = mushrooms
 	coop_guest_melons = melons
 	coop_guest_watermelons = watermelons
@@ -1294,6 +1321,8 @@ func coop_process_guest_interaction() -> void:
 	melon_seeds = host_melon_seeds
 	watermelon_seeds = host_watermelon_seeds
 	carrots = host_carrots
+	survival_rations = host_rations
+	survival_water = host_water
 	mushrooms = host_mushrooms
 	crop_selection = host_crop_selection
 	melons = host_melons
@@ -1394,6 +1423,8 @@ func coop_guest_tick(delta: float) -> void:
 			"guest_mushrooms": coop_guest_mushrooms, "guest_stew": coop_guest_stew_meals,
 			"guest_broth": coop_guest_broth_meals, "guest_melon_meals": coop_guest_melon_meals,
 			"guest_watermelon_meals": coop_guest_watermelon_meals, "guest_food_buff": coop_guest_food_buff_clock,
+			"guest_hunger": coop_guest_hunger, "guest_thirst": coop_guest_thirst,
+			"guest_rations": coop_guest_rations, "guest_water": coop_guest_water,
 			"guest_stash": coop_guest_stash,
 			"guest_slot_serial": coop_guest_slot_serial, "guest_slot_result": coop_guest_slot_result,
 			"farm_plots": farm_plots, "meal_displays": meal_displays, "guest_backpack": coop_guest_backpack,
@@ -1695,6 +1726,10 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 	melon_meals = int(data.get("guest_melon_meals", melon_meals))
 	watermelon_meals = int(data.get("guest_watermelon_meals", watermelon_meals))
 	food_buff_clock = float(data.get("guest_food_buff", 0.0))
+	survival_hunger = float(data.get("guest_hunger", survival_hunger))
+	survival_thirst = float(data.get("guest_thirst", survival_thirst))
+	survival_rations = int(data.get("guest_rations", survival_rations))
+	survival_water = int(data.get("guest_water", survival_water))
 	if data.has("guest_stash"):
 		stash_items.clear()
 		for item in data["guest_stash"]:
@@ -2210,6 +2245,9 @@ func build_ui() -> void:
 	hotbar_currency = make_label("所持金 0G", 18, Color("ffe6a0"))
 	hotbar_currency.position = Vector2(878, 572)
 	layer.add_child(hotbar_currency)
+	survival_status_label = make_label("", 14, Color("a6e8cd"), true)
+	survival_status_label.position = Vector2(878, 523)
+	layer.add_child(survival_status_label)
 	# Native Godot port of the supplied LUMI SLOT web minigame.
 	# Three independently stoppable reels; no browser and no real-money access.
 	slot_panel = LUMI_SLOT_SCRIPT.new()
@@ -2292,6 +2330,15 @@ func build_ui() -> void:
 	inventory_materials_label = make_label("", 13, Color("a4ebfd"), true)
 	inventory_materials_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	inv_box.add_child(inventory_materials_label)
+	var cargo_actions := HBoxContainer.new()
+	cargo_actions.add_theme_constant_override("separation", 4)
+	for kind in range(3):
+		var cargo_button := make_button("捨てる %s -1" % EXTRACTION_RULES.MATERIAL_NAMES[kind], Color("e5af7e"), Vector2(133, 27))
+		cargo_button.add_theme_font_size_override("font_size", 11)
+		cargo_button.pressed.connect(discard_material.bind(kind))
+		cargo_actions.add_child(cargo_button)
+		cargo_discard_buttons.append(cargo_button)
+	inv_box.add_child(cargo_actions)
 	inventory_status = make_label("", 13, Color("ffdf99"), true)
 	inv_box.add_child(inventory_status)
 	var close_button := make_button("バッグを閉じる [I / Esc]", Color("5ab9ed"), Vector2(414, 34))
@@ -3403,6 +3450,9 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			return
 		if coop != null and coop.is_guest():
 			# InputEvent E is handled by _input; process modal shortcuts here.
+			if inventory_open:
+				if event.keycode == KEY_B: toggle_inventory()
+				return
 			if stash_open:
 				if event.keycode == KEY_ESCAPE: toggle_stash()
 				return
@@ -3438,6 +3488,12 @@ func _unhandled_key_input(event: InputEvent) -> void:
 				toggle_upgrade_menu()
 			elif event.keycode == KEY_Q:
 				coop.send_guest_action("skill", 1)
+			elif event.keycode == KEY_B:
+				toggle_inventory()
+			elif event.keycode == KEY_Z:
+				coop.send_guest_action("survival_use", 0)
+			elif event.keycode == KEY_X:
+				coop.send_guest_action("survival_use", 1)
 			elif event.keycode == KEY_H:
 				coop.send_guest_action("eat", 0)
 			elif event.keycode == KEY_J:
@@ -3524,7 +3580,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			elif event.keycode >= KEY_5 and event.keycode <= KEY_8:
 				place_meal_display(event.keycode - KEY_5)
 			return
-		if event.keycode == KEY_I or (inventory_open and event.keycode == KEY_ESCAPE):
+		if event.keycode in [KEY_I, KEY_B] or (inventory_open and event.keycode == KEY_ESCAPE):
 			toggle_inventory()
 			return
 		if inventory_open:
@@ -3541,6 +3597,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			quickbar_equip(event.keycode - KEY_1)
 		elif event.keycode == KEY_Q:
 			activate_class_skill()
+		elif event.keycode == KEY_Z:
+			use_survival_supply(0)
+		elif event.keycode == KEY_X:
+			use_survival_supply(1)
 		elif event.keycode == KEY_H:
 			eat_meal(false)
 		elif event.keycode == KEY_J:
@@ -5154,8 +5214,10 @@ func refresh_inventory_ui() -> void:
 	defense_label.text = "防御力 %d  |  ダメージ軽減 %d%%" % [total_defense(), roundi(calculate_damage_reduction() * 100.0)]
 	var capacity: int = EXTRACTION_RULES.CARGO_CAPACITY
 	var amount: int = EXTRACTION_RULES.cargo_count(carried_materials)
-	inventory_materials_label.text = "探索素材 %d/%d（装備5枠とは別）\n%s %d  /  %s %d  /  %s %d" % [amount, capacity, EXTRACTION_RULES.MATERIAL_NAMES[0], carried_materials[0], EXTRACTION_RULES.MATERIAL_NAMES[1], carried_materials[1], EXTRACTION_RULES.MATERIAL_NAMES[2], carried_materials[2]]
+	inventory_materials_label.text = "素材ポーチ %d/%d（武器・防具バッグ5枠とは別）\n%s %d  /  %s %d  /  %s %d  | B/Iで確認" % [amount, capacity, EXTRACTION_RULES.MATERIAL_NAMES[0], carried_materials[0], EXTRACTION_RULES.MATERIAL_NAMES[1], carried_materials[1], EXTRACTION_RULES.MATERIAL_NAMES[2], carried_materials[2]]
 	inventory_materials_label.visible = expedition_active or amount > 0
+	for kind in range(cargo_discard_buttons.size()):
+		cargo_discard_buttons[kind].disabled = not expedition_active or carried_materials[kind] <= 0
 	inventory_status.text = inventory_message
 	refresh_hotbar()
 
@@ -6004,9 +6066,8 @@ func interact_expedition_site() -> bool:
 	for box_data in search_crates:
 		if bool(box_data["opened"]) or player.distance_to(box_data["pos"]) > EXTRACTION_RULES.SEARCH_RADIUS:
 			continue
-		if not EXTRACTION_RULES.can_search(carried_materials):
-			show_status("素材バッグ満杯！ 脱出して持ち帰るか、装備を探そう", Color("ffcc9c"))
-			return true
+		# A full cargo pouch blocks *materials*, not weapons, food or money.
+		# Once opened, a cache is consumed so this cannot be farmed repeatedly.
 		box_data["opened"] = true
 		var tier: int = int(box_data["tier"])
 		var is_vault: bool = bool(box_data.get("vault", false))
@@ -6015,6 +6076,14 @@ func interact_expedition_site() -> bool:
 		for item_index in range(count):
 			var kind: int = EXTRACTION_RULES.material_kind(tier, rng.randf())
 			carried_materials[kind] += 1
+		var found_rations := 0
+		var found_water := 0
+		if survival_rations < SURVIVAL_RULES.MAX_SUPPLIES and rng.randf() < SURVIVAL_RULES.cache_food_chance(tier):
+			survival_rations += 1
+			found_rations = 1
+		if survival_water < SURVIVAL_RULES.MAX_SUPPLIES and rng.randf() < SURVIVAL_RULES.cache_water_chance(tier):
+			survival_water += 1
+			found_water = 1
 		var gold_amount: int = rng.randi_range(18, 35) * (tier + 1)
 		if is_vault:
 			gold_amount += 180
@@ -6032,7 +6101,11 @@ func interact_expedition_site() -> bool:
 				gear_left_on_ground = not auto_collect_expedition_gear()
 		burst(box_data["pos"], Color("b6e6ff") if tier < 2 else Color("ffdf9f"), 25)
 		play_sound(AUDIO_PICKUP, -10.0)
-		var loot_message := "回収！素材+%d / +%dG（素材%d/%d）" % [count, gold_amount, EXTRACTION_RULES.cargo_count(carried_materials), EXTRACTION_RULES.CARGO_CAPACITY]
+		var loot_message := "物資回収：素材+%d / +%dG（素材%d/%d）" % [count, gold_amount, EXTRACTION_RULES.cargo_count(carried_materials), EXTRACTION_RULES.CARGO_CAPACITY]
+		if count == 0:
+			loot_message += " | 素材ポーチ満杯（[B]で整理）"
+		if found_rations + found_water > 0:
+			loot_message += " | 食料+%d 飲料+%d" % [found_rations, found_water]
 		if not found_gear_name.is_empty():
 			loot_message += " | バッグ満杯：装備は地面[E]で回収" if gear_left_on_ground else " | 装備もバッグに獲得！[I]で確認"
 		if is_vault:
@@ -6164,6 +6237,10 @@ func update_hud() -> void:
 	if freeze_clock > 0.0: effects += " [凍結%d秒]" % ceili(freeze_clock)
 	mp_text.text += effects
 	skill_text.text = "[Q] %s %s" % [SKILL_NAMES[class_id], ("強化" if level >= 10 else "習得済") if level >= 5 else "LV5で習得"]
+	if survival_status_label != null:
+		survival_status_label.visible = state == "playing" and expedition_active
+		survival_status_label.text = "空腹%d%% 水分%d%%\n[Z]食料%d [X]飲料%d  [B]素材" % [roundi(survival_hunger), roundi(survival_thirst), survival_rations, survival_water]
+		survival_status_label.add_theme_color_override("font_color", Color("ff9b88") if minf(survival_hunger, survival_thirst) < SURVIVAL_RULES.LOW_THRESHOLD else Color("a6e8cd"))
 	hotbar_container.visible = state == "playing" or state == "upgrade"
 	hotbar_currency.visible = state == "playing" or state == "upgrade"
 	minimap_panel.visible = state == "playing" or state == "upgrade"
