@@ -1053,9 +1053,11 @@ func coop_guest_attack() -> void:
 	var saved_heal_clock := heal_spell_clock
 	var saved_stats: Array[int] = hero_stats.duplicate()
 	var saved_buff := skill_buff_clock
+	var saved_damage_mult := damage_mult
 	player = coop_guest_pos
 	aim_angle = coop_guest_aim
 	equipped = coop_guest_equipped.duplicate(true)
+	damage_mult = 1.15 if coop_guest_job == 3 else 1.0
 	hero_stats = coop_guest_stats.duplicate()
 	max_hp = coop_guest_max_hp
 	hp = coop_guest_hp
@@ -1077,6 +1079,7 @@ func coop_guest_attack() -> void:
 	max_hp = saved_max_hp
 	hero_stats = saved_stats
 	skill_buff_clock = saved_buff
+	damage_mult = saved_damage_mult
 	heal_spell_clock = saved_heal_clock
 	coop_emit_fx("shot", coop_guest_pos + Vector2.RIGHT.rotated(coop_guest_aim) * 37.0)
 
@@ -1274,6 +1277,8 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 		refresh_cooking_ui()
 	if slot_open:
 		refresh_slot_ui()
+	if upgrade_open:
+		refresh_upgrade_panel()
 	update_hud()
 	queue_redraw()
 
@@ -2877,7 +2882,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			elif event.keycode == KEY_SPACE:
 				coop.send_guest_action("jump", 1)
 				start_jump()
-			elif event.keycode >= KEY_1 and event.keycode <= KEY_5:
+			elif event.keycode >= KEY_1 and event.keycode <= KEY_5 and not upgrade_open:
 				equip_backpack_item(event.keycode - KEY_1)
 			elif event.keycode == KEY_Q:
 				coop.send_guest_action("skill", 1)
