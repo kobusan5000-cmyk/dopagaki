@@ -1188,6 +1188,7 @@ func coop_guest_receive_hit(raw_damage: float, origin_pos: Vector2, attacker: Di
 		emit_impact_sparks(coop_guest_pos + facing * 47.0, Color("ffe6a1"), 30, 320.0)
 		emit_impact_ring(coop_guest_pos + facing * 47.0, Color("fff0a6"), 68.0, 0.34, 6.0)
 		play_sound(AUDIO_PARRY, -8.0)
+		coop_emit_fx("parry", coop_guest_pos)
 		if not attacker.is_empty() and float(attacker.get("hp", 0.0)) > 0.0:
 			attacker["stun"] = maxf(float(attacker.get("stun", 0.0)), 0.75)
 			attacker["touch"] = maxf(float(attacker.get("touch", 0.0)), 1.0)
@@ -1384,7 +1385,7 @@ func coop_guest_tick(delta: float) -> void:
 			"phase": phase, "state": state, "expedition": expedition_active, "wave": wave,
 			"enemies": enemies, "projectiles": projectiles, "orbs": hostile_orbs,
 			"drops": drops, "coins_on_ground": coin_drops, "crates": search_crates,
-			"corpses": corpses, "crop_drops": crop_drops,
+			"corpses": corpses, "crop_drops": crop_drops, "damage_numbers": damage_numbers,
 			"materials": carried_materials, "coins": coop_guest_coins, "guest_banked_gold": coop_guest_banked_gold,
 			"guest_mushrooms": coop_guest_mushrooms, "guest_stew": coop_guest_stew_meals,
 			"guest_broth": coop_guest_broth_meals, "guest_melon_meals": coop_guest_melon_meals,
@@ -1544,13 +1545,27 @@ func coop_apply_fx(data: Dictionary) -> void:
 				burst(pos, Color("ffdf9c"), 18)
 				emit_impact_ring(pos, Color("fff1bc"), 54.0, 0.30, 4.0)
 				play_sound(AUDIO_DEFEAT, -11.0)
+			"skill":
+				burst(pos, Color("b6edff"), 32)
+				emit_impact_ring(pos, Color("b6edff"), 54.0, 0.34, 4.0)
+				play_sound(AUDIO_EPIC, -19.0)
+			"parry":
+				burst(pos, Color("fff2aa"), 25)
+				emit_impact_sparks(pos, Color("ffe6a1"), 30, 300.0)
+				emit_impact_ring(pos, Color("fff0a6"), 68.0, 0.34, 5.0)
+				play_sound(AUDIO_PARRY, -8.0)
+			"revive":
+				burst(pos, Color("a9f4ca"), 30)
+				emit_impact_ring(pos, Color("a9f4ca"), 65.0, 0.40, 4.0)
+				play_sound(AUDIO_RARE, -14.0)
 	coop_last_fx_serial = latest
 
 func coop_client_tick(delta: float) -> void:
 	if not coop.is_guest():
 		return
-	# Guest skips the host simulation loop: age local visual effects here.
-	# Without this, hit/defeat particles and spark rings remain on screen forever.
+	# Guest skips the host simulation loop: advance local animation time as well.
+	# Otherwise shadow clones, idle effects and movement animations freeze.
+	elapsed += delta
 	update_particles(delta)
 	update_impact_fx(delta)
 	# Guest returns early from _process, so it must update music here.
@@ -1712,7 +1727,7 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 	extraction_clock = float(data.get("extract_clock", -1.0))
 	active_exit = int(data.get("active_exit", -1))
 	extraction_hatch_active = bool(data.get("hatch_active", false))
-	for entry in [["enemies", enemies], ["projectiles", projectiles], ["orbs", hostile_orbs], ["drops", drops], ["coins_on_ground", coin_drops], ["crates", search_crates], ["corpses", corpses], ["crop_drops", crop_drops]]:
+	for entry in [["enemies", enemies], ["projectiles", projectiles], ["orbs", hostile_orbs], ["drops", drops], ["coins_on_ground", coin_drops], ["crates", search_crates], ["corpses", corpses], ["crop_drops", crop_drops], ["damage_numbers", damage_numbers]]:
 		var destination: Array = entry[1]
 		destination.clear()
 		for item in data.get(entry[0], []):
@@ -3254,6 +3269,7 @@ func receive_enemy_hit(raw_damage: float, origin_pos: Vector2, status_name: Stri
 		emit_impact_sparks(parry_pos, Color("ffe6a1"), 39, 320.0)
 		emit_impact_ring(parry_pos, Color("fff0a6"), 68.0, 0.34, 6.0)
 		play_sound(AUDIO_PARRY, -8.0, 1.0)
+		coop_emit_fx("parry", player)
 		show_status("JUST PARRY! 完全防御  ×%d" % successful_parries, Color("fff2a6"))
 		if not attacker.is_empty() and float(attacker.get("hp", 0.0)) > 0.0:
 			var impact_direction: Vector2 = (attacker["pos"] as Vector2) - player
@@ -5332,6 +5348,7 @@ func activate_class_skill() -> void:
 			ninja_cast_visual_clock = 0.75
 			burst(player, Color("e55365"), 50)
 	show_status("スキル発動！ %s%s" % [SKILL_NAMES[class_id], "・強化版" if enhanced else ""], Color("b6edff"))
+	coop_emit_fx("skill", player)
 	play_sound(AUDIO_EPIC, -19.0)
 
 func toggle_upgrade_menu() -> void:

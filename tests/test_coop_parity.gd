@@ -33,6 +33,11 @@ func _run() -> void:
 	_check(is_equal_approx(float(scene.get("coop_guest_mp")), 12.0), "Guest skill costs MP")
 	_check(is_equal_approx(float(scene.get("hp")), host_hp), "Guest skill does not heal host")
 	_check(int(scene.get("class_id")) == host_job, "Host class unchanged by guest skill")
+	var skill_fx := false
+	for event in scene.get("coop_fx_events"):
+		if str(event.get("kind", "")) == "skill":
+			skill_fx = true
+	_check(skill_fx, "Guest skill creates synchronized FX event")
 
 	# Guard and perfect parry prevent damage only within the frontal arc.
 	scene.set("coop_guest_hp", 100.0)
@@ -43,6 +48,11 @@ func _run() -> void:
 	scene.call("coop_guest_receive_hit", 40.0, at + Vector2(60, 0), {})
 	_check(is_equal_approx(float(scene.get("coop_guest_hp")), 100.0), "Guest perfect parry blocks frontal damage")
 	_check(is_equal_approx(float(scene.get("coop_guest_guard_parry_clock")), 0.0), "Parry window consumed once")
+	var parry_fx := false
+	for event in scene.get("coop_fx_events"):
+		if str(event.get("kind", "")) == "parry":
+			parry_fx = true
+	_check(parry_fx, "Guest parry creates synchronized FX event")
 	scene.call("coop_guest_receive_hit", 40.0, at + Vector2(60, 0), {})
 	_check(float(scene.get("coop_guest_hp")) < 100.0, "Following guard takes reduced damage")
 
