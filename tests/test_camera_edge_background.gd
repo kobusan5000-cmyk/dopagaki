@@ -1,5 +1,6 @@
 extends SceneTree
 # The camera viewport must never see the unpainted clear color at map edges.
+const GAME_SCRIPT = preload("res://scripts/main.gd")
 var failures := 0
 
 func _initialize() -> void:
@@ -9,8 +10,8 @@ func _run() -> void:
 	var scene: Node2D = load("res://scenes/main.tscn").instantiate()
 	root.add_child(scene)
 	await process_frame
-	var arena: Rect2 = scene.ARENA
-	var viewport_size: Vector2 = scene.SIZE
+	var arena: Rect2 = GAME_SCRIPT.ARENA
+	var viewport_size: Vector2 = GAME_SCRIPT.SIZE
 	var painted: Rect2 = scene.call("ground_paint_bounds")
 	var camera: Camera2D = scene.get("camera")
 	_check(painted.encloses(arena), "All playable ground is inside painted area")
