@@ -183,7 +183,7 @@ func _process(delta: float) -> void:
 		zombie["attack"] = maxf(0.0, float(zombie["attack"]) - delta)
 		if distance < 44.0 and float(zombie["attack"]) <= 0.0:
 			zombie["attack"] = 1.8
-			hurt(11.0)
+			hurt(11.0, true)
 			if random.randf() < 0.24: bleeding = true
 			if random.randf() < 0.08: infection = true
 			if dead: break
@@ -475,9 +475,15 @@ func attack(shoot: bool) -> void:
 			caches.append({"position": at, "item": random.randi_range(0, ITEM_NAMES.size() - 1), "cooldown": 0.0})
 		say("感染者を倒した")
 
-func hurt(amount: float) -> void:
-	if dead: return
-	health = maxf(0.0, health - amount)
+func hurt(amount: float, combat: bool = false) -> void:
+	if dead:
+		return
+	var protection := 0.0
+	if combat:
+		for piece in armor:
+			if not piece.is_empty():
+				protection += 0.035 + 0.025 * float(piece.get("rarity", 0))
+	health = maxf(0.0, health - amount * (1.0 - minf(0.55, protection)))
 	if health <= 0.0:
 		dead = true
 		corpses.append({"position": survivor, "items": carried.duplicate(true), "equipped": equipped_weapon.duplicate(true), "weapons": weapon_inventory.duplicate(true), "armor": armor.duplicate(true)})
@@ -508,12 +514,28 @@ func new_survivor() -> void:
 func save_survivor() -> void:
 	var coords: Array = []
 	for shelter in shelters: coords.append([shelter.x, shelter.y])
+	var saved_caches: Array = []
+	for cache in caches:
+		var at: Vector2 = cache["position"]
+		var item: Dictionary = {"position": [at.x, at.y], "item": int(cache["item"]), "cooldown": float(cache["cooldown"])}
+		if cache.has("weapon"):
+			item["weapon"] = cache["weapon"]
+		if cache.has("armor"):
+			item["armor"] = cache["armor"]
+		saved_caches.append(item)
+	var saved_corpses: Array = []
+	for corpse in corpses:
+		var at: Vector2 = corpse["position"]
+		saved_corpses.append({"position": [at.x, at.y], "items": corpse.get("items", {}), "equipped": corpse.get("equipped", {}), "weapons": corpse.get("weapons", []), "armor": corpse.get("armor", [])})
 	var data := {
-		"version": 1, "position": [survivor.x, survivor.y], "health": health,
+		"version": 2, "position": [survivor.x, survivor.y], "health": health,
 		"food": food, "water": water, "warmth": warmth,
 		"bleeding": bleeding, "infection": infection, "dead": dead,
 		"carried": carried, "stored": stored, "shelters": coords,
-		"world_clock": world_clock, "survived": survived
+		"world_clock": world_clock, "survived": survived,
+		"class_id": class_id, "equipped_weapon": equipped_weapon,
+		"weapon_inventory": weapon_inventory, "stored_weapons": stored_weapons,
+		"armor": armor, "caches": saved_caches, "corpses": saved_corpses
 	}
 	var file := FileAccess.open(SAVE_FILE, FileAccess.WRITE)
 	if file != null: file.store_string(JSON.stringify(data))
@@ -543,11 +565,51 @@ func load_survivor() -> void:
 			carried[key] = clampi(int(saved_carried.get(key, carried[key])), 0, 999)
 		if saved_stored is Dictionary:
 			stored[key] = clampi(int(saved_stored.get(key, 0)), 0, 999)
+	class_id = clampi(int(data.get("class_id", 0)), 0, 6)
+	equipped_weapon = LOADOUT.clean_weapon(data.get("equipped_weapon", LOADOUT.starter()))
+	weapon_inventory = LOADOUT.clean_weapons(data.get("weapon_inventory", []), 3)
+	stored_weapons = LOADOUT.clean_weapons(data.get("stored_weapons", []), 24)
+	var saved_armor: Variant = data.get("armor", [])
+	if saved_armor is Array:
+		for i in range(mini(4, saved_armor.size())):
+			if saved_armor[i] is Dictionary and not (saved_armor[i] as Dictionary).is_empty():
+				armor[i] = {"slot": i, "rarity": clampi(int(saved_armor[i].get("rarity", 0)), 0, 4)}
 	var saved_shelters: Variant = data.get("shelters", [])
 	if saved_shelters is Array:
 		for at in saved_shelters:
 			if at is Array and at.size() == 2 and shelters.size() < 32:
 				shelters.append(Vector2(float(at[0]), float(at[1])).clamp(BOUNDS.position, BOUNDS.end))
+	var saved_caches: Variant = data.get("caches", [])
+	if saved_caches is Array:
+		for box in saved_caches:
+			if not box is Dictionary or caches.size() >= 130:
+				continue
+			var xy: Variant = box.get("position", [])
+			if not xy is Array or xy.size() != 2:
+				continue
+			var at := Vector2(float(xy[0]), float(xy[1])).clamp(BOUNDS.position, BOUNDS.end)
+			var cache: Dictionary = {"position": at, "item": clampi(int(box.get("item", 0)), 0, ITEM_NAMES.size() - 1), "cooldown": clampf(float(box.get("cooldown", 0.0)), 0.0, 270.0)}
+			if box.has("weapon"):
+				var item: Dictionary = LOADOUT.clean_weapon(box["weapon"])
+				if not item.is_empty(): cache["weapon"] = item
+			if box.has("armor") and box["armor"] is Dictionary:
+				cache["armor"] = {"slot": clampi(int(box["armor"].get("slot", 0)), 0, 3), "rarity": clampi(int(box["armor"].get("rarity", 0)), 0, 4)}
+			caches.append(cache)
+	var saved_corpses: Variant = data.get("corpses", [])
+	if saved_corpses is Array:
+		for body in saved_corpses:
+			if not body is Dictionary or corpses.size() >= 30:
+				continue
+			var xy: Variant = body.get("position", [])
+			if not xy is Array or xy.size() != 2:
+				continue
+			var items: Dictionary = {}
+			var raw_items: Variant = body.get("items", {})
+			if raw_items is Dictionary:
+				for key in ITEM_NAMES:
+					items[key] = clampi(int(raw_items.get(key, 0)), 0, 999)
+			var body_armor: Array = body.get("armor", []) if body.get("armor", []) is Array else []
+			corpses.append({"position": Vector2(float(xy[0]), float(xy[1])).clamp(BOUNDS.position, BOUNDS.end), "items": items, "equipped": LOADOUT.clean_weapon(body.get("equipped", {})), "weapons": LOADOUT.clean_weapons(body.get("weapons", []), 3), "armor": body_armor})
 
 func say(words: String) -> void:
 	if notice != null: notice.text = words
@@ -557,17 +619,22 @@ func refresh_hud() -> void:
 	if hud == null: return
 	var time_of_day := "夜" if fmod(world_clock, 840.0) > 540.0 else "昼"
 	var zone := "禁域" if survivor.x > 3650.0 else ("廃墟" if survivor.x > 1850.0 else "森")
-	hud.text = "DOPAGAKI / 生存サンドボックス  %s %s\nHP%d  空腹%d  水分%d  体温%d  生存%d分" % [zone, time_of_day, roundi(health), roundi(food), roundi(water), roundi(warmth), int(survived / 60.0)]
+	hud.text = "DOPAGAKI / %s %s | %s\nHP%d  空腹%d  水分%d  体温%d  生存%d分\n装備: %s  耐久%d%% | 予備%d/3 防具%d/4" % [zone, time_of_day, LOADOUT.CLASS_NAMES[class_id], roundi(health), roundi(food), roundi(water), roundi(warmth), int(survived / 60.0), LOADOUT.name_for(equipped_weapon), roundi(float(equipped_weapon.get("condition", 0.0))), weapon_inventory.size(), 4 - int(armor[0].is_empty()) - int(armor[1].is_empty()) - int(armor[2].is_empty()) - int(armor[3].is_empty())]
 	if bleeding: hud.text += "  [出血]"
 	if infection: hud.text += "  [感染]"
 	if raining: hud.text += "  [雨]"
-	info.text = "死亡: [R] 新しい生存者で再開" if dead else "WASD移動 Shift走る | E拾う・預ける G取り出す | Space近接 J射撃 | Bバッグ Z食料 X水 Y包帯 C工作 F拠点"
+	info.text = "死亡: [R] 新しい生存者で再開" if dead else "WASD/Shift走る/Ctrl静音 | E拾う・預ける G引出 | Space近接 J射撃 V武器 | Bバッグ Z食 X水 Y包帯 C工作 F拠点 H/U保管 I修理 1-7職"
 	bag.visible = bag_open
 	if bag_open:
 		var lines: Array[String] = ["持ち物  [B]閉じる"]
 		for key in ITEM_NAMES: lines.append("%s : %d" % [key, int(carried[key])])
-		lines.append("拠点保管庫:")
+		lines.append("装備中: %s" % LOADOUT.name_for(equipped_weapon))
+		for item in weapon_inventory:
+			lines.append("予備: %s（%d%%）" % [LOADOUT.name_for(item), roundi(float(item["condition"]))])
+		lines.append("防具: %d/4" % (4 - int(armor[0].is_empty()) - int(armor[1].is_empty()) - int(armor[2].is_empty()) - int(armor[3].is_empty())))
+		lines.append("拠点物資:")
 		for key in ITEM_NAMES: lines.append("%s : %d" % [key, int(stored.get(key, 0))])
+		lines.append("保管武器: %d" % stored_weapons.size())
 		bag.text = "\n".join(lines)
 	notice.visible = notice_clock > 0.0
 
@@ -588,14 +655,35 @@ func _draw() -> void:
 	for cache in caches:
 		if float(cache["cooldown"]) <= 0.0:
 			var at: Vector2 = cache["position"]
-			draw_rect(Rect2(at - Vector2(10, 10), Vector2(20, 20)), ITEM_COLORS[int(cache["item"])])
+			var tint := Color("f6d47d") if cache.has("weapon") else (Color("a9b8fa") if cache.has("armor") else ITEM_COLORS[int(cache["item"])])
+			draw_rect(Rect2(at - Vector2(13, 13), Vector2(26, 26)), tint)
+			if cache.has("weapon"):
+				var kind := int(cache["weapon"].get("kind", 2))
+				draw_texture_rect(WEAPON_ICONS[clampi(kind, 0, 7)], Rect2(at - Vector2(15, 15), Vector2(30, 30)), false)
+			elif cache.has("armor"):
+				draw_rect(Rect2(at - Vector2(6, 8), Vector2(12, 16)), Color("424866"), false, 3.0)
 	for corpse in corpses:
 		draw_circle(corpse["position"], 19.0, Color("ad7f83"))
 	for zombie in zombies:
-		draw_circle(zombie["position"], 22.0, Color("b95750"))
-		draw_circle(zombie["position"] + Vector2(7, -6), 5.0, Color("f1b09b"))
-	draw_texture_rect(WOLF, Rect2(survivor - Vector2(27, 27), Vector2(54, 54)), false)
+		draw_sheet_first_frame(PIERO_WALK, zombie["position"], 49.0)
+	# Use the original playable wolf and Mint's authored walk sheets.
+	draw_sheet_first_frame(MINT_WALK, mint_pos, 48.0)
+	draw_texture_rect(CHUBURA, Rect2(chubura_pos - Vector2(21, 21), Vector2(42, 42)), false)
+	draw_sheet_first_frame(WOLF_WALK, survivor, 55.0)
+	if not equipped_weapon.is_empty():
+		draw_texture_rect(WEAPON_ICONS[clampi(int(equipped_weapon.get("kind", 2)), 0, 7)], Rect2(survivor + Vector2(16, 6), Vector2(23, 23)), false)
+	# One subtle marker per nearby cache: Chubura helps locate supplies.
+	for cache in caches:
+		if float(cache["cooldown"]) <= 0.0 and chubura_pos.distance_to(cache["position"]) < 160.0:
+			draw_arc(cache["position"], 30.0, 0.0, TAU, 20, Color("ffecac", 0.72), 2.0)
+
 	if fmod(world_clock, 840.0) > 540.0:
 		draw_rect(BOUNDS, Color(0.02, 0.04, 0.11, 0.27))
 	if raining:
 		draw_rect(BOUNDS, Color(0.12, 0.18, 0.28, 0.11))
+
+# The walk animations are horizontal sprite strips. Keep the first frame visible
+# even when asset sheets use different pixel dimensions.
+func draw_sheet_first_frame(texture: Texture2D, at: Vector2, size: float) -> void:
+	var frame_width := float(mini(texture.get_width(), texture.get_height()))
+	draw_texture_rect_region(texture, Rect2(at - Vector2(size * 0.5, size * 0.5), Vector2(size, size)), Rect2(Vector2.ZERO, Vector2(frame_width, frame_width)))
