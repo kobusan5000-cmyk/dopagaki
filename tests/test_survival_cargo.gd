@@ -14,6 +14,18 @@ func _run() -> void:
 	_check(SURVIVAL.movement_factor(100.0, 100.0) == 1.0, "Healthy survivor moves normally")
 	_check(SURVIVAL.movement_factor(5.0, 100.0) < 1.0, "Hungry survivor moves more slowly")
 	_check(SURVIVAL.cache_water_chance(2) > SURVIVAL.cache_water_chance(0), "Risky caches more likely to contain water")
+	# A full pouch must preserve cache loot, never mint or destroy it.
+	var carried_trial: Array[int] = [10, 1, 0]
+	var pending_trial: Array = [2, 1, 2]
+	_check(RULES.pending_material_count(pending_trial) == 5, "Count all cache materials before collection")
+	_check(RULES.take_pending_materials(carried_trial, pending_trial) == 1, "Only one item fits the remaining slot")
+	_check(carried_trial == [10, 1, 1], "Scarce ancient crystals are collected before scrap")
+	_check(pending_trial == [2, 1, 1], "Uncollected salvage remains in its crate")
+	_check(RULES.take_pending_materials(carried_trial, pending_trial) == 0, "Full pouch does not duplicate pickups")
+	_check(RULES.pending_material_count(pending_trial) == 4, "Full pouch preserves all remaining cache contents")
+	carried_trial[0] -= 2
+	_check(RULES.take_pending_materials(carried_trial, pending_trial) == 2, "After dropping cargo, survivor can recover cache contents")
+	_check(RULES.cargo_count(carried_trial) == 12 and RULES.pending_material_count(pending_trial) == 2, "Two new salvage units are balanced between pouch and cache")
 	_check(SURVIVAL.can_use_supply(1, 30.0), "Use existing supply when thirsty")
 	_check(not SURVIVAL.can_use_supply(0, 30.0), "No free supply can be conjured")
 	var scene: Node = load("res://scenes/main.tscn").instantiate()
@@ -58,9 +70,20 @@ func _run() -> void:
 	_check(int(scene.get("coins")) > before_gold, "Full cargo still awards gold")
 	_check(RULES.cargo_count(scene.get("carried_materials")) == 12, "Cargo does not overflow")
 	_check((scene.get("backpack") as Array).size() == 5, "Equipment bag remains separate")
-	# Discarding one unit makes room for another material and cannot go negative.
+	var pending_loot: Array = cache.get("pending_materials", [])
+	var initial_left: int = RULES.pending_material_count(pending_loot)
+	_check(initial_left >= 1, "Even at full capacity the cache retains its material roll")
+	var gold_once: int = scene.get("coins")
+	opened = scene.call("interact_expedition_site")
+	_check(opened and int(scene.get("coins")) == gold_once, "Revisiting full cache never repeats one-time gold")
+	_check(RULES.pending_material_count(pending_loot) == initial_left, "Revisiting with full cargo does not delete loot")
+	# Discard one shared salvage unit and pick up one of the saved items.
 	scene.call("discard_material", 0)
 	_check(RULES.cargo_count(scene.get("carried_materials")) == 11, "Discard opens one cargo slot")
+	opened = scene.call("interact_expedition_site")
+	_check(opened and RULES.cargo_count(scene.get("carried_materials")) == 12, "The opened cache can be looted again after freeing space")
+	_check(RULES.pending_material_count(pending_loot) == initial_left - 1, "Retrieving loot removes exactly one pending unit")
+	_check(int(scene.get("coins")) == gold_once, "Pending loot retrieval never duplicates coins")
 	var empty_scrap: Array[int] = [0, 0, 0]
 	scene.set("carried_materials", empty_scrap)
 	scene.call("discard_material", 0)
