@@ -235,6 +235,8 @@ var coop_guest_name := "仲間"
 var coop_guest_aim := 0.0
 var coop_guest_dir := Vector2.ZERO
 var coop_guest_shoot := false
+# Stop remote movement and firing if input packets cease arriving.
+var coop_guest_input_timeout := 0.0
 var coop_guest_interact := false
 var coop_guest_held_interact := false
 var coop_guest_fire_clock := 0.0
@@ -657,11 +659,17 @@ func _on_coop_peer_connected(id: int) -> void:
 	coop_guest_pos = player + Vector2(62, 34)
 	coop_guest_hp = 100.0
 	coop_guest_fire_clock = 0.0
+	coop_guest_input_timeout = 0.0
+	coop_guest_dir = Vector2.ZERO
+	coop_guest_shoot = false
 	show_status("2人目が参加！ 一緒に出撃できるよ", Color("a9f4ca"))
 
 func _on_coop_peer_disconnected(_id: int) -> void:
 	coop_guest_dir = Vector2.ZERO
 	coop_guest_shoot = false
+	coop_guest_input_timeout = 0.0
+	coop_guest_interact = false
+	coop_guest_held_interact = false
 	show_status("仲間が切断した。ソロプレイに戻る", Color("ffd4a8"))
 
 func _on_coop_introduced(job: int, display_name: String) -> void:
@@ -683,7 +691,8 @@ func _on_coop_join_failed() -> void:
 func _on_coop_guest_controls(direction: Vector2, angle: float, firing: bool, interacting: bool) -> void:
 	if not coop.is_host():
 		return
-	coop_guest_dir = direction
+	coop_guest_dir = direction.limit_length(1.0)
+	coop_guest_input_timeout = 0.35
 	coop_guest_aim = angle
 	coop_guest_shoot = firing
 	if interacting and not coop_guest_held_interact:
@@ -699,6 +708,10 @@ func coop_guest_tick(delta: float) -> void:
 	if not coop.is_host() or coop.peer_id <= 1:
 		return
 	coop_guest_fire_clock = maxf(0.0, coop_guest_fire_clock - delta)
+	coop_guest_input_timeout = maxf(0.0, coop_guest_input_timeout - delta)
+	if coop_guest_input_timeout <= 0.0:
+		coop_guest_dir = Vector2.ZERO
+		coop_guest_shoot = false
 	if state == "playing" and coop_guest_hp > 0.0:
 		coop_guest_pos = (coop_guest_pos + coop_guest_dir.limit_length(1.0) * 260.0 * delta).clamp(ARENA.position + Vector2(35, 45), ARENA.end - Vector2(35, 35))
 		if expedition_active and coop_guest_shoot and coop_guest_fire_clock <= 0.0 and not is_in_safe_camp(coop_guest_pos):

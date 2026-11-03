@@ -21,11 +21,20 @@ func _run() -> void:
 	scene.call("coop_host_pressed")
 	_check(session.is_host(), "Host opens an ENet session")
 	_check(session.peer_id == 0, "No phantom second player")
+	# Simulate an authenticated second peer: without it the host tick exits early.
+	# Avoid sending snapshots to a synthetic peer during this unit-level check.
+	session.peer_id = 2
+	scene.set("coop_snapshot_clock", 999.0)
 	var before_pos: Vector2 = scene.get("coop_guest_pos")
 	scene.call("_on_coop_guest_controls", Vector2(50, 0), 0.0, true, false)
 	# Input is normally validated by transport; host never trusts oversized moves.
 	scene.call("coop_guest_tick", 0.05)
 	_check((scene.get("coop_guest_pos") as Vector2).distance_to(before_pos) < 15.0, "Remote movement bounded per tick")
+	_check(float(scene.get("coop_guest_input_timeout")) > 0.0, "Host tracks freshness of remote input")
+	scene.call("coop_guest_tick", 0.40)
+	_check(scene.get("coop_guest_dir") == Vector2.ZERO, "Stale remote movement is stopped")
+	_check(not bool(scene.get("coop_guest_shoot")), "Stale remote firing is stopped")
+	session.peer_id = 0
 	scene.call("coop_leave_pressed")
 	_check(not session.is_host(), "Closing session restores solo")
 	_check(not session.is_guest(), "Closing session disconnects guest")
