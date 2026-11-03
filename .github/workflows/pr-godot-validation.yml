@@ -207,6 +207,18 @@ jobs:
           }
           cat godot-weapon-condition.log
 
+      - name: Validate persistent DayZ-style survival world
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot="$HOME/.cache/dopagaki-godot/godot"
+          timeout 75 "$godot" --headless --path . --script res://tests/test_survival_world.gd > godot-survival-world.log 2>&1 || {
+            cat godot-survival-world.log
+            echo "::error::Survival sandbox or stash persistence regression"
+            exit 1
+          }
+          cat godot-survival-world.log
+
       - name: Test 2-process LAN host and guest
         shell: bash
         run: |
@@ -262,6 +274,7 @@ jobs:
             godot-survival-crafting.log
             godot-survival-journal.log
             godot-weapon-condition.log
+            godot-survival-world.log
             godot-coop-host.log
             godot-coop-guest.log
             godot-run.log
