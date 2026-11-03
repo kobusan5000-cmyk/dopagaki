@@ -449,6 +449,8 @@ var projectile_speed_mult := 1.0
 var equipped: Dictionary = {"type": "weapon", "kind": 0, "rarity": 0, "name": "PISTOL"}
 var backpack: Array[Dictionary] = []
 var armor_equipped: Array[Dictionary] = [{}, {}, {}, {}]
+var coop_guest_equipped: Dictionary = {"type": "weapon", "kind": 0, "rarity": 0, "name": "PISTOL"}
+var coop_guest_armor: Array[Dictionary] = [{}, {}, {}, {}]
 var inventory_open := false
 var inventory_message := ""
 var enemy_sound_cooldown := 0.0
@@ -580,6 +582,7 @@ func _ready() -> void:
 	coop.join_failed.connect(_on_coop_join_failed)
 	coop.controls_received.connect(_on_coop_guest_controls)
 	coop.interact_requested.connect(_on_coop_guest_interact)
+	coop.guest_action_received.connect(_on_coop_guest_action)
 	coop.snapshot_received.connect(_on_coop_snapshot)
 	build_coop_ui()
 	camera = Camera2D.new()
@@ -687,6 +690,8 @@ func _on_coop_peer_connected(id: int) -> void:
 	coop_guest_render_pos = coop_guest_pos
 	coop_panel_expanded = false
 	coop_guest_hp = 100.0
+	coop_guest_equipped = {"type": "weapon", "kind": 0, "rarity": 0, "name": "PISTOL"}
+	coop_guest_armor = [{}, {}, {}, {}]
 	coop_guest_backpack.clear()
 	for i in range(BAG_CAPACITY):
 		coop_guest_backpack.append({})
@@ -736,6 +741,42 @@ func _on_coop_guest_controls(direction: Vector2, angle: float, firing: bool, int
 func _on_coop_guest_interact() -> void:
 	if coop != null and coop.is_host():
 		coop_guest_interact = true
+
+func _on_coop_guest_action(action: String, value: int) -> void:
+	if not coop.is_host() or coop_guest_hp <= 0.0 or state != "playing":
+		return
+	if action == "equip" and value >= 0 and value < coop_guest_backpack.size():
+		var item: Dictionary = coop_guest_backpack[value]
+		if item.is_empty():
+			return
+		if str(item.get("type", "")) == "weapon":
+			var previous: Dictionary = coop_guest_equipped.duplicate(true)
+			coop_guest_equipped = item.duplicate(true)
+			coop_guest_backpack[value] = previous
+		elif str(item.get("type", "")) == "armor":
+			var slot := int(item.get("slot", -1))
+			if slot < 0 or slot >= coop_guest_armor.size():
+				return
+			var previous: Dictionary = coop_guest_armor[slot].duplicate(true)
+			coop_guest_armor[slot] = item.duplicate(true)
+			coop_guest_backpack[value] = previous
+	elif action == "display" and value >= 0 and value < 4:
+		var camp_i := -1
+		for i in range(CAMP_STATIONS.size()):
+			if coop_guest_pos.distance_to(CAMP_STATIONS[i]) < 140.0:
+				camp_i = i
+				break
+		if camp_i < 0:
+			return
+		var taken: Array[int] = []
+		for meal in meal_displays:
+			if int(meal["camp"]) == camp_i:
+				taken.append(int(meal["spot"]))
+		for spot in range(8):
+			if not taken.has(spot):
+				var pos: Vector2 = CAMP_STATIONS[camp_i] + Vector2(-105.0 + float(spot % 4) * 70.0, 145.0 + float(spot / 4) * 72.0)
+				meal_displays.append({"camp": camp_i, "spot": spot, "kind": value, "pos": pos})
+				break
 
 func coop_process_guest_interaction() -> void:
 	# Temporarily use the guest's position and inventory for host-authoritative
@@ -825,7 +866,8 @@ func coop_guest_tick(delta: float) -> void:
 			"enemies": enemies, "projectiles": projectiles, "orbs": hostile_orbs,
 			"drops": drops, "coins_on_ground": coin_drops, "crates": search_crates,
 			"materials": carried_materials, "coins": coins,
-			"farm_plots": farm_plots, "guest_backpack": coop_guest_backpack,
+			"farm_plots": farm_plots, "meal_displays": meal_displays, "guest_backpack": coop_guest_backpack,
+			"guest_equipped": coop_guest_equipped, "guest_armor": coop_guest_armor,
 			"guest_seeds": coop_guest_seeds, "guest_melon_seeds": coop_guest_melon_seeds,
 			"guest_watermelon_seeds": coop_guest_watermelon_seeds,
 			"guest_carrots": coop_guest_carrots, "guest_melons": coop_guest_melons,
@@ -911,6 +953,15 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 	elif farm_plots.is_empty():
 		for plot_pos in FARM_PLOTS:
 			farm_plots.append({"pos": plot_pos, "progress": -1.0, "crop": 0})
+	if data.has("meal_displays"):
+		meal_displays.clear()
+		for meal in data["meal_displays"]:
+			meal_displays.append(meal)
+	if data.has("guest_equipped"):
+		equipped = data["guest_equipped"].duplicate(true)
+	if data.has("guest_armor"):
+		for i in range(mini(armor_equipped.size(), data["guest_armor"].size())):
+			armor_equipped[i] = data["guest_armor"][i].duplicate(true)
 	if data.has("guest_backpack"):
 		backpack.clear()
 		for item in data["guest_backpack"]:
@@ -2059,6 +2110,14 @@ func add_meal_amount(kind: int, increment: int) -> void:
 		3: watermelon_meals += increment
 
 func place_meal_display(kind: int) -> void:
+	if coop != null and coop.is_guest():
+		if not cooking_open or meal_amount(kind) <= 0 or nearest_camp_index() < 0:
+			show_status("展示できる料理がありません", Color("ffc0a3"))
+			return
+		add_meal_amount(kind, -1)
+		coop.send_guest_action("display", kind)
+		refresh_cooking_ui()
+		return
 	if not cooking_open or meal_amount(kind) <= 0:
 		show_status("その料理の作り置きがありません", Color("ffc0a3"))
 		return
@@ -2449,6 +2508,14 @@ func _input(event: InputEvent) -> void:
 	if coop == null or not coop.is_guest() or state != "playing":
 		return
 	if not (event is InputEventKey) or not event.pressed or event.echo:
+		return
+	if event.keycode == KEY_I:
+		toggle_inventory()
+		get_viewport().set_input_as_handled()
+		return
+	if event.keycode == KEY_ESCAPE and inventory_open:
+		toggle_inventory()
+		get_viewport().set_input_as_handled()
 		return
 	if event.keycode != KEY_E:
 		return
@@ -4077,6 +4144,12 @@ func use_backpack_slot(index: int) -> void:
 
 func equip_backpack_item(index: int) -> void:
 	if state != "playing" or index < 0 or index >= backpack.size():
+		return
+	if coop != null and coop.is_guest():
+		if not backpack[index].is_empty():
+			coop.send_guest_action("equip", index)
+			inventory_message = "装備変更をホストに送信中"
+			refresh_inventory_ui()
 		return
 	var item: Dictionary = backpack[index]
 	if item.is_empty():
