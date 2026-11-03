@@ -159,6 +159,18 @@ jobs:
           }
           cat godot-coop-parity.log
 
+      - name: Validate DayZ-style survival and material pouch
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot="$HOME/.cache/dopagaki-godot/godot"
+          timeout 75 "$godot" --headless --path . --script res://tests/test_survival_cargo.gd > godot-survival-cargo.log 2>&1 || {
+            cat godot-survival-cargo.log
+            echo "::error::Survival and material pouch regression failed"
+            exit 1
+          }
+          cat godot-survival-cargo.log
+
       - name: Test 2-process LAN host and guest
         shell: bash
         run: |
@@ -210,6 +222,7 @@ jobs:
             godot-expedition-inventory.log
             godot-coop-session.log
             godot-coop-parity.log
+            godot-survival-cargo.log
             godot-coop-host.log
             godot-coop-guest.log
             godot-run.log

@@ -30,7 +30,7 @@ func _run() -> void:
 	scene.set("carried_materials", earned)
 	scene.call("refresh_inventory_ui")
 	_check(materials.visible, "Materials shown inside bag during exploration")
-	_check(materials.text.contains("探索素材 6/12"), "Material capacity text")
+	_check(materials.text.contains("素材ポーチ 6/12"), "Material capacity text")
 	_check(materials.text.contains("スクラップ 2"), "Scrap amount displayed")
 	_check(materials.text.contains("電力コア 3"), "Core amount displayed")
 	_check(materials.text.contains("古代結晶 1"), "Crystal amount displayed")
