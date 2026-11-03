@@ -258,6 +258,9 @@ var coop_remote_host_pos := Vector2(1208, 870)
 var coop_target_mint_pos := Vector2.ZERO
 var coop_target_rabbit_pos := Vector2.ZERO
 var coop_mint_target_initialized := false
+var coop_remote_host_moving := false
+var coop_remote_host_attacking := false
+var coop_remote_host_anim_time := 0.0
 var coop_remote_host_aim := 0.0
 var coop_remote_host_job := 0
 var coop_remote_host_name := "ホスト"
@@ -753,9 +756,16 @@ func coop_process_guest_interaction() -> void:
 	carrots = coop_guest_carrots
 	melons = coop_guest_melons
 	watermelons = coop_guest_watermelons
-	if expedition_active:
-		if not interact_expedition_site():
-			pickup_nearby()
+	# Prioritize nearby equipment before extraction sites and crates.
+	var guest_loot_nearby := false
+	for drop in drops:
+		if player.distance_to(drop["pos"]) < 92.0:
+			guest_loot_nearby = true
+			break
+	if guest_loot_nearby:
+		pickup_nearby()
+	elif expedition_active:
+		interact_expedition_site()
 	else:
 		# Restrict guest hub interactions to shared ground loot and farm plots;
 		# do not open host-only stash, shop or other local UI panels.
@@ -813,6 +823,8 @@ func coop_guest_tick(delta: float) -> void:
 		coop_snapshot_clock = 0.12
 		coop.send_snapshot({
 			"host_pos": player, "host_aim": aim_angle, "host_job": class_id, "host_name": character_name,
+			"host_moving": Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_UP) or Input.is_key_pressed(KEY_DOWN),
+			"host_attacking": Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT),
 			"guest_pos": coop_guest_pos, "guest_hp": coop_guest_hp, "guest_job": coop_guest_job,
 			"phase": phase, "state": state, "expedition": expedition_active, "wave": wave,
 			"enemies": enemies, "projectiles": projectiles, "orbs": hostile_orbs,
@@ -833,6 +845,7 @@ func coop_client_tick(delta: float) -> void:
 		return
 	refresh_coop_ui()
 	coop_remote_host_render_pos = coop_remote_host_render_pos.lerp(coop_remote_host_pos, 1.0 - exp(-delta * 16.0))
+	coop_remote_host_anim_time += delta
 	if coop_mint_target_initialized:
 		var blend := 1.0 - exp(-delta * 14.0)
 		companion = companion.lerp(coop_target_mint_pos, blend)
@@ -864,6 +877,8 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 	coop_remote_host_aim = float(data.get("host_aim", 0.0))
 	coop_remote_host_job = int(data.get("host_job", 0))
 	coop_remote_host_name = str(data.get("host_name", "ホスト"))
+	coop_remote_host_moving = bool(data.get("host_moving", false))
+	coop_remote_host_attacking = bool(data.get("host_attacking", false))
 	var incoming: Vector2 = data.get("guest_pos", player)
 	# Blend small discrepancies; correct large drift immediately.
 	player = incoming if player.distance_to(incoming) > 110.0 else player.lerp(incoming, 0.48)
@@ -934,7 +949,10 @@ func draw_coop_teammate() -> void:
 		draw_texture_rect_region(HEALER_ART, Rect2(-41, -75, 82, 82), Rect2(0, 0, 48, 48), Color("b8eeff"))
 		draw_set_transform(Vector2.ZERO)
 	else:
-		draw_character(WOLF_WALK, at, int(elapsed * 6.0) % 4, cos(look) > 0.0, 1.85, Color("a5e6ff"))
+		var animating := coop_remote_host_moving if coop.is_guest() else coop_guest_dir.length_squared() > 0.01
+		var attacking := coop_remote_host_attacking if coop.is_guest() else coop_guest_shoot
+		var frame := int(coop_remote_host_anim_time * 9.0) % 4 if animating else 0
+		draw_character(WOLF_ATTACK if attacking else WOLF_WALK, at, frame if animating or attacking else 0, cos(look) > 0.0, 1.85, Color("a5e6ff"))
 	draw_string(ui_font, at + Vector2(-37, -82), name + " (2P)" if not coop.is_guest() else name + " (1P)", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("b9efff"))
 
 func make_style(fill: Color, border: Color, radius: int = 14) -> StyleBoxFlat:
@@ -2400,6 +2418,25 @@ func start_jump() -> void:
 	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN): heading.y += 1.0
 	jump_direction = heading.normalized() if heading.length_squared() > 0.0 else Vector2.RIGHT.rotated(aim_angle)
 	burst(player, Color("a8e6ff"), 8)
+
+func _input(event: InputEvent) -> void:
+	if coop == null or not coop.is_guest() or state != "playing":
+		return
+	if not (event is InputEventKey) or not event.pressed or event.echo:
+		return
+	if event.keycode != KEY_E:
+		return
+	if slot_open:
+		toggle_slot()
+	elif cooking_open:
+		toggle_cooking()
+	elif not expedition_active and player.distance_to(SLOT_POS) < 135.0:
+		toggle_slot()
+	elif not expedition_active and nearest_camp_index() >= 0:
+		toggle_cooking()
+	else:
+		coop_guest_interact_pending = true
+	get_viewport().set_input_as_handled()
 
 func _unhandled_key_input(event: InputEvent) -> void:
 	if not (event is InputEventKey) or not event.pressed or event.echo:
