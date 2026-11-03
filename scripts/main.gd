@@ -5136,6 +5136,33 @@ func celebrate_loot(pos: Vector2, rarity: int, name: String) -> void:
 		banner_clock = 1.8
 	banner.show()
 
+# Celebrate actual acquisition, not only the moment an item appears on the ground.
+# Only items successfully placed in the backpack trigger these effects.
+func celebrate_equipment_pickup(item: Dictionary, bag_slot: int) -> void:
+	var rarity: int = clampi(int(item.get("rarity", 0)), 0, 4)
+	var glow: Color = RARITY_COLORS[rarity]
+	var item_name: String = str(item.get("name", "装備"))
+	var prompt := "[I]で装備・脱出して持ち帰ろう"
+	if rarity >= 2:
+		burst(player, glow, 12 + rarity * 10)
+		emit_impact_ring(player + Vector2(0, -22), glow, 54.0 + float(rarity) * 9.0, 0.37, 4.5)
+		emit_impact_sparks(player + Vector2(0, -23), glow, 9 + rarity * 7, 180.0 + float(rarity) * 40.0)
+		if rarity >= 3:
+			legendary_glow_clock = maxf(legendary_glow_clock, 2.7 if rarity == 4 else 1.9)
+			trigger_camera_shake(0.18, 7.0)
+			play_sound(AUDIO_LEGEND, -13.0, 1.05)
+		else:
+			play_sound(AUDIO_EPIC, -13.0, 1.14)
+	else:
+		burst(player, glow, 16 if rarity == 1 else 8)
+		play_sound(AUDIO_RARE if rarity == 1 else AUDIO_PICKUP, -17.0)
+	var prefix: String = ["装備を拾った", "★ レア拾得！", "★★ エピック拾得！", "★★★ 伝説の装備を拾った！", "★★★★ 神話級の装備を拾った！"][rarity]
+	show_status("%s [%d/5] %s ｜ %s" % [prefix, bag_slot + 1, item_name, prompt], glow)
+	if rarity >= 3:
+		banner_clock = 4.0
+	elif rarity == 2:
+		banner_clock = 3.1
+
 func free_backpack_slot() -> int:
 	for i in range(backpack.size()):
 		if backpack[i].is_empty():
@@ -5193,11 +5220,8 @@ func pickup_nearby() -> void:
 	var item: Dictionary = to_inventory_item(drops[closest])
 	backpack[empty_slot] = item
 	journal_record_rarity(int(item["rarity"]))
-	var color: Color = RARITY_COLORS[int(item["rarity"])]
-	burst(player, color, 16)
-	play_sound(AUDIO_PICKUP, -10.0)
 	drops.remove_at(closest)
-	show_status("入手 [%d/5]: %s  |  装備は[I]" % [empty_slot + 1, item["name"]], color)
+	celebrate_equipment_pickup(item, empty_slot)
 	refresh_inventory_ui()
 
 func show_status(message: String, color: Color = Color("ffe998")) -> void:
@@ -6491,9 +6515,11 @@ func auto_collect_expedition_gear() -> bool:
 	if free_slot < 0:
 		return false
 	var last_drop: Dictionary = drops[drops.size() - 1]
-	backpack[free_slot] = to_inventory_item(last_drop)
+	var acquired_item: Dictionary = to_inventory_item(last_drop)
+	backpack[free_slot] = acquired_item
 	journal_record_rarity(int(last_drop.get("rarity", 0)))
 	drops.remove_at(drops.size() - 1)
+	celebrate_equipment_pickup(acquired_item, free_slot)
 	refresh_inventory_ui()
 	return true
 
@@ -6850,6 +6876,11 @@ func draw_loot(d: Dictionary) -> void:
 		draw_rect(Rect2(center + Vector2(-68, -82), Vector2(136, 36)), Color("0e1824", 0.91))
 		draw_rect(Rect2(center + Vector2(-68, -82), Vector2(136, 36)), Color(c, 0.83), false, 2.0)
 		draw_string(ui_font, center + Vector2(-59, -60), "%s   %s" % [RARITIES[rarity], stat_string], HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color("f4e7cf"))
+	if rarity == 2:
+		# Epic gear is worth spotting even from beyond the pick-up radius.
+		var beam_alpha := 0.18 + 0.10 * (0.5 + 0.5 * sin(elapsed * 5.0 + phase_value))
+		draw_line(center + Vector2(0, -99), center + Vector2(0, -33), Color(c, beam_alpha), 9.0)
+		draw_line(center + Vector2(0, -99), center + Vector2(0, -33), Color("e8d7ff", beam_alpha * 1.35), 2.0)
 	if rarity >= 3:
 		draw_line(center + Vector2(0, -132), center + Vector2(0, -30), Color(c, 0.32), 14.0)
 		draw_line(center + Vector2(0, -132), center + Vector2(0, -30), Color(c, 0.84), 3.0)
