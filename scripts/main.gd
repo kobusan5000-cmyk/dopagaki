@@ -1034,9 +1034,14 @@ func draw_coop_teammate() -> void:
 		var frame := int(coop_remote_host_anim_time * 9.0) % 4 if animating else 0
 		draw_character(WOLF_ATTACK if attacking else WOLF_WALK, at, frame if animating or attacking else 0, cos(look) > 0.0, 1.85, Color("a5e6ff"))
 	var teammate_weapon: Dictionary = coop_remote_host_equipped if coop.is_guest() else coop_guest_equipped
-	if not teammate_weapon.is_empty():
-		var weapon_texture: Texture2D = item_icon(teammate_weapon)
-		draw_texture_rect(weapon_texture, Rect2(at + Vector2(20, -51), Vector2(34, 34)), false)
+	# Render the actual equipped blade with the same sprite, scale and orientation as the local player.
+	if str(teammate_weapon.get("type", "")) == "weapon":
+		var kind := int(teammate_weapon.get("kind", 0))
+		var rarity := clampi(int(teammate_weapon.get("rarity", 0)), 0, 4)
+		if kind == 2:
+			draw_equipped_sword(at, rarity, false, look)
+		elif kind == 3:
+			draw_equipped_greatsword(at, rarity, false, look)
 	draw_string(ui_font, at + Vector2(-37, -82), name + " (2P)" if not coop.is_guest() else name + " (1P)", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("b9efff"))
 
 func make_style(fill: Color, border: Color, radius: int = 14) -> StyleBoxFlat:
@@ -5349,18 +5354,19 @@ func draw_loot(d: Dictionary) -> void:
 			var radial: Vector2 = Vector2.RIGHT.rotated(a)
 			draw_line(center + radial * 27.0, center + radial * 36.0, c, 2.5)
 
-func draw_equipped_sword(sword_origin: Vector2, rarity: int, attacking: bool) -> void:
+func draw_equipped_sword(sword_origin: Vector2, rarity: int, attacking: bool, remote_angle: float = NAN) -> void:
 	# Sword art faces upward. Rotate it toward the mouse while keeping the grip at the hand.
 	# No colored placeholder line: the creator's exact PNG is rendered on the wolf.
+	var blade_angle: float = aim_angle if is_nan(remote_angle) else remote_angle
 	var sword_art: Texture2D = sword_art_for_rarity(rarity)
 	var attack_progress: float = clampf(1.0 - attack_clock / maxf(attack_duration, 0.01), 0.0, 1.0)
 	var swing: float = (attack_progress - 0.5) * 1.2 if attacking else 0.0
-	var sword_rotation: float = aim_angle + PI * 0.5 + swing
-	var hand_pos: Vector2 = sword_origin + Vector2.RIGHT.rotated(aim_angle) * 22.0
+	var sword_rotation: float = blade_angle + PI * 0.5 + swing
+	var hand_pos: Vector2 = sword_origin + Vector2.RIGHT.rotated(blade_angle) * 22.0
 	var sword_size: Vector2 = sword_art.get_size()
 	var sword_scale: float = 1.62 if rarity >= 3 else 1.73
 	var rarity_tint: Color = RARITY_COLORS[rarity]
-	var blade_world: Vector2 = hand_pos + Vector2.RIGHT.rotated(aim_angle) * 43.0
+	var blade_world: Vector2 = hand_pos + Vector2.RIGHT.rotated(blade_angle) * 43.0
 	if rarity >= 1:
 		draw_circle(blade_world, 23.0 + 2.0 * sin(elapsed * 5.0), Color(rarity_tint, 0.10 if rarity < 3 else 0.24))
 	if attacking:
@@ -5371,17 +5377,18 @@ func draw_equipped_sword(sword_origin: Vector2, rarity: int, attacking: bool) ->
 	draw_texture_rect(sword_art, Rect2(Vector2(-sword_size.x * 0.5, -sword_size.y + 5.0), sword_size), false)
 	draw_set_transform(Vector2.ZERO)
 
-func draw_equipped_greatsword(sword_origin: Vector2, rarity: int, attacking: bool) -> void:
+func draw_equipped_greatsword(sword_origin: Vector2, rarity: int, attacking: bool, remote_angle: float = NAN) -> void:
 	# Same pose as draw_equipped_sword with the greatsword art, a little larger.
+	var blade_angle: float = aim_angle if is_nan(remote_angle) else remote_angle
 	var sword_art: Texture2D = greatsword_art_for_rarity(rarity)
 	var attack_progress: float = clampf(1.0 - attack_clock / maxf(attack_duration, 0.01), 0.0, 1.0)
 	var swing: float = (attack_progress - 0.5) * 1.2 if attacking else 0.0
-	var sword_rotation: float = aim_angle + PI * 0.5 + swing
-	var hand_pos: Vector2 = sword_origin + Vector2.RIGHT.rotated(aim_angle) * 22.0
+	var sword_rotation: float = blade_angle + PI * 0.5 + swing
+	var hand_pos: Vector2 = sword_origin + Vector2.RIGHT.rotated(blade_angle) * 22.0
 	var sword_size: Vector2 = sword_art.get_size()
 	var sword_scale: float = 1.9
 	var rarity_tint: Color = RARITY_COLORS[rarity]
-	var blade_world: Vector2 = hand_pos + Vector2.RIGHT.rotated(aim_angle) * 52.0
+	var blade_world: Vector2 = hand_pos + Vector2.RIGHT.rotated(blade_angle) * 52.0
 	if rarity >= 1:
 		draw_circle(blade_world, 27.0 + 2.0 * sin(elapsed * 5.0), Color(rarity_tint, 0.10 if rarity < 3 else 0.24))
 	if attacking:
