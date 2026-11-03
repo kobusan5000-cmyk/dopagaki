@@ -764,20 +764,11 @@ func coop_process_guest_interaction() -> void:
 			break
 	if guest_loot_nearby:
 		pickup_nearby()
+	elif nearest_plot_index() >= 0:
+		# Farming remains available at the safe-hub plots after combat starts.
+		farm_interact()
 	elif expedition_active:
 		interact_expedition_site()
-	else:
-		# Restrict guest hub interactions to shared ground loot and farm plots;
-		# do not open host-only stash, shop or other local UI panels.
-		var closest_drop := false
-		for drop in drops:
-			if player.distance_to(drop["pos"]) < 92.0:
-				closest_drop = true
-				break
-		if closest_drop:
-			pickup_nearby()
-		elif nearest_plot_index() >= 0:
-			farm_interact()
 	coop_guest_backpack = backpack.duplicate(true)
 	coop_guest_seeds = seeds
 	coop_guest_melon_seeds = melon_seeds
@@ -843,6 +834,8 @@ func coop_guest_tick(delta: float) -> void:
 func coop_client_tick(delta: float) -> void:
 	if not coop.is_guest():
 		return
+	# Guest returns early from _process, so it must update music here.
+	update_music()
 	refresh_coop_ui()
 	coop_remote_host_render_pos = coop_remote_host_render_pos.lerp(coop_remote_host_pos, 1.0 - exp(-delta * 16.0))
 	coop_remote_host_anim_time += delta
@@ -870,11 +863,11 @@ func coop_client_tick(delta: float) -> void:
 		# The guest does not run the host simulation, so update proximity hints locally.
 		pickup_hint.text = ""
 		if not inventory_open and not cooking_open and not slot_open:
-			if player.distance_to(SLOT_POS) < 105.0 and phase == "hub":
+			if player.distance_to(SLOT_POS) < 105.0:
 				pickup_hint.text = "[E] スロット"
-			elif nearest_camp_index() >= 0 and phase == "hub":
+			elif nearest_camp_index() >= 0:
 				pickup_hint.text = "[E] 料理"
-			elif nearest_plot_index() >= 0 and phase == "hub":
+			elif nearest_plot_index() >= 0:
 				pickup_hint.text = "[E] 畑"
 			for drop in drops:
 				if player.distance_to(drop["pos"]) < 92.0:
@@ -2454,9 +2447,9 @@ func _input(event: InputEvent) -> void:
 		toggle_slot()
 	elif cooking_open:
 		toggle_cooking()
-	elif phase == "hub" and player.distance_to(SLOT_POS) < 105.0:
+	elif player.distance_to(SLOT_POS) < 105.0:
 		toggle_slot()
-	elif not expedition_active and nearest_camp_index() >= 0:
+	elif nearest_camp_index() >= 0:
 		toggle_cooking()
 	else:
 		coop_guest_interact_pending = true
