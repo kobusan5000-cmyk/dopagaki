@@ -195,6 +195,18 @@ jobs:
           }
           cat godot-survival-journal.log
 
+      - name: Validate rainbow 777 bonus animation and single payout
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot="$HOME/.cache/dopagaki-godot/godot"
+          timeout 60 "$godot" --headless --path . --script res://tests/test_slot_777_celebration.gd > godot-slot-777.log 2>&1 || {
+            cat godot-slot-777.log
+            echo "::error::LUMI rainbow BIG celebration regression failed"
+            exit 1
+          }
+          cat godot-slot-777.log
+
       - name: Validate camera edge terrain coverage
         shell: bash
         run: |
@@ -288,6 +300,7 @@ jobs:
             godot-weapon-condition.log
             godot-enemy-hitboxes.log
             godot-camera-edge.log
+            godot-slot-777.log
             godot-coop-host.log
             godot-coop-guest.log
             godot-run.log

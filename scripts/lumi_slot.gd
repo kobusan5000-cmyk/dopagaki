@@ -35,6 +35,12 @@ var balance_label: Label
 var prize_label: Label
 var info_label: Label
 var result_label: Label
+var jackpot_banner: Label
+var jackpot_sound_player: AudioStreamPlayer
+var jackpot_panel_style: StyleBoxFlat
+var jackpot_flash_clock := 0.0
+var jackpot_elapsed := 0.0
+const JACKPOT_FLASH_SECONDS := 3.8
 var big_lamp: Label
 var reg_lamp: Label
 var chance_lamp: Label
@@ -60,7 +66,13 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	var bg := _style(Color("24202c"), Color("aa8758"), 14)
 	bg.set_border_width_all(3)
+	jackpot_panel_style = bg
 	add_theme_stylebox_override("panel", bg)
+	# Locally synthesized, original four-note victory sting; no external audio asset.
+	jackpot_sound_player = AudioStreamPlayer.new()
+	jackpot_sound_player.stream = _make_jackpot_fanfare()
+	jackpot_sound_player.volume_db = -9.0
+	add_child(jackpot_sound_player)
 	var padding := MarginContainer.new()
 	padding.add_theme_constant_override("margin_left", 16)
 	padding.add_theme_constant_override("margin_right", 16)
@@ -137,6 +149,10 @@ func _ready() -> void:
 	result_label = _label("レバーONでスタート", 18, Color("ffe7b3"), true)
 	result_label.custom_minimum_size = Vector2(0, 30)
 	body.add_child(result_label)
+	jackpot_banner = _label("✦ ★ ７７７ ★ 虹色 BIG BONUS！ ★ ✦", 22, Color("fff1ab"), true)
+	jackpot_banner.custom_minimum_size = Vector2(0, 38)
+	jackpot_banner.hide()
+	body.add_child(jackpot_banner)
 	var spin_row := HBoxContainer.new()
 	spin_row.add_theme_constant_override("separation", 8)
 	spin_button = _button("レバーON", Color("e7b665"), 17)
@@ -201,6 +217,31 @@ func _lamp(value: String, tint: Color) -> Label:
 	l.add_theme_stylebox_override("normal", _style(Color("17131c"), tint.darkened(0.60), 12))
 	return l
 
+# Bright melodic fanfare for a fictional in-game 777 win. No copyrighted audio.
+func _make_jackpot_fanfare() -> AudioStreamWAV:
+	var result := AudioStreamWAV.new()
+	result.format = AudioStreamWAV.FORMAT_16_BITS
+	result.mix_rate = 22050
+	result.stereo = false
+	var notes: Array[float] = [523.25, 659.25, 783.99, 1046.5]
+	var seconds_per_note := 0.21
+	var duration := 1.06
+	var total_samples := int(float(result.mix_rate) * duration)
+	var samples := PackedByteArray()
+	samples.resize(total_samples * 2)
+	for i in range(total_samples):
+		var time := float(i) / float(result.mix_rate)
+		var note_index := mini(int(time / seconds_per_note), notes.size() - 1)
+		var within_note := fmod(time, seconds_per_note)
+		var attack := minf(1.0, within_note / 0.025)
+		var release := minf(1.0, (duration - time) / 0.24)
+		var volume := maxf(0.0, minf(attack, release))
+		var freq := notes[note_index]
+		var tone := sin(TAU * freq * time) * 0.77 + sin(TAU * freq * 2.0 * time) * 0.23
+		samples.encode_s16(i * 2, int(clampf(tone * volume * 13500.0, -32767.0, 32767.0)))
+	result.data = samples
+	return result
+
 func _light_lamps(outcome: String) -> void:
 	big_lamp.add_theme_color_override("font_color", Color("ff7474") if outcome == "BIG" else Color("61596f"))
 	reg_lamp.add_theme_color_override("font_color", Color("c4a0ff") if outcome == "REG" else Color("61596f"))
@@ -260,6 +301,10 @@ func begin_spin() -> void:
 	var free_round: bool = replay_pending
 	replay_pending = false
 	spinning = true
+	jackpot_flash_clock = 0.0
+	jackpot_elapsed = 0.0
+	jackpot_banner.hide()
+	jackpot_panel_style.border_color = Color("aa8758")
 	spin_time = 0.0
 	reel_tick = 0.0
 	auto_wait = -1.0
@@ -332,6 +377,11 @@ func _finish_spin() -> void:
 		"REPLAY": replay_count += 1
 	replay_pending = result_name == "REPLAY"
 	_light_lamps(result_name)
+	if result_name == "BIG":
+		jackpot_flash_clock = JACKPOT_FLASH_SECONDS
+		jackpot_elapsed = 0.0
+		jackpot_banner.show()
+		jackpot_sound_player.play()
 	prize_label.text = "今回の払出 %dG" % reward
 	result_label.text = "%s　+%dG" % [str(RESULT_NAMES[result_name]), reward]
 	spin_resolved.emit(result_name, reward)
@@ -357,6 +407,21 @@ func handle_slot_key(key: int) -> void:
 func _process(delta: float) -> void:
 	if not visible:
 		return
+	if jackpot_flash_clock > 0.0:
+		jackpot_flash_clock = maxf(0.0, jackpot_flash_clock - delta)
+		jackpot_elapsed += delta
+		var rainbow := Color.from_hsv(fposmod(jackpot_elapsed * 0.85, 1.0), 0.80, 1.0)
+		jackpot_panel_style.border_color = rainbow
+		jackpot_banner.add_theme_color_override("font_color", rainbow)
+		big_lamp.add_theme_color_override("font_color", rainbow)
+		for reel in reel_tiles:
+			(reel[1] as Label).add_theme_color_override("font_color", rainbow)
+		if jackpot_flash_clock <= 0.0:
+			jackpot_banner.hide()
+			jackpot_panel_style.border_color = Color("aa8758")
+			_light_lamps(result_name)
+			for i in range(3):
+				_paint_reel(i, center_symbols[i])
 	if spinning:
 		spin_time += delta
 		reel_tick -= delta
@@ -381,4 +446,9 @@ func prepare_new_game() -> void:
 	auto_play = false
 	auto_wait = -1.0
 	replay_pending = false
+	jackpot_flash_clock = 0.0
+	jackpot_elapsed = 0.0
+	jackpot_panel_style.border_color = Color("aa8758")
+	jackpot_banner.hide()
+	jackpot_sound_player.stop()
 	_update_info()
