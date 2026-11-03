@@ -450,6 +450,11 @@ var equipped: Dictionary = {"type": "weapon", "kind": 0, "rarity": 0, "name": "P
 var backpack: Array[Dictionary] = []
 var armor_equipped: Array[Dictionary] = [{}, {}, {}, {}]
 var coop_remote_host_equipped: Dictionary = {"type": "weapon", "kind": 0, "rarity": 0, "name": "PISTOL"}
+var coop_guest_jump_clock := 0.0
+var coop_guest_jump_cooldown := 0.0
+var coop_guest_guard := false
+var coop_guest_guard_parry_clock := 0.0
+var coop_guest_inventory_key_held := false
 var coop_guest_equipped: Dictionary = {"type": "weapon", "kind": 0, "rarity": 0, "name": "PISTOL"}
 var coop_guest_armor: Array[Dictionary] = [{}, {}, {}, {}]
 var inventory_open := false
@@ -691,6 +696,9 @@ func _on_coop_peer_connected(id: int) -> void:
 	coop_guest_render_pos = coop_guest_pos
 	coop_panel_expanded = false
 	coop_guest_hp = 100.0
+	coop_guest_jump_clock = 0.0
+	coop_guest_jump_cooldown = 0.0
+	coop_guest_guard = false
 	coop_guest_equipped = {"type": "weapon", "kind": 0, "rarity": 0, "name": "PISTOL"}
 	coop_guest_armor = [{}, {}, {}, {}]
 	coop_guest_backpack.clear()
@@ -746,7 +754,15 @@ func _on_coop_guest_interact() -> void:
 func _on_coop_guest_action(action: String, value: int) -> void:
 	if not coop.is_host() or coop_guest_hp <= 0.0 or state != "playing":
 		return
-	if action == "equip" and value >= 0 and value < coop_guest_backpack.size():
+	if action == "jump":
+		if coop_guest_jump_cooldown <= 0.0 and not coop_guest_guard:
+			coop_guest_jump_clock = 0.62
+			coop_guest_jump_cooldown = 1.55
+	elif action == "guard":
+		coop_guest_guard = value != 0
+		if coop_guest_guard:
+			coop_guest_guard_parry_clock = PARRY_WINDOW
+	elif action == "equip" and value >= 0 and value < coop_guest_backpack.size():
 		var item: Dictionary = coop_guest_backpack[value]
 		if item.is_empty():
 			return
@@ -833,6 +849,9 @@ func coop_guest_tick(delta: float) -> void:
 	if not coop.is_host() or coop.peer_id <= 1:
 		return
 	coop_guest_render_pos = coop_guest_render_pos.lerp(coop_guest_pos, 1.0 - exp(-delta * 16.0))
+	coop_guest_jump_clock = maxf(0.0, coop_guest_jump_clock - delta)
+	coop_guest_jump_cooldown = maxf(0.0, coop_guest_jump_cooldown - delta)
+	coop_guest_guard_parry_clock = maxf(0.0, coop_guest_guard_parry_clock - delta)
 	coop_guest_fire_clock = maxf(0.0, coop_guest_fire_clock - delta)
 	coop_guest_input_timeout = maxf(0.0, coop_guest_input_timeout - delta)
 	if coop_guest_input_timeout <= 0.0:
@@ -870,6 +889,7 @@ func coop_guest_tick(delta: float) -> void:
 			"materials": carried_materials, "coins": coins,
 			"farm_plots": farm_plots, "meal_displays": meal_displays, "guest_backpack": coop_guest_backpack,
 			"guest_equipped": coop_guest_equipped, "guest_armor": coop_guest_armor,
+			"guest_jump": coop_guest_jump_clock, "guest_guard": coop_guest_guard,
 			"guest_seeds": coop_guest_seeds, "guest_melon_seeds": coop_guest_melon_seeds,
 			"guest_watermelon_seeds": coop_guest_watermelon_seeds,
 			"guest_carrots": coop_guest_carrots, "guest_melons": coop_guest_melons,
@@ -888,6 +908,11 @@ func coop_client_tick(delta: float) -> void:
 		banner_clock = maxf(0.0, banner_clock - delta)
 		banner.visible = banner_clock > 0.0
 	refresh_coop_ui()
+	# Poll I directly: UI controls may consume keyboard events before _input handlers.
+	var inventory_key := Input.is_key_pressed(KEY_I)
+	if inventory_key and not coop_guest_inventory_key_held and state == "playing":
+		toggle_inventory()
+	coop_guest_inventory_key_held = inventory_key
 	coop_remote_host_render_pos = coop_remote_host_render_pos.lerp(coop_remote_host_pos, 1.0 - exp(-delta * 16.0))
 	coop_remote_host_anim_time += delta
 	if coop_mint_target_initialized:
@@ -941,6 +966,8 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 	# Blend small discrepancies; correct large drift immediately.
 	player = incoming if player.distance_to(incoming) > 110.0 else player.lerp(incoming, 0.48)
 	coop_guest_hp = float(data.get("guest_hp", 100.0))
+	jump_clock = float(data.get("guest_jump", 0.0))
+	guard_active = bool(data.get("guest_guard", false))
 	hp = coop_guest_hp
 	phase = str(data.get("phase", "hub"))
 	# Apply the authoritative phase immediately, even while a modal UI is open.
@@ -1018,6 +1045,8 @@ func draw_coop_teammate() -> void:
 	if coop == null or (not coop.is_guest() and (not coop.is_host() or coop.peer_id <= 1)):
 		return
 	var at: Vector2 = coop_remote_host_render_pos if coop.is_guest() else coop_guest_render_pos
+	if not coop.is_guest() and coop_guest_jump_clock > 0.18:
+		at += Vector2(0, -sin((0.62 - coop_guest_jump_clock) / 0.62 * PI) * 35.0)
 	var job: int = coop_remote_host_job if coop.is_guest() else coop_guest_job
 	var look: float = coop_remote_host_aim if coop.is_guest() else coop_guest_aim
 	var name: String = coop_remote_host_name if coop.is_guest() else coop_guest_name
@@ -2519,10 +2548,19 @@ func start_jump() -> void:
 func _input(event: InputEvent) -> void:
 	if coop == null or not coop.is_guest() or state != "playing":
 		return
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT:
+		coop.send_guest_action("guard", 1 if event.pressed else 0)
+		guard_active = event.pressed
+		return
 	if not (event is InputEventKey) or not event.pressed or event.echo:
 		return
+	if event.keycode == KEY_SPACE:
+		coop.send_guest_action("jump", 1)
+		start_jump()
+		get_viewport().set_input_as_handled()
+		return
 	if event.keycode == KEY_I:
-		toggle_inventory()
+		# Inventory is toggled by guest input polling to avoid double toggles.
 		get_viewport().set_input_as_handled()
 		return
 	if event.keycode == KEY_ESCAPE and inventory_open:
@@ -2586,7 +2624,12 @@ func _unhandled_key_input(event: InputEvent) -> void:
 				crop_selection = (crop_selection + 1) % CROP_NAMES.size()
 				show_status("作物: %s" % CROP_NAMES[crop_selection])
 			elif event.keycode == KEY_I:
-				toggle_inventory()
+				pass # Handled in coop_client_tick.
+			elif event.keycode == KEY_SPACE:
+				coop.send_guest_action("jump", 1)
+				start_jump()
+			elif event.keycode >= KEY_1 and event.keycode <= KEY_5:
+				equip_backpack_item(event.keycode - KEY_1)
 			elif event.keycode == KEY_G:
 				show_status("出撃はホストが開始するよ", Color("c3eeff"))
 			return
