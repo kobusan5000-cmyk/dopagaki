@@ -238,6 +238,17 @@ var coop_guest_seeds := 8
 var coop_guest_melon_seeds := 0
 var coop_guest_watermelon_seeds := 0
 var coop_guest_carrots := 2
+var coop_guest_mushrooms := 1
+var coop_guest_coins := 0
+var coop_guest_banked_gold := 0
+var coop_guest_stew_meals := 0
+var coop_guest_broth_meals := 0
+var coop_guest_melon_meals := 0
+var coop_guest_watermelon_meals := 0
+var coop_guest_food_buff_clock := 0.0
+var coop_guest_crop_selection := 0
+var coop_guest_stash: Array[Dictionary] = []
+const COOP_GUEST_STORAGE_SAVE := "user://coop_guest_storage.json"
 var coop_guest_melons := 0
 var coop_guest_watermelons := 0
 var coop_guest_max_hp := 100.0
@@ -737,6 +748,21 @@ func _on_coop_peer_connected(id: int) -> void:
 	coop_guest_guard = false
 	coop_guest_equipped = {"type": "weapon", "kind": 0, "rarity": 0, "name": "PISTOL"}
 	coop_guest_armor = [{}, {}, {}, {}]
+	coop_guest_coins = 0
+	coop_guest_carrots = 2
+	coop_guest_mushrooms = 1
+	coop_guest_melon_seeds = 0
+	coop_guest_watermelon_seeds = 0
+	coop_guest_seeds = 8
+	coop_guest_melons = 0
+	coop_guest_watermelons = 0
+	coop_guest_stew_meals = 0
+	coop_guest_broth_meals = 0
+	coop_guest_melon_meals = 0
+	coop_guest_watermelon_meals = 0
+	coop_guest_crop_selection = 0
+	coop_guest_food_buff_clock = 0.0
+	coop_guest_load_storage()
 	coop_guest_backpack.clear()
 	for i in range(BAG_CAPACITY):
 		coop_guest_backpack.append({})
@@ -828,6 +854,16 @@ func _on_coop_guest_action(action: String, value: int) -> void:
 			elif value == 3:
 				coop_guest_max_mp += 10.0
 				coop_guest_mp = minf(coop_guest_max_mp, coop_guest_mp + 12.0)
+	elif action == "crop" and value >= 0 and value < CROP_NAMES.size():
+		coop_guest_crop_selection = value
+	elif action == "cook" and value >= 0 and value < 4:
+		coop_guest_cook(value)
+	elif action == "buy" and value >= 0 and value < 8:
+		coop_guest_buy(value)
+	elif action == "eat" and value >= 0 and value < 4:
+		coop_guest_eat(value)
+	elif action in ["stash_deposit", "stash_withdraw", "stash_equip", "stash_gold", "drop", "unequip"]:
+		coop_guest_inventory_action(action, value)
 	elif action == "sortie" and phase == "hub" and not expedition_active:
 		start_sortie()
 	elif action == "display" and value >= 0 and value < 4:
@@ -838,6 +874,9 @@ func _on_coop_guest_action(action: String, value: int) -> void:
 				break
 		if camp_i < 0:
 			return
+		var available := [coop_guest_stew_meals, coop_guest_broth_meals, coop_guest_melon_meals, coop_guest_watermelon_meals]
+		if available[value] <= 0:
+			return
 		var taken: Array[int] = []
 		for meal in meal_displays:
 			if int(meal["camp"]) == camp_i:
@@ -846,9 +885,161 @@ func _on_coop_guest_action(action: String, value: int) -> void:
 			if not taken.has(spot):
 				var pos: Vector2 = CAMP_STATIONS[camp_i] + Vector2(-105.0 + float(spot % 4) * 70.0, 145.0 + float(spot / 4) * 72.0)
 				meal_displays.append({"camp": camp_i, "spot": spot, "kind": value, "pos": pos})
+				match value:
+					0: coop_guest_stew_meals -= 1
+					1: coop_guest_broth_meals -= 1
+					2: coop_guest_melon_meals -= 1
+					3: coop_guest_watermelon_meals -= 1
 				break
 
 # Both remote and local actors follow the same 20-second rescue rule.
+# Host-side guest hub actions: bounded, distance-validated, with separate
+# balances and inventory; a guest never mutates the host's save directly.
+func coop_guest_load_storage() -> void:
+	coop_guest_stash.clear()
+	coop_guest_banked_gold = 0
+	if not FileAccess.file_exists(COOP_GUEST_STORAGE_SAVE):
+		return
+	var decoded: Variant = JSON.parse_string(FileAccess.get_file_as_string(COOP_GUEST_STORAGE_SAVE))
+	if typeof(decoded) != TYPE_DICTIONARY:
+		return
+	coop_guest_banked_gold = maxi(0, int(decoded.get("bank", 0)))
+	for item in decoded.get("stash", []):
+		if typeof(item) == TYPE_DICTIONARY and str(item.get("type", "")) in ["weapon", "armor"] and coop_guest_stash.size() < STASH_MAX:
+			coop_guest_stash.append(item.duplicate(true))
+
+func coop_guest_save_storage() -> bool:
+	var file := FileAccess.open(COOP_GUEST_STORAGE_SAVE, FileAccess.WRITE)
+	if file == null:
+		show_status("ゲスト倉庫を保存できませんでした", Color("ffabab"))
+		return false
+	file.store_string(JSON.stringify({"bank": coop_guest_banked_gold, "stash": coop_guest_stash}))
+	file.close()
+	return true
+
+func coop_guest_inventory_action(action: String, index: int) -> void:
+	if action == "drop":
+		if index < 0 or index >= coop_guest_backpack.size() or coop_guest_backpack[index].is_empty():
+			return
+		var item: Dictionary = coop_guest_backpack[index].duplicate(true)
+		item["pos"] = coop_guest_pos + Vector2(47, -8)
+		item["life"] = 35.0
+		item["phase"] = 0.0
+		drops.append(item)
+		coop_guest_backpack[index] = {}
+		return
+	if action == "unequip":
+		if index < 0 or index >= coop_guest_armor.size() or coop_guest_armor[index].is_empty():
+			return
+		for bag_i in range(coop_guest_backpack.size()):
+			if coop_guest_backpack[bag_i].is_empty():
+				coop_guest_backpack[bag_i] = coop_guest_armor[index].duplicate(true)
+				coop_guest_armor[index] = {}
+				return
+		return
+	if phase != "hub" or expedition_active or coop_guest_pos.distance_to(STASH_POS) > 106.0:
+		return
+	var old_stash: Array[Dictionary] = coop_guest_stash.duplicate(true)
+	var old_bag: Array[Dictionary] = coop_guest_backpack.duplicate(true)
+	var old_equipped: Dictionary = coop_guest_equipped.duplicate(true)
+	var old_bank := coop_guest_banked_gold
+	var old_coins := coop_guest_coins
+	if action == "stash_deposit" and index >= 0 and index < coop_guest_backpack.size() and not coop_guest_backpack[index].is_empty() and coop_guest_stash.size() < STASH_MAX:
+		coop_guest_stash.append(coop_guest_backpack[index].duplicate(true))
+		coop_guest_backpack[index] = {}
+	elif action == "stash_equip" and coop_guest_stash.size() < STASH_MAX:
+		coop_guest_stash.append(coop_guest_equipped.duplicate(true))
+		coop_guest_equipped = {"type": "weapon", "kind": CLASS_WEAPONS[coop_guest_job], "rarity": 0, "name": WEAPONS[CLASS_WEAPONS[coop_guest_job]]}
+	elif action == "stash_withdraw" and index >= 0 and index < coop_guest_stash.size():
+		for bag_i in range(coop_guest_backpack.size()):
+			if coop_guest_backpack[bag_i].is_empty():
+				coop_guest_backpack[bag_i] = coop_guest_stash[index].duplicate(true)
+				coop_guest_stash.remove_at(index)
+				break
+	elif action == "stash_gold" and coop_guest_banked_gold > 0:
+		var taken := mini(100, coop_guest_banked_gold)
+		coop_guest_banked_gold -= taken
+		coop_guest_coins += taken
+	else:
+		return
+	if not coop_guest_save_storage():
+		coop_guest_stash = old_stash
+		coop_guest_backpack = old_bag
+		coop_guest_equipped = old_equipped
+		coop_guest_banked_gold = old_bank
+		coop_guest_coins = old_coins
+
+func coop_guest_buy(index: int) -> void:
+	if phase != "hub" or coop_guest_pos.distance_to(MERCHANT_POS) > 108.0:
+		return
+	var costs := [50, 55, 135, 55, 12, 42, 75, 18]
+	if index < 0 or index >= costs.size() or coop_guest_coins < costs[index]:
+		return
+	if index < 4 and coop_guest_backpack.all(func(item): return not (item as Dictionary).is_empty()):
+		return
+	coop_guest_coins -= costs[index]
+	match index:
+		0: spawn_drop(MERCHANT_POS + Vector2(110, 25), 1, 2, 0)
+		1: spawn_drop(MERCHANT_POS + Vector2(110, 25), 1, 1, 1)
+		2: spawn_drop(MERCHANT_POS + Vector2(110, 25), 2, 5, 3)
+		3: spawn_armor_drop(MERCHANT_POS + Vector2(110, 25), 1, 1)
+		4: coop_guest_seeds += 3
+		5: coop_guest_melon_seeds += 2
+		6: coop_guest_watermelon_seeds += 2
+		7: coop_guest_mushrooms += 2
+
+func coop_guest_cook(index: int) -> void:
+	var near_camp := false
+	for camp_pos in CAMP_STATIONS:
+		if coop_guest_pos.distance_to(camp_pos) < 115.0:
+			near_camp = true
+			break
+	if not near_camp:
+		return
+	match index:
+		0:
+			if coop_guest_carrots < 2: return
+			coop_guest_carrots -= 2
+			coop_guest_stew_meals += 1
+		1:
+			if coop_guest_carrots < 1 or coop_guest_mushrooms < 1: return
+			coop_guest_carrots -= 1
+			coop_guest_mushrooms -= 1
+			coop_guest_broth_meals += 1
+		2:
+			if coop_guest_melons < 1: return
+			coop_guest_melons -= 1
+			coop_guest_melon_meals += 1
+		3:
+			if coop_guest_watermelons < 1: return
+			coop_guest_watermelons -= 1
+			coop_guest_watermelon_meals += 1
+	burst(coop_guest_pos, Color("ffc782"), 16)
+	play_sound(AUDIO_RARE, -16.0)
+
+func coop_guest_eat(index: int) -> void:
+	match index:
+		0:
+			if coop_guest_stew_meals < 1: return
+			coop_guest_stew_meals -= 1
+			coop_guest_hp = minf(coop_guest_max_hp, coop_guest_hp + 40.0)
+		1:
+			if coop_guest_broth_meals < 1: return
+			coop_guest_broth_meals -= 1
+			coop_guest_hp = minf(coop_guest_max_hp, coop_guest_hp + 25.0)
+			coop_guest_food_buff_clock = 30.0
+		2:
+			if coop_guest_melon_meals < 1: return
+			coop_guest_melon_meals -= 1
+			coop_guest_hp = minf(coop_guest_max_hp, coop_guest_hp + 30.0)
+			coop_guest_mp = minf(coop_guest_max_mp, coop_guest_mp + 25.0)
+		3:
+			if coop_guest_watermelon_meals < 1: return
+			coop_guest_watermelon_meals -= 1
+			coop_guest_hp = minf(coop_guest_max_hp, coop_guest_hp + 60.0)
+	burst(coop_guest_pos, Color("b7ffaf"), 20)
+	play_sound(AUDIO_PICKUP, -12.0)
+
 func coop_revive_host() -> void:
 	if coop_host_downed_clock <= 0.0 or coop_host_jailed:
 		return
@@ -910,6 +1101,8 @@ func coop_process_guest_interaction() -> void:
 	var host_melon_seeds: int = melon_seeds
 	var host_watermelon_seeds: int = watermelon_seeds
 	var host_carrots: int = carrots
+	var host_mushrooms: int = mushrooms
+	var host_crop_selection: int = crop_selection
 	var host_melons: int = melons
 	var host_watermelons: int = watermelons
 	player = coop_guest_pos
@@ -918,6 +1111,8 @@ func coop_process_guest_interaction() -> void:
 	melon_seeds = coop_guest_melon_seeds
 	watermelon_seeds = coop_guest_watermelon_seeds
 	carrots = coop_guest_carrots
+	mushrooms = coop_guest_mushrooms
+	crop_selection = coop_guest_crop_selection
 	melons = coop_guest_melons
 	watermelons = coop_guest_watermelons
 	# Prioritize nearby equipment before extraction sites and crates.
@@ -938,6 +1133,7 @@ func coop_process_guest_interaction() -> void:
 	coop_guest_melon_seeds = melon_seeds
 	coop_guest_watermelon_seeds = watermelon_seeds
 	coop_guest_carrots = carrots
+	coop_guest_mushrooms = mushrooms
 	coop_guest_melons = melons
 	coop_guest_watermelons = watermelons
 	player = host_pos
@@ -946,6 +1142,8 @@ func coop_process_guest_interaction() -> void:
 	melon_seeds = host_melon_seeds
 	watermelon_seeds = host_watermelon_seeds
 	carrots = host_carrots
+	mushrooms = host_mushrooms
+	crop_selection = host_crop_selection
 	melons = host_melons
 	watermelons = host_watermelons
 	refresh_inventory_ui()
@@ -961,6 +1159,7 @@ func coop_guest_tick(delta: float) -> void:
 	coop_guest_fire_clock = maxf(0.0, coop_guest_fire_clock - delta)
 	coop_guest_mp = minf(coop_guest_max_mp, coop_guest_mp + (1.6 + float(coop_guest_stats[3]) * 0.3) * delta)
 	coop_guest_skill_buff_clock = maxf(0.0, coop_guest_skill_buff_clock - delta)
+	coop_guest_food_buff_clock = maxf(0.0, coop_guest_food_buff_clock - delta)
 	coop_guest_skill_guard_clock = maxf(0.0, coop_guest_skill_guard_clock - delta)
 	coop_guest_heal_spell_clock = maxf(0.0, coop_guest_heal_spell_clock - delta)
 	coop_guest_shadow_clone_clock = maxf(0.0, coop_guest_shadow_clone_clock - delta)
@@ -976,11 +1175,17 @@ func coop_guest_tick(delta: float) -> void:
 		coop_guest_dir = Vector2.ZERO
 		coop_guest_shoot = false
 	if state == "playing" and coop_guest_hp > 0.0 and not coop_guest_jailed:
-		coop_guest_pos = (coop_guest_pos + coop_guest_dir.limit_length(1.0) * 260.0 * delta + (coop_guest_jump_dir * 270.0 * delta if coop_guest_jump_clock > 0.0 else Vector2.ZERO)).clamp(ARENA.position + Vector2(35, 45), ARENA.end - Vector2(35, 35))
+		var guest_base_speed := 297.0 if coop_guest_job == 1 else (245.0 if coop_guest_job == 2 else (235.0 if coop_guest_job == 4 else (309.0 if coop_guest_job == 6 else 262.0)))
+		var guest_speed := guest_base_speed * (0.64 if coop_guest_guard else 1.0) * (1.0 + float(coop_guest_stats[1]) * 0.04) * (1.25 if coop_guest_food_buff_clock > 0.0 else 1.0) * (1.3 if coop_guest_skill_buff_clock > 0.0 else 1.0)
+		coop_guest_pos = (coop_guest_pos + coop_guest_dir.limit_length(1.0) * guest_speed * delta + (coop_guest_jump_dir * 270.0 * delta if coop_guest_jump_clock > 0.0 else Vector2.ZERO)).clamp(ARENA.position + Vector2(35, 45), ARENA.end - Vector2(35, 35))
 		# Coins are auto-collected for either player, not only the host.
 		for coin_i in range(coin_drops.size() - 1, -1, -1):
 			if coop_guest_pos.distance_to(coin_drops[coin_i]["pos"]) < 44.0:
+				var host_money := coins
+				coins = coop_guest_coins
 				collect_coin(coin_i)
+				coop_guest_coins = coins
+				coins = host_money
 		if expedition_active and coop_guest_shoot and coop_guest_fire_clock <= 0.0 and not is_in_safe_camp(coop_guest_pos):
 			coop_guest_attack()
 	if coop_host_downed_clock > 0.0:
@@ -1027,7 +1232,11 @@ func coop_guest_tick(delta: float) -> void:
 			"phase": phase, "state": state, "expedition": expedition_active, "wave": wave,
 			"enemies": enemies, "projectiles": projectiles, "orbs": hostile_orbs,
 			"drops": drops, "coins_on_ground": coin_drops, "crates": search_crates,
-			"materials": carried_materials, "coins": coins,
+			"materials": carried_materials, "coins": coop_guest_coins, "guest_banked_gold": coop_guest_banked_gold,
+			"guest_mushrooms": coop_guest_mushrooms, "guest_stew": coop_guest_stew_meals,
+			"guest_broth": coop_guest_broth_meals, "guest_melon_meals": coop_guest_melon_meals,
+			"guest_watermelon_meals": coop_guest_watermelon_meals, "guest_food_buff": coop_guest_food_buff_clock,
+			"guest_stash": coop_guest_stash,
 			"farm_plots": farm_plots, "meal_displays": meal_displays, "guest_backpack": coop_guest_backpack,
 			"guest_equipped": coop_guest_equipped, "guest_armor": coop_guest_armor,
 			"guest_jump": coop_guest_jump_clock, "guest_guard": coop_guest_guard,
@@ -1283,6 +1492,17 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 	expedition_active = bool(data.get("expedition", false))
 	wave = int(data.get("wave", 0))
 	coins = int(data.get("coins", 0))
+	banked_gold = int(data.get("guest_banked_gold", banked_gold))
+	mushrooms = int(data.get("guest_mushrooms", mushrooms))
+	stew_meals = int(data.get("guest_stew", stew_meals))
+	broth_meals = int(data.get("guest_broth", broth_meals))
+	melon_meals = int(data.get("guest_melon_meals", melon_meals))
+	watermelon_meals = int(data.get("guest_watermelon_meals", watermelon_meals))
+	food_buff_clock = float(data.get("guest_food_buff", 0.0))
+	if data.has("guest_stash"):
+		stash_items.clear()
+		for item in data["guest_stash"]:
+			stash_items.append(item)
 	if data.has("farm_plots") and (data["farm_plots"] as Array).size() > 0:
 		farm_plots.clear()
 		for plot in data["farm_plots"]:
@@ -1343,6 +1563,10 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 		refresh_hotbar()
 	if cooking_open:
 		refresh_cooking_ui()
+	if merchant_open:
+		refresh_merchant_ui()
+	if stash_open:
+		refresh_stash_ui()
 	if slot_open:
 		refresh_slot_ui()
 	if upgrade_open:
@@ -2476,12 +2700,8 @@ func add_meal_amount(kind: int, increment: int) -> void:
 
 func place_meal_display(kind: int) -> void:
 	if coop != null and coop.is_guest():
-		if not cooking_open or meal_amount(kind) <= 0 or nearest_camp_index() < 0:
-			show_status("展示できる料理がありません", Color("ffc0a3"))
-			return
-		add_meal_amount(kind, -1)
-		coop.send_guest_action("display", kind)
-		refresh_cooking_ui()
+		if cooking_open and meal_amount(kind) > 0 and nearest_camp_index() >= 0:
+			coop.send_guest_action("display", kind)
 		return
 	if not cooking_open or meal_amount(kind) <= 0:
 		show_status("その料理の作り置きがありません", Color("ffc0a3"))
