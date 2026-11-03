@@ -62,6 +62,9 @@ const ALL_IN_RULES = preload("res://scripts/all_in_rules.gd")
 const EXTRACTION_RULES = preload("res://scripts/extraction_rules.gd")
 const SURVIVAL_RULES = preload("res://scripts/survival_rules.gd")
 const CRAFT_RULES = preload("res://scripts/crafting_rules.gd")
+const JOURNAL_RULES = preload("res://scripts/survival_journal_rules.gd")
+const JOURNAL_HOST_SAVE := "user://dopagaki_survival_journal_v1.json"
+const JOURNAL_GUEST_SAVE := "user://dopagaki_guest_journal_v1.json"
 const COOP_SESSION = preload("res://scripts/coop_session.gd")
 const MATERIALS_SAVE := "user://dopagaki_stored_materials_v025.json"
 const SLOT_POS := Vector2(865, 895)
@@ -348,6 +351,8 @@ var survival_thirst := 100.0
 var survival_rations := 2
 var survival_water := 2
 var survival_bandages := 0
+var journal_host: Dictionary = {"kills": 0, "caches": 0, "escapes": 0, "zones": [], "foes": [], "rarities": []}
+var journal_guest: Dictionary = {"kills": 0, "caches": 0, "escapes": 0, "zones": [], "foes": [], "rarities": []}
 var survival_damage_clock := 0.0
 var extraction_clock := -1.0
 var active_exit := -1
@@ -614,6 +619,9 @@ var craft_panel: PanelContainer
 var craft_info: Label
 var craft_buttons: Array[Button] = []
 var craft_open := false
+var journal_panel: PanelContainer
+var journal_info: Label
+var journal_open := false
 var minimap_panel: Control
 var minimap_marker: Panel
 
@@ -664,6 +672,7 @@ func _ready() -> void:
 	load_stash()
 	load_banked_gold()
 	load_stored_materials()
+	load_survival_journal()
 	reset_game()
 
 # The first multiplayer milestone is 2-player host-authoritative LAN co-op.
@@ -810,6 +819,7 @@ func _on_coop_peer_connected(id: int) -> void:
 	coop_guest_input_timeout = 0.0
 	coop_guest_dir = Vector2.ZERO
 	coop_guest_shoot = false
+	load_survival_journal(true)
 	show_status("2人目が参加！ 一緒に出撃できるよ", Color("a9f4ca"))
 
 func _on_coop_peer_disconnected(_id: int) -> void:
@@ -1448,6 +1458,7 @@ func coop_guest_tick(delta: float) -> void:
 			"guest_hunger": coop_guest_hunger, "guest_thirst": coop_guest_thirst,
 			"guest_rations": coop_guest_rations, "guest_water": coop_guest_water,
 			"guest_bandages": coop_guest_bandages, "banked_materials": stored_materials,
+			"guest_journal": journal_guest,
 			"guest_stash": coop_guest_stash,
 			"guest_slot_serial": coop_guest_slot_serial, "guest_slot_result": coop_guest_slot_result,
 			"farm_plots": farm_plots, "meal_displays": meal_displays, "guest_backpack": coop_guest_backpack,
@@ -1754,6 +1765,8 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 	survival_rations = int(data.get("guest_rations", survival_rations))
 	survival_water = int(data.get("guest_water", survival_water))
 	survival_bandages = int(data.get("guest_bandages", survival_bandages))
+	if data.has("guest_journal"):
+		journal_guest = JOURNAL_RULES.clean(data["guest_journal"])
 	if data.has("banked_materials"):
 		stored_materials.clear()
 		for material in data["banked_materials"]:
@@ -1838,6 +1851,8 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 		refresh_stash_ui()
 	if craft_open:
 		refresh_craft_ui()
+	if journal_open:
+		refresh_survival_journal()
 	if slot_open:
 		refresh_slot_ui()
 	if upgrade_open:
@@ -2476,6 +2491,20 @@ func build_ui() -> void:
 	craft_close.pressed.connect(toggle_craft)
 	craft_box.add_child(craft_close)
 	craft_panel.hide()
+	journal_panel = make_panel(Vector2(250, 72), Vector2(650, 492), Color("caa4ed"))
+	layer.add_child(journal_panel)
+	var journal_box := VBoxContainer.new()
+	journal_box.add_theme_constant_override("separation", 10)
+	journal_panel.get_child(0).add_child(journal_box)
+	journal_box.add_child(make_label("探索図鑑 [O]  /  生還記録と収集", 27, Color("e2c3ff"), true))
+	journal_info = make_label("", 17, Color("d7e8f2"), true)
+	journal_info.custom_minimum_size = Vector2(575, 355)
+	journal_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	journal_box.add_child(journal_info)
+	var journal_close := make_button("図鑑を閉じる [O / Esc]", Color("b5a5d8"), Vector2(550, 36))
+	journal_close.pressed.connect(toggle_survival_journal)
+	journal_box.add_child(journal_close)
+	journal_panel.hide()
 	choose_panel.hide()
 	cooking_panel.hide()
 	rabbit_menu.hide()
@@ -2656,6 +2685,8 @@ func reset_game() -> void:
 	stash_panel.hide()
 	craft_open = false
 	craft_panel.hide()
+	journal_open = false
+	journal_panel.hide()
 	upgrade_target = "hero"
 	max_mp = 30.0
 	mp = 30.0
@@ -3511,6 +3542,9 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			return
 		if coop != null and coop.is_guest():
 			# InputEvent E is handled by _input; process modal shortcuts here.
+			if journal_open:
+				if event.keycode in [KEY_O, KEY_ESCAPE]: toggle_survival_journal()
+				return
 			if craft_open:
 				if event.keycode in [KEY_N, KEY_ESCAPE]: toggle_craft()
 				elif event.keycode >= KEY_1 and event.keycode <= KEY_3: craft_recipe(event.keycode - KEY_1)
@@ -3557,6 +3591,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 				toggle_inventory()
 			elif event.keycode == KEY_N:
 				toggle_craft()
+			elif event.keycode == KEY_O:
+				toggle_survival_journal()
 			elif event.keycode == KEY_Y:
 				coop.send_guest_action("bandage", 1)
 			elif event.keycode == KEY_Z:
@@ -3578,6 +3614,9 @@ func _unhandled_key_input(event: InputEvent) -> void:
 				show_status("出撃をホストにリクエスト", Color("c3eeff"))
 			elif event.keycode == KEY_C:
 				toggle_controls()
+			return
+		if journal_open:
+			if event.keycode in [KEY_O, KEY_ESCAPE]: toggle_survival_journal()
 			return
 		if craft_open:
 			if event.keycode in [KEY_N, KEY_ESCAPE]: toggle_craft()
@@ -3662,6 +3701,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			toggle_rabbit_menu()
 		elif event.keycode == KEY_N:
 			toggle_craft()
+		elif event.keycode == KEY_O:
+			toggle_survival_journal()
 		elif event.keycode == KEY_Y:
 			use_bandage()
 		elif event.keycode == KEY_E:
@@ -4944,6 +4985,7 @@ func cleanup_defeated_enemies() -> void:
 			emit_impact_ring(death_spot, Color("ffb1f1"), 78.0 + float(all_in_chain) * 14.0, 0.30, 4.0)
 			burst(death_spot, Color("ddacff"), 10)
 		kills += 1
+		journal_record_foe(enemy)
 		combo_count += 1
 		combo_clock = 3.5
 		if combo_count >= 3 and combo_count % 3 == 0:
@@ -5125,6 +5167,7 @@ func pickup_nearby() -> void:
 		return
 	var item: Dictionary = to_inventory_item(drops[closest])
 	backpack[empty_slot] = item
+	journal_record_rarity(int(item["rarity"]))
 	var color: Color = RARITY_COLORS[int(item["rarity"])]
 	burst(player, color, 16)
 	play_sound(AUDIO_PICKUP, -10.0)
@@ -5694,6 +5737,98 @@ func coop_guest_use_bandage() -> void:
 	coop_guest_hp = minf(coop_guest_max_hp, coop_guest_hp + 45.0)
 	coop_emit_fx("revive", coop_guest_pos)
 
+# The journal is durable progression: unlike temporary levels it survives
+# expeditions and character restarts. Co-op has a separate guest slot on the
+# host machine until authenticated player profiles exist.
+func load_survival_journal(guest: bool = false) -> void:
+	var path := JOURNAL_GUEST_SAVE if guest else JOURNAL_HOST_SAVE
+	var data: Dictionary = JOURNAL_RULES.fresh()
+	if FileAccess.file_exists(path):
+		data = JOURNAL_RULES.clean(JSON.parse_string(FileAccess.get_file_as_string(path)))
+	if guest:
+		journal_guest = data
+	else:
+		journal_host = data
+
+func save_survival_journal(guest: bool = false) -> bool:
+	var path := JOURNAL_GUEST_SAVE if guest else JOURNAL_HOST_SAVE
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	if file == null:
+		show_status("探索図鑑の保存に失敗。空き容量・権限を確認", Color("ffabab"))
+		return false
+	file.store_string(JSON.stringify(journal_guest if guest else journal_host))
+	file.close()
+	return true
+
+func journal_check_zones() -> void:
+	var zone := EXTRACTION_RULES.zone_for_position(player)
+	if not is_in_safe_camp(player) and JOURNAL_RULES.add_zone(journal_host, zone):
+		save_survival_journal()
+	if coop != null and coop.is_host() and coop.peer_id > 1 and coop_guest_hp > 0.0:
+		var guest_zone := EXTRACTION_RULES.zone_for_position(coop_guest_pos)
+		if not is_in_safe_camp(coop_guest_pos) and JOURNAL_RULES.add_zone(journal_guest, guest_zone):
+			save_survival_journal(true)
+
+func journal_record_foe(enemy: Dictionary) -> void:
+	var foe := "reaper" if bool(enemy.get("boss", false)) else ("brute" if bool(enemy.get("elite", false)) else str(enemy.get("kind", "grunt")))
+	JOURNAL_RULES.add_enemy(journal_host, foe)
+	save_survival_journal()
+	if coop != null and coop.is_host() and coop.peer_id > 1:
+		JOURNAL_RULES.add_enemy(journal_guest, foe)
+		save_survival_journal(true)
+
+func journal_record_cache() -> void:
+	JOURNAL_RULES.add_cache(journal_host)
+	save_survival_journal()
+	if coop != null and coop.is_host() and coop.peer_id > 1:
+		JOURNAL_RULES.add_cache(journal_guest)
+		save_survival_journal(true)
+
+func journal_record_rarity(rarity: int) -> void:
+	var old_count := (journal_host["rarities"] as Array).size()
+	JOURNAL_RULES.add_rarity(journal_host, rarity)
+	if (journal_host["rarities"] as Array).size() != old_count:
+		save_survival_journal()
+	if coop != null and coop.is_host() and coop.peer_id > 1:
+		old_count = (journal_guest["rarities"] as Array).size()
+		JOURNAL_RULES.add_rarity(journal_guest, rarity)
+		if (journal_guest["rarities"] as Array).size() != old_count:
+			save_survival_journal(true)
+
+func journal_record_escape() -> void:
+	JOURNAL_RULES.add_escape(journal_host)
+	save_survival_journal()
+	if coop != null and coop.is_host() and coop.peer_id > 1 and coop_guest_hp > 0.0 and not coop_guest_jailed:
+		JOURNAL_RULES.add_escape(journal_guest)
+		save_survival_journal(true)
+
+func toggle_survival_journal() -> void:
+	if state != "playing":
+		return
+	if not journal_open and (craft_open or inventory_open or stash_open or cooking_open or slot_open or merchant_open or upgrade_open or rabbit_menu_open or controls_open):
+		show_status("ほかのメニューを閉じてから図鑑を開いてね", Color("ffe6ac"))
+		return
+	journal_open = not journal_open
+	journal_panel.visible = journal_open
+	if journal_open:
+		refresh_survival_journal()
+
+func refresh_survival_journal() -> void:
+	if not journal_open:
+		return
+	var data: Dictionary = journal_guest if coop != null and coop.is_guest() else journal_host
+	var visited: Array[String] = []
+	for i in range(3):
+		visited.append(EXTRACTION_RULES.ZONE_NAMES[i] if (data["zones"] as Array).has(i) else "？？？")
+	var badges: Array[String] = JOURNAL_RULES.earned_badges(data)
+	var badge_text := " / ".join(badges) if not badges.is_empty() else "まだなし"
+	journal_info.text = "探索通算  討伐%d体  /  コンテナ%d個  /  生還%d回\n\n" % [int(data["kills"]), int(data["caches"]), int(data["escapes"])]
+	journal_info.text += "踏破地点  %s\n\n" % " / ".join(visited)
+	journal_info.text += "敵図鑑  %d/%d\n%s\n\n" % [(data["foes"] as Array).size(), JOURNAL_RULES.FOE_KEYS.size(), JOURNAL_RULES.missing_enemy_names(data)]
+	journal_info.text += "拾った装備のレア度  %d/%d\n%s\n\n" % [(data["rarities"] as Array).size(), JOURNAL_RULES.RARITY_NAMES.size(), JOURNAL_RULES.rarity_discovery(data)]
+	journal_info.text += "称号  %s\n" % badge_text
+	journal_info.text += "次の称号：踏破3区域 / 討伐50体 / 物資箱15個 / 生還3回"
+
 func load_stored_materials() -> void:
 	stored_materials = [0, 0, 0]
 	if not FileAccess.file_exists(MATERIALS_SAVE):
@@ -5920,6 +6055,7 @@ func extract_alive() -> void:
 			coop_guest_banked_gold = guest_old_bank
 			return
 		coop_guest_coins = 0
+	journal_record_escape()
 	return_to_safe_hub()
 	backpack = kept_backpack
 	equipped = kept_equipped
@@ -6086,7 +6222,7 @@ func return_to_safe_hub() -> void:
 func start_sortie() -> void:
 	if state != "playing" or phase != "hub" or (coop != null and coop.is_guest()):
 		return
-	if stash_open or inventory_open or cooking_open or merchant_open or slot_open or rabbit_menu_open or upgrade_open or controls_open or craft_open:
+	if stash_open or inventory_open or cooking_open or merchant_open or slot_open or rabbit_menu_open or upgrade_open or controls_open or craft_open or journal_open:
 		show_status("メニューを閉じてから出撃してね", Color("ffe6b3"))
 		return
 	# Keep the starter camp and gear equipped. Waves no longer gate exploration.
@@ -6234,6 +6370,7 @@ func update_expedition(delta: float) -> void:
 	if not expedition_active:
 		return
 	expedition_elapsed += delta
+	journal_check_zones()
 	update_survival(delta)
 	expedition_noise_clock = maxf(0.0, expedition_noise_clock - delta)
 	expedition_spawn_clock -= delta
@@ -6291,6 +6428,7 @@ func auto_collect_expedition_gear() -> bool:
 		return false
 	var last_drop: Dictionary = drops[drops.size() - 1]
 	backpack[free_slot] = to_inventory_item(last_drop)
+	journal_record_rarity(int(last_drop.get("rarity", 0)))
 	drops.remove_at(drops.size() - 1)
 	refresh_inventory_ui()
 	return true
@@ -6332,6 +6470,7 @@ func interact_expedition_site() -> bool:
 		# A full cargo pouch blocks *materials*, not weapons, food or money.
 		# Once opened, a cache is consumed so this cannot be farmed repeatedly.
 		box_data["opened"] = true
+		journal_record_cache()
 		var tier: int = int(box_data["tier"])
 		var is_vault: bool = bool(box_data.get("vault", false))
 		raise_expedition_noise(box_data["pos"], EXTRACTION_RULES.NOISE_SEARCH_RADIUS + float(tier) * 65.0, "search")
