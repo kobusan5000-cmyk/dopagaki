@@ -27,6 +27,7 @@ const WOLF_WALK: Texture2D = preload("res://assets/ookami_walk.png")
 const WOLF_ATTACK: Texture2D = preload("res://assets/ookami_attack.png")
 const PIERO_WALK: Texture2D = preload("res://assets/piero_walk.png")
 const STAR_DUO_SOURCE = preload("res://scripts/star_duo_art.gd")
+const ENEMY_HITBOX = preload("res://scripts/enemy_hitbox_rules.gd")
 # 48px frames in the order idle / walk / skill-or-dash / hit.
 const HIHI_ART: Texture2D = preload("res://assets/characters/hihi_actions.png")
 const HEALER_ART: Texture2D = preload("res://assets/characters/healer_actions.png")
@@ -4527,7 +4528,7 @@ func attack() -> void:
 		7: # Ninja: sword within reach; otherwise throw kunai.
 			var close_target := false
 			for foe in enemies:
-				if float(foe["hp"]) > 0.0 and player.distance_to(foe["pos"]) < 108.0:
+				if float(foe["hp"]) > 0.0 and ENEMY_HITBOX.close_enough_for_ninja(str(foe.get("kind", "grunt")), foe["pos"], player, 108.0):
 					close_target = true
 					break
 			if close_target:
@@ -4558,10 +4559,8 @@ func melee_hit(radius: float, half_angle: float, dmg: float, knockback: float) -
 		if neutral_diff.length() <= radius + 15.0 and (neutral_diff.length() < 2.0 or absf(wrapf(neutral_diff.angle() - aim_angle, -PI, PI)) < half_angle):
 			damage_wanderer(dmg)
 	for enemy in enemies:
-		var diff: Vector2 = enemy["pos"] - player
-		if diff.length() > radius + 16.0:
-			continue
-		if diff.length() > 1.0 and absf(wrapf(diff.angle() - aim_angle, -PI, PI)) > half_angle:
+		var kind: String = str(enemy.get("kind", "grunt"))
+		if not ENEMY_HITBOX.melee_hits(kind, enemy["pos"], player, aim_angle, radius, half_angle):
 			continue
 		if rng.randf() > hit_chance(int(equipped["kind"])):
 			burst(enemy["pos"], Color("b1c0d1"), 2)
@@ -4859,7 +4858,7 @@ func update_projectiles(delta: float) -> void:
 				var hit_ids: Array = bullet["hit_ids"]
 				if hit_ids.has(enemy["id"]):
 					continue
-				if (enemy["pos"] as Vector2).distance_to(bullet["pos"]) <= 18.0 + float(bullet["radius"]):
+				if ENEMY_HITBOX.projectile_hits(str(enemy.get("kind", "grunt")), enemy["pos"], bullet["pos"], float(bullet["radius"])):
 					var accurate: bool = rng.randf() <= float(bullet.get("accuracy", 1.0))
 					if accurate:
 						deal_enemy_damage(enemy, float(bullet["dmg"]), bullet["pos"], float(bullet.get("crit_chance", 0.05)), int(bullet.get("trait", -1)))

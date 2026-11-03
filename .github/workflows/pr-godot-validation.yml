@@ -195,6 +195,18 @@ jobs:
           }
           cat godot-survival-journal.log
 
+      - name: Validate twin enemy full-body attack hitboxes
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot="$HOME/.cache/dopagaki-godot/godot"
+          timeout 75 "$godot" --headless --path . --script res://tests/test_enemy_hitboxes.gd > godot-enemy-hitboxes.log 2>&1 || {
+            cat godot-enemy-hitboxes.log
+            echo "::error::Twin enemy melee/projectile hitboxes failed"
+            exit 1
+          }
+          cat godot-enemy-hitboxes.log
+
       - name: Validate weapon condition, repair and guest permissions
         shell: bash
         run: |
@@ -262,6 +274,7 @@ jobs:
             godot-survival-crafting.log
             godot-survival-journal.log
             godot-weapon-condition.log
+            godot-enemy-hitboxes.log
             godot-coop-host.log
             godot-coop-guest.log
             godot-run.log
