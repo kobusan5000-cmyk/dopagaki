@@ -48,7 +48,8 @@ func _run() -> void:
 	_check(int(scene.get("coop_guest_rations")) == 1, "Guest consumes personal ration")
 	_check(int(scene.get("survival_rations")) == host_supply, "Guest supplies do not consume host rations")
 	# A full salvage pouch must not prevent a cache's gold or gear rolls.
-	scene.set("carried_materials", [12, 0, 0])
+	var full_scrap: Array[int] = [12, 0, 0]
+	scene.set("carried_materials", full_scrap)
 	var cache: Dictionary = (scene.get("search_crates") as Array)[0]
 	scene.set("player", cache["pos"])
 	var before_gold: int = scene.get("coins")
@@ -60,7 +61,8 @@ func _run() -> void:
 	# Discarding one unit makes room for another material and cannot go negative.
 	scene.call("discard_material", 0)
 	_check(RULES.cargo_count(scene.get("carried_materials")) == 11, "Discard opens one cargo slot")
-	scene.set("carried_materials", [0, 0, 0])
+	var empty_scrap: Array[int] = [0, 0, 0]
+	scene.set("carried_materials", empty_scrap)
 	scene.call("discard_material", 0)
 	_check((scene.get("carried_materials") as Array)[0] == 0, "Cannot discard negative cargo")
 	# Starvation damages outside camp, but not while resting safely.
@@ -72,10 +74,15 @@ func _run() -> void:
 	scene.call("update_survival", 1.0)
 	_check(float(scene.get("hp")) < old_hp, "Starving survivor loses health outside sanctuary")
 	# Host-authoritative guest discard is bounded by cargo inventory.
+	scene.set("phase", "hub")
+	scene.set("expedition_active", false)
 	scene.call("coop_host_pressed")
 	var session: Node = scene.get("coop")
 	session.peer_id = 2
-	scene.set("carried_materials", [1, 0, 0])
+	scene.set("phase", "combat")
+	scene.set("expedition_active", true)
+	var one_scrap: Array[int] = [1, 0, 0]
+	scene.set("carried_materials", one_scrap)
 	scene.call("_on_coop_guest_action", "discard_material", 0)
 	_check((scene.get("carried_materials") as Array)[0] == 0, "Guest can discard one team cargo unit")
 	scene.call("_on_coop_guest_action", "discard_material", 0)
