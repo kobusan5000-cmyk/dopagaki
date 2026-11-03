@@ -228,6 +228,10 @@ var coop_host_button: Button
 var coop_join_button: Button
 var coop_leave_button: Button
 var coop_guest_pos := Vector2(1270, 890)
+var coop_guest_render_pos := Vector2(1270, 890)
+var coop_remote_host_render_pos := Vector2(1208, 870)
+var coop_panel_expanded := true
+var coop_toggle_button: Button
 var coop_guest_hp := 100.0
 var coop_guest_max_hp := 100.0
 var coop_guest_job := 0
@@ -609,12 +613,22 @@ func build_coop_ui() -> void:
 	coop_leave_button.pressed.connect(coop_leave_pressed)
 	buttons.add_child(coop_leave_button)
 	content.add_child(make_label("UDP 24566 / 同じWi-FiならホストのLAN IP", 12, Color("9eaccc")))
+	coop_toggle_button = make_button("通信設定", Color("9ed5f5"), Vector2(112, 36))
+	coop_toggle_button.position = Vector2(12, 140)
+	coop_toggle_button.pressed.connect(func():
+		coop_panel_expanded = not coop_panel_expanded
+		refresh_coop_ui()
+	)
+	overlay.add_child(coop_toggle_button)
 	coop_panel.hide()
 
 func refresh_coop_ui() -> void:
 	if coop_panel == null:
 		return
-	coop_panel.visible = state == "playing" and phase == "hub"
+	coop_toggle_button.visible = state == "playing" and phase == "hub"
+	coop_panel.visible = coop_toggle_button.visible and coop_panel_expanded
+	coop_toggle_button.text = "閉じる" if coop_panel_expanded else "通信設定"
+	coop_toggle_button.position = Vector2(372, 140) if coop_panel_expanded else Vector2(12, 140)
 	coop_host_button.disabled = coop.is_host() or coop.is_guest()
 	coop_join_button.disabled = coop.is_host() or coop.is_guest()
 	coop_leave_button.disabled = not (coop.is_host() or coop.is_guest())
@@ -657,6 +671,8 @@ func coop_leave_pressed() -> void:
 
 func _on_coop_peer_connected(id: int) -> void:
 	coop_guest_pos = player + Vector2(62, 34)
+	coop_guest_render_pos = coop_guest_pos
+	coop_panel_expanded = false
 	coop_guest_hp = 100.0
 	coop_guest_fire_clock = 0.0
 	coop_guest_input_timeout = 0.0
@@ -679,12 +695,14 @@ func _on_coop_introduced(job: int, display_name: String) -> void:
 
 func _on_coop_joined() -> void:
 	coop_connection_status = "接続成功"
+	coop_panel_expanded = false
 	coop.introduce_self(class_id, character_name)
 	show_status("ホストと接続！ 2人で探索しよう", Color("a7f4c4"))
 	refresh_coop_ui()
 
 func _on_coop_join_failed() -> void:
 	coop_connection_status = "接続に失敗・切断"
+	coop_panel_expanded = true
 	show_status("接続できなかった。IP / UDPポートを確認してね", Color("ffc2b1"))
 	refresh_coop_ui()
 
@@ -707,6 +725,7 @@ func coop_guest_tick(delta: float) -> void:
 	# Host validates and advances the remote actor; guest gets position corrections.
 	if not coop.is_host() or coop.peer_id <= 1:
 		return
+	coop_guest_render_pos = coop_guest_render_pos.lerp(coop_guest_pos, 1.0 - exp(-delta * 16.0))
 	coop_guest_fire_clock = maxf(0.0, coop_guest_fire_clock - delta)
 	coop_guest_input_timeout = maxf(0.0, coop_guest_input_timeout - delta)
 	if coop_guest_input_timeout <= 0.0:
@@ -747,6 +766,7 @@ func coop_client_tick(delta: float) -> void:
 	if not coop.is_guest():
 		return
 	refresh_coop_ui()
+	coop_remote_host_render_pos = coop_remote_host_render_pos.lerp(coop_remote_host_pos, 1.0 - exp(-delta * 16.0))
 	coop_guest_send_clock -= delta
 	var direction := Vector2.ZERO
 	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT): direction.x -= 1.0
@@ -804,7 +824,7 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 	choose_panel.hide()
 	hub_sortie_button.hide()
 	coop_connection_status = "接続済み"
-	coop_panel.visible = state == "playing" and phase == "hub"
+	refresh_coop_ui()
 	dead_panel.visible = state == "dead"
 	update_hud()
 	queue_redraw()
@@ -812,7 +832,7 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 func draw_coop_teammate() -> void:
 	if coop == null or (not coop.is_guest() and (not coop.is_host() or coop.peer_id <= 1)):
 		return
-	var at: Vector2 = coop_remote_host_pos if coop.is_guest() else coop_guest_pos
+	var at: Vector2 = coop_remote_host_render_pos if coop.is_guest() else coop_guest_render_pos
 	var job: int = coop_remote_host_job if coop.is_guest() else coop_guest_job
 	var look: float = coop_remote_host_aim if coop.is_guest() else coop_guest_aim
 	var name: String = coop_remote_host_name if coop.is_guest() else coop_guest_name
