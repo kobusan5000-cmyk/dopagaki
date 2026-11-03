@@ -2,6 +2,21 @@ extends Node2D
 # Survival-first world: a continuous DayZ-style sandbox, not an extraction/WAVE match.
 # This prototype deliberately leaves the original game at scenes/main.tscn intact.
 const WOLF = preload("res://assets/ookami.png")
+const WOLF_WALK = preload("res://assets/ookami_walk.png")
+const MINT_WALK = preload("res://assets/mint_companion_walk.png")
+const CHUBURA = preload("res://assets/visual_v017/bunny_portrait.png")
+const PIERO_WALK = preload("res://assets/piero_walk.png")
+const LOADOUT = preload("res://scripts/survival_loadout.gd")
+const WEAPON_ICONS = [
+	preload("res://assets/item_icons/weapon_0.png"),
+	preload("res://assets/item_icons/weapon_1.png"),
+	preload("res://assets/item_icons/weapon_2.png"),
+	preload("res://assets/item_icons/weapon_3.png"),
+	preload("res://assets/item_icons/weapon_4.png"),
+	preload("res://assets/item_icons/weapon_5.png"),
+	preload("res://assets/item_icons/weapon_6.png"),
+	preload("res://assets/item_icons/weapon_7.png")
+]
 const SAVE_FILE := "user://dopagaki_world_v1.json"
 const BOUNDS := Rect2(0, 0, 5400, 3300)
 const ITEM_NAMES := ["食料", "飲料水", "包帯", "木材", "スクラップ", "弾薬"]
@@ -18,6 +33,21 @@ var infection := false
 var dead := false
 var carried: Dictionary = {"食料": 1, "飲料水": 1, "包帯": 0, "木材": 0, "スクラップ": 0, "弾薬": 0}
 var stored: Dictionary = {}
+# Old weapon types and job identities now work inside the persistent world.
+var class_id := 0
+var equipped_weapon: Dictionary = LOADOUT.starter()
+var weapon_inventory: Array[Dictionary] = []
+var stored_weapons: Array[Dictionary] = []
+var armor: Array[Dictionary] = [{}, {}, {}, {}]
+var mint_pos := Vector2(400, 550)
+var mint_health := 90.0
+var mint_attack_clock := 0.0
+var chubura_pos := Vector2(435, 590)
+var look_dir := Vector2.RIGHT
+var is_sneaking := false
+var noise_timer := 0.0
+var noise_origin := Vector2.ZERO
+var noise_radius := 0.0
 var shelters: Array[Vector2] = []
 var caches: Array[Dictionary] = []
 var zombies: Array[Dictionary] = []
@@ -40,10 +70,23 @@ var notice_clock := 0.0
 func _ready() -> void:
 	random.randomize()
 	load_survivor()
-	for i in range(85):
-		caches.append({"position": random_position(), "item": random.randi_range(0, ITEM_NAMES.size() - 1), "cooldown": 0.0})
+	# A fixed seed keeps unlooted sites stable between restarts. Saved sites override it.
+	if caches.is_empty():
+		random.seed = 20261103
+		for i in range(85):
+			var at := random_position()
+			var zone := 2 if at.x > 3650.0 else (1 if at.x > 1850.0 else 0)
+			var box: Dictionary = {"position": at, "item": random.randi_range(0, ITEM_NAMES.size() - 1), "cooldown": 0.0}
+			if i % 11 == 0:
+				box["armor"] = {"slot": i % 4, "rarity": random.randi_range(0, zone + 1)}
+			elif i % 7 == 0:
+				box["weapon"] = LOADOUT.random_weapon(random, zone)
+			caches.append(box)
+	random.randomize()
 	for i in range(26):
 		spawn_zombie()
+	mint_pos = survivor + Vector2(-65, 20)
+	chubura_pos = survivor + Vector2(-25, 70)
 	camera = Camera2D.new()
 	camera.enabled = true
 	camera.position_smoothing_enabled = true
@@ -97,10 +140,17 @@ func _process(delta: float) -> void:
 		if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT): movement.x += 1.0
 		if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP): movement.y -= 1.0
 		if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN): movement.y += 1.0
-	var sprint := movement.length_squared() > 0.0 and Input.is_key_pressed(KEY_SHIFT) and food > 10.0 and water > 10.0
+	is_sneaking = Input.is_key_pressed(KEY_CTRL)
+	var sprint := movement.length_squared() > 0.0 and Input.is_key_pressed(KEY_SHIFT) and not is_sneaking and food > 10.0 and water > 10.0
 	if movement.length_squared() > 0.0:
-		survivor = (survivor + movement.normalized() * (370.0 if sprint else 235.0) * delta).clamp(BOUNDS.position + Vector2(32, 32), BOUNDS.end - Vector2(32, 32))
+		var speed := 135.0 if is_sneaking else (370.0 if sprint else 235.0)
+		survivor = (survivor + movement.normalized() * speed * delta).clamp(BOUNDS.position + Vector2(32, 32), BOUNDS.end - Vector2(32, 32))
+		look_dir = movement.normalized()
 	camera.position = survivor
+	noise_timer = maxf(0.0, noise_timer - delta)
+	# Companions track the survivor instead of being restricted to the former safe hub.
+	mint_pos = mint_pos.move_toward(survivor + Vector2(-63, 28), 285.0 * delta)
+	chubura_pos = chubura_pos.move_toward(survivor + Vector2(46, 55), 260.0 * delta)
 	food = maxf(0.0, food - (0.065 if sprint else 0.032) * delta)
 	water = maxf(0.0, water - (0.10 if sprint else 0.051) * delta)
 	var night := fmod(world_clock, 840.0) > 540.0
@@ -124,8 +174,12 @@ func _process(delta: float) -> void:
 	for zombie in zombies:
 		var at: Vector2 = zombie["position"]
 		var distance := survivor.distance_to(at)
-		if distance < 410.0 and distance > 38.0:
+		var detection := 95.0 if is_sneaking else (550.0 if sprint else 290.0)
+		var noisy := noise_timer > 0.0 and at.distance_to(noise_origin) < noise_radius
+		if distance < detection and distance > 38.0:
 			zombie["position"] = at.move_toward(survivor, 109.0 * delta)
+		elif noisy:
+			zombie["position"] = at.move_toward(noise_origin, 100.0 * delta)
 		zombie["attack"] = maxf(0.0, float(zombie["attack"]) - delta)
 		if distance < 44.0 and float(zombie["attack"]) <= 0.0:
 			zombie["attack"] = 1.8
@@ -133,6 +187,16 @@ func _process(delta: float) -> void:
 			if random.randf() < 0.24: bleeding = true
 			if random.randf() < 0.08: infection = true
 			if dead: break
+	mint_attack_clock = maxf(0.0, mint_attack_clock - delta)
+	if mint_health > 0.0 and mint_attack_clock <= 0.0:
+		for zombie in zombies:
+			if (zombie["position"] as Vector2).distance_to(mint_pos) < 95.0:
+				zombie["health"] = float(zombie["health"]) - 19.0
+				mint_attack_clock = 3.0
+				break
+	for i in range(zombies.size() - 1, -1, -1):
+		if float(zombies[i]["health"]) <= 0.0:
+			zombies.remove_at(i)
 	spawn_clock += delta
 	if spawn_clock >= 13.0:
 		spawn_clock = 0.0
@@ -167,15 +231,46 @@ func _unhandled_input(event: InputEvent) -> void:
 		KEY_F: build_shelter()
 		KEY_C: craft_bandage()
 		KEY_G: withdraw_from_shelter()
+		KEY_V: cycle_weapon()
+		KEY_H: stash_equipped_weapon()
+		KEY_U: withdraw_weapon()
+		KEY_I: repair_equipped_weapon()
+		KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7:
+			select_class(event.keycode - KEY_1)
 
 func interact() -> void:
 	for i in range(corpses.size() - 1, -1, -1):
 		var corpse: Dictionary = corpses[i]
 		if survivor.distance_to(corpse["position"]) < 72.0:
-			for key in corpse["items"].keys():
-				carried[key] = int(carried.get(key, 0)) + int(corpse["items"][key])
-			corpses.remove_at(i)
-			say("遺体から持ち物を回収")
+			for key in ITEM_NAMES:
+				carried[key] = int(carried.get(key, 0)) + int((corpse.get("items", {}) as Dictionary).get(key, 0))
+			corpse["items"] = {}
+			var found: Dictionary = LOADOUT.clean_weapon(corpse.get("equipped", {}))
+			if not found.is_empty():
+				if equipped_weapon.is_empty():
+					equipped_weapon = found
+					corpse["equipped"] = {}
+				elif weapon_inventory.size() < 3:
+					weapon_inventory.append(found)
+					corpse["equipped"] = {}
+			var unclaimed: Array[Dictionary] = []
+			for candidate in corpse.get("weapons", []):
+				var item: Dictionary = LOADOUT.clean_weapon(candidate)
+				if weapon_inventory.size() < 3:
+					weapon_inventory.append(item)
+				else:
+					unclaimed.append(item)
+			corpse["weapons"] = unclaimed
+			var recovered_armor: Array = corpse.get("armor", [])
+			for slot in range(mini(4, recovered_armor.size())):
+				if armor[slot].is_empty() and recovered_armor[slot] is Dictionary:
+					armor[slot] = (recovered_armor[slot] as Dictionary).duplicate(true)
+					recovered_armor[slot] = {}
+			corpse["armor"] = recovered_armor
+			if (corpse.get("equipped", {}) as Dictionary).is_empty() and unclaimed.is_empty() and all_armor_empty(recovered_armor):
+				corpses.remove_at(i)
+			say("遺体から物資と持ち込んだ装備を回収")
+			save_survivor()
 			return
 	for shelter in shelters:
 		if survivor.distance_to(shelter) < 110.0:
@@ -185,15 +280,34 @@ func interact() -> void:
 				stored[key] = int(stored.get(key, 0)) + amount
 				carried[key] = 0
 				count += amount
-			say("拠点に%d個保管。死亡しても保管物は残る" % count)
+			say("拠点に%d個保管。装備は[H]で別途保管" % count)
 			save_survivor()
 			return
 	for cache in caches:
 		if float(cache["cooldown"]) <= 0.0 and survivor.distance_to(cache["position"]) < 72.0:
-			var name: String = ITEM_NAMES[int(cache["item"])]
-			carried[name] = int(carried[name]) + 1
+			if cache.has("weapon"):
+				if weapon_inventory.size() >= 3:
+					say("武器バッグ満杯。[V]で切り替え、[H]で保管")
+					return
+				var weapon: Dictionary = LOADOUT.clean_weapon(cache["weapon"])
+				weapon_inventory.append(weapon)
+				say("武器入手！ %s [V]で装備" % LOADOUT.name_for(weapon))
+			elif cache.has("armor"):
+				var armor_item: Dictionary = cache["armor"]
+				var slot := clampi(int(armor_item.get("slot", 0)), 0, 3)
+				var previous: Dictionary = armor[slot]
+				armor[slot] = {"slot": slot, "rarity": clampi(int(armor_item.get("rarity", 0)), 0, 4)}
+				if not previous.is_empty():
+					cache["armor"] = previous
+					say("防具を交換（部位%d）。前の防具はここに残った" % (slot + 1))
+					return
+				say("防具入手！（部位%d）" % (slot + 1))
+			else:
+				var name: String = ITEM_NAMES[int(cache["item"])]
+				carried[name] = int(carried[name]) + 1
+				say("%sを発見！" % name)
 			cache["cooldown"] = 270.0
-			say("%sを発見！" % name)
+			save_survivor()
 			return
 	say("近くに調べるものがない")
 
@@ -210,6 +324,82 @@ func withdraw_from_shelter() -> void:
 			save_survivor()
 			return
 	say("拠点の近くで[G]を押してね")
+
+func all_armor_empty(items: Array) -> bool:
+	for item in items:
+		if item is Dictionary and not (item as Dictionary).is_empty():
+			return false
+	return true
+
+func select_class(index: int) -> void:
+	if index < 0 or index >= LOADOUT.CLASS_NAMES.size():
+		return
+	var at_base := false
+	for shelter in shelters:
+		if survivor.distance_to(shelter) < 125.0:
+			at_base = true
+	if not at_base:
+		say("職業変更は建築した拠点の近くで行う")
+		return
+	class_id = index
+	say("職業: %s。得意武器の威力が上昇" % LOADOUT.CLASS_NAMES[index])
+	save_survivor()
+
+func cycle_weapon() -> void:
+	if weapon_inventory.is_empty():
+		say("予備武器がない。武器箱を探そう")
+		return
+	var next: Dictionary = weapon_inventory.pop_front()
+	if not equipped_weapon.is_empty():
+		weapon_inventory.append(equipped_weapon.duplicate(true))
+	equipped_weapon = next
+	say("装備: %s" % LOADOUT.name_for(equipped_weapon))
+	save_survivor()
+
+func stash_equipped_weapon() -> void:
+	var near_base := false
+	for shelter in shelters:
+		if survivor.distance_to(shelter) < 110.0:
+			near_base = true
+	if not near_base or equipped_weapon.is_empty():
+		say("拠点の近くで、装備中の武器を保管できる")
+		return
+	if stored_weapons.size() >= 24:
+		say("武器保管庫がいっぱい")
+		return
+	stored_weapons.append(equipped_weapon.duplicate(true))
+	equipped_weapon = {}
+	say("武器を保管した。現在は素手")
+	save_survivor()
+
+func withdraw_weapon() -> void:
+	var near_base := false
+	for shelter in shelters:
+		if survivor.distance_to(shelter) < 110.0:
+			near_base = true
+	if not near_base or stored_weapons.is_empty():
+		say("武器保管庫を利用するには拠点が必要")
+		return
+	if not equipped_weapon.is_empty() and weapon_inventory.size() >= 3:
+		say("持てる武器は装備中＋予備3本まで")
+		return
+	var retrieved: Dictionary = stored_weapons.pop_back()
+	if equipped_weapon.is_empty():
+		equipped_weapon = retrieved
+	else:
+		weapon_inventory.append(retrieved)
+	say("武器を取り出した: %s" % LOADOUT.name_for(retrieved))
+	save_survivor()
+
+func repair_equipped_weapon() -> void:
+	var fixed: Dictionary = LOADOUT.repair(equipped_weapon, int(carried.get("スクラップ", 0)))
+	if fixed.is_empty():
+		say("修理不可：装備中の武器とスクラップ2個が必要")
+		return
+	carried["スクラップ"] = int(carried["スクラップ"]) - 2
+	equipped_weapon = fixed
+	say("武器を修理！ 耐久%d%%" % roundi(float(equipped_weapon["condition"])))
+	save_survivor()
 
 func use_item(name: String) -> void:
 	if int(carried.get(name, 0)) <= 0:
@@ -249,25 +439,39 @@ func build_shelter() -> void:
 	save_survivor()
 
 func attack(shoot: bool) -> void:
-	if attack_clock > 0.0: return
+	if dead or bag_open or attack_clock > 0.0:
+		return
+	if shoot and not LOADOUT.is_ranged(equipped_weapon):
+		say("射撃には遠距離武器が必要。武器箱で探そう")
+		return
 	if shoot and int(carried["弾薬"]) <= 0:
 		say("弾薬がない")
 		return
-	if shoot: carried["弾薬"] = int(carried["弾薬"]) - 1
+	if shoot:
+		carried["弾薬"] = int(carried["弾薬"]) - 1
+		noise_timer = 3.5
+		noise_origin = survivor
+		noise_radius = 830.0
 	attack_clock = 0.65 if shoot else 0.88
-	var closest := 480.0 if shoot else 75.0
+	var reach: float = LOADOUT.range_for(equipped_weapon) if shoot else (105.0 if int(equipped_weapon.get("kind", 2)) == 3 else 80.0)
 	var target := -1
+	var best := reach
 	for i in range(zombies.size()):
-		var distance: float = (zombies[i]["position"] as Vector2).distance_to(survivor)
-		if distance < closest:
-			closest = distance
+		var direction: Vector2 = (zombies[i]["position"] as Vector2) - survivor
+		var distance := direction.length()
+		if distance < best and distance > 0.01 and direction.normalized().dot(look_dir) >= (0.72 if shoot else 0.40):
+			best = distance
 			target = i
-	if target < 0: return
-	zombies[target]["health"] = float(zombies[target]["health"]) - (95.0 if shoot else 48.0)
+	if not equipped_weapon.is_empty():
+		equipped_weapon = LOADOUT.worn(equipped_weapon)
+	if target < 0:
+		return
+	var impact := LOADOUT.damage_for(equipped_weapon, class_id) if (shoot or not LOADOUT.is_ranged(equipped_weapon)) else 18.0
+	zombies[target]["health"] = float(zombies[target]["health"]) - impact
 	if float(zombies[target]["health"]) <= 0.0:
 		var at: Vector2 = zombies[target]["position"]
 		zombies.remove_at(target)
-		if random.randf() < 0.35:
+		if random.randf() < 0.28:
 			caches.append({"position": at, "item": random.randi_range(0, ITEM_NAMES.size() - 1), "cooldown": 0.0})
 		say("感染者を倒した")
 
@@ -276,7 +480,7 @@ func hurt(amount: float) -> void:
 	health = maxf(0.0, health - amount)
 	if health <= 0.0:
 		dead = true
-		corpses.append({"position": survivor, "items": carried.duplicate(true)})
+		corpses.append({"position": survivor, "items": carried.duplicate(true), "equipped": equipped_weapon.duplicate(true), "weapons": weapon_inventory.duplicate(true), "armor": armor.duplicate(true)})
 		say("死亡！持ち物を落とした。[R]で新しい生存者")
 		save_survivor()
 
@@ -289,6 +493,12 @@ func new_survivor() -> void:
 	bleeding = false
 	infection = false
 	carried = {"食料": 1, "飲料水": 1, "包帯": 0, "木材": 0, "スクラップ": 0, "弾薬": 0}
+	equipped_weapon = LOADOUT.starter()
+	weapon_inventory.clear()
+	armor = [{}, {}, {}, {}]
+	mint_health = 90.0
+	mint_pos = survivor + Vector2(-65, 20)
+	chubura_pos = survivor + Vector2(46, 55)
 	survived = 0.0
 	bag_open = false
 	dead = false
