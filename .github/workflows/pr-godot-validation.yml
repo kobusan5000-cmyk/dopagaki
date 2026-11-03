@@ -171,6 +171,18 @@ jobs:
           }
           cat godot-survival-cargo.log
 
+      - name: Validate field crafting and multiplayer crafting permissions
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot="$HOME/.cache/dopagaki-godot/godot"
+          timeout 75 "$godot" --headless --path . --script res://tests/test_survival_crafting.gd > godot-survival-crafting.log 2>&1 || {
+            cat godot-survival-crafting.log
+            echo "::error::Crafting or multiplayer recipe regression failed"
+            exit 1
+          }
+          cat godot-survival-crafting.log
+
       - name: Test 2-process LAN host and guest
         shell: bash
         run: |
@@ -223,6 +235,7 @@ jobs:
             godot-coop-session.log
             godot-coop-parity.log
             godot-survival-cargo.log
+            godot-survival-crafting.log
             godot-coop-host.log
             godot-coop-guest.log
             godot-run.log
