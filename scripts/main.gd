@@ -791,6 +791,13 @@ func _on_coop_peer_disconnected(_id: int) -> void:
 	coop_rabbit_carrier_guest = false
 	coop_guest_interact = false
 	coop_guest_held_interact = false
+	# A network drop must not leave the remaining solo host in an unrecoverable grave/jail.
+	if coop != null and coop.is_host():
+		if coop_host_jailed:
+			return_to_safe_hub()
+		elif coop_host_downed_clock > 0.0:
+			coop_host_downed_clock = 0.0
+			hp = minf(max_hp, 45.0)
 	show_status("仲間が切断した。ソロプレイに戻る", Color("ffd4a8"))
 
 func _on_coop_introduced(job: int, display_name: String) -> void:
@@ -830,7 +837,16 @@ func _on_coop_guest_interact() -> void:
 		coop_guest_interact = true
 
 func _on_coop_guest_action(action: String, value: int) -> void:
-	if not coop.is_host() or coop_guest_hp <= 0.0 or coop_guest_jailed or state != "playing":
+	if not coop.is_host() or state != "playing":
+		return
+	# Both players may use R to leave jail only once the expedition has ended.
+	if action == "release" and coop_guest_jailed and phase == "hub":
+		coop_guest_jailed = false
+		coop_guest_hp = coop_guest_max_hp
+		coop_guest_pos = CAMP_STATIONS[0] + Vector2(55, 55)
+		show_status("仲間が牢屋から拠点へ復帰", Color("a9f4ca"))
+		return
+	if coop_guest_hp <= 0.0 or coop_guest_jailed:
 		return
 	if action == "jump":
 		if coop_guest_jump_cooldown <= 0.0 and not coop_guest_guard:
@@ -1134,6 +1150,24 @@ func coop_guest_eat(index: int) -> void:
 	burst(coop_guest_pos, Color("b7ffaf"), 20)
 	play_sound(AUDIO_PICKUP, -12.0)
 
+func coop_release_jailed_guest() -> void:
+	if not coop_guest_jailed:
+		return
+	coop_guest_jailed = false
+	coop_guest_hp = minf(coop_guest_max_hp, 45.0)
+	coop_guest_pos += Vector2(40, 0)
+	coop_emit_fx("revive", coop_guest_pos)
+	show_status("仲間を牢屋から解放！ 持ち込んだ装備は戻らない", Color("a9f4ca"))
+
+func coop_release_jailed_host() -> void:
+	if not coop_host_jailed:
+		return
+	coop_host_jailed = false
+	hp = minf(max_hp, 45.0)
+	player += Vector2(-40, 0)
+	coop_emit_fx("revive", player)
+	show_status("ホストが牢屋から解放！ 持ち込んだ装備は戻らない", Color("a9f4ca"))
+
 func coop_revive_host() -> void:
 	if coop_host_downed_clock <= 0.0 or coop_host_jailed:
 		return
@@ -1184,6 +1218,9 @@ func coop_revive_guest() -> void:
 	show_status("仲間を救助した！ HP45で復活", Color("a9f4ca"))
 
 func coop_process_guest_interaction() -> void:
+	if coop_host_jailed and coop_guest_pos.distance_to(player) < 100.0:
+		coop_release_jailed_host()
+		return
 	if coop_host_downed_clock > 0.0 and coop_guest_pos.distance_to(player) < 100.0:
 		coop_revive_host()
 		return
@@ -1524,7 +1561,7 @@ func coop_client_tick(delta: float) -> void:
 	refresh_coop_ui()
 	# Poll I directly: UI controls may consume keyboard events before _input handlers.
 	var inventory_key := Input.is_key_pressed(KEY_I)
-	if inventory_key and not coop_guest_inventory_key_held and state == "playing":
+	if inventory_key and not coop_guest_inventory_key_held and state == "playing" and coop_guest_hp > 0.0 and not coop_guest_jailed:
 		toggle_inventory()
 	coop_guest_inventory_key_held = inventory_key
 	coop_remote_host_render_pos = coop_remote_host_render_pos.lerp(coop_remote_host_pos, 1.0 - exp(-delta * 16.0))
@@ -1571,6 +1608,10 @@ func coop_client_tick(delta: float) -> void:
 				if player.distance_to(drop["pos"]) < 92.0:
 					pickup_hint.text = "[E] 拾う  %s" % str(drop.get("name", "装備"))
 					break
+	if coop_guest_downed_clock > 0.0:
+		pickup_hint.text = "救助待ち！ 仲間が[E]で救助　残り%d秒" % ceili(coop_guest_downed_clock)
+	elif coop_guest_jailed:
+		pickup_hint.text = "牢屋：仲間の[E]で解放 / 拠点で[R]復帰"
 	update_hud()
 	queue_redraw()
 
@@ -2639,6 +2680,9 @@ func nearest_plot_index() -> int:
 	return best
 
 func interact_nearby() -> void:
+	if coop != null and coop.is_host() and coop_guest_jailed and player.distance_to(coop_guest_pos) < 100.0:
+		coop_release_jailed_guest()
+		return
 	if coop != null and coop.is_host() and coop_guest_downed_clock > 0.0 and player.distance_to(coop_guest_pos) < 100.0:
 		coop_revive_guest()
 		return
@@ -3257,6 +3301,8 @@ func start_jump() -> void:
 func _input(event: InputEvent) -> void:
 	if coop == null or not coop.is_guest() or state != "playing":
 		return
+	if coop_guest_hp <= 0.0 or coop_guest_jailed:
+		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT:
 		coop.send_guest_action("guard", 1 if event.pressed else 0)
 		guard_active = event.pressed
@@ -3323,10 +3369,15 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			show_status("拠点へ帰還。今回の戦利品は失った", Color("ffb6b6"))
 		return
 	if state == "playing":
-		if coop != null and coop.is_host() and coop_host_jailed and event.keycode == KEY_R and phase == "hub":
-			coop_host_jailed = false
-			hp = max_hp
-			player = CAMP_STATIONS[0] + Vector2(0, 55)
+		if coop != null and coop.is_guest() and (coop_guest_hp <= 0.0 or coop_guest_jailed):
+			if coop_guest_jailed and event.keycode == KEY_R and phase == "hub":
+				coop.send_guest_action("release", 1)
+			return
+		if coop != null and coop.is_host() and (coop_host_downed_clock > 0.0 or coop_host_jailed):
+			if coop_host_jailed and event.keycode == KEY_R and phase == "hub":
+				coop_host_jailed = false
+				hp = max_hp
+				player = CAMP_STATIONS[0] + Vector2(0, 55)
 			return
 		if coop != null and coop.is_guest():
 			# InputEvent E is handled by _input; process modal shortcuts here.
