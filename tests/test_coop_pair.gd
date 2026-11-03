@@ -19,8 +19,9 @@ func _run() -> void:
 		_check(int(scene.get("coop").peer_id) > 1, "Host detected a guest over loopback UDP")
 		scene.call("start_sortie")
 		_check(bool(scene.get("expedition_active")), "Host launched expedition")
-		await create_timer(2.1).timeout
-		_check(int(scene.get("coop").peer_id) > 1, "Guest remains connected")
+		# Keep the actual host alive while the guest validates all four E-key menus.
+		await create_timer(4.5).timeout
+		_check(int(scene.get("coop").peer_id) > 1, "Guest remains connected through safe-camp UI checks")
 	else:
 		scene.call("select_class", 6)
 		scene.get("coop_ip_input").text = "127.0.0.1"
