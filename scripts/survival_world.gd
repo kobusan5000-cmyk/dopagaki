@@ -655,7 +655,7 @@ func _draw() -> void:
 	for cache in caches:
 		if float(cache["cooldown"]) <= 0.0:
 			var at: Vector2 = cache["position"]
-			var tint := Color("f6d47d") if cache.has("weapon") else (Color("a9b8fa") if cache.has("armor") else ITEM_COLORS[int(cache["item"])])
+			var tint: Color = Color("f6d47d") if cache.has("weapon") else (Color("a9b8fa") if cache.has("armor") else ITEM_COLORS[int(cache["item"])] )
 			draw_rect(Rect2(at - Vector2(13, 13), Vector2(26, 26)), tint)
 			if cache.has("weapon"):
 				var kind := int(cache["weapon"].get("kind", 2))
