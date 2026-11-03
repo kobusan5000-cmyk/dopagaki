@@ -255,6 +255,9 @@ var coop_guest_send_clock := 0.0
 var coop_snapshot_clock := 0.0
 var coop_guest_interact_pending := false
 var coop_remote_host_pos := Vector2(1208, 870)
+var coop_target_mint_pos := Vector2.ZERO
+var coop_target_rabbit_pos := Vector2.ZERO
+var coop_mint_target_initialized := false
 var coop_remote_host_aim := 0.0
 var coop_remote_host_job := 0
 var coop_remote_host_name := "ホスト"
@@ -681,6 +684,9 @@ func _on_coop_peer_connected(id: int) -> void:
 	coop_guest_render_pos = coop_guest_pos
 	coop_panel_expanded = false
 	coop_guest_hp = 100.0
+	coop_guest_backpack.clear()
+	for i in range(BAG_CAPACITY):
+		coop_guest_backpack.append({})
 	coop_guest_fire_clock = 0.0
 	coop_guest_input_timeout = 0.0
 	coop_guest_dir = Vector2.ZERO
@@ -827,6 +833,10 @@ func coop_client_tick(delta: float) -> void:
 		return
 	refresh_coop_ui()
 	coop_remote_host_render_pos = coop_remote_host_render_pos.lerp(coop_remote_host_pos, 1.0 - exp(-delta * 16.0))
+	if coop_mint_target_initialized:
+		var blend := 1.0 - exp(-delta * 14.0)
+		companion = companion.lerp(coop_target_mint_pos, blend)
+		rabbit_pet = rabbit_pet.lerp(coop_target_rabbit_pos, blend)
 	coop_guest_send_clock -= delta
 	var direction := Vector2.ZERO
 	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT): direction.x -= 1.0
@@ -864,9 +874,13 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 	expedition_active = bool(data.get("expedition", false))
 	wave = int(data.get("wave", 0))
 	coins = int(data.get("coins", 0))
-	farm_plots.clear()
-	for plot in data.get("farm_plots", []):
-		farm_plots.append(plot)
+	if data.has("farm_plots") and (data["farm_plots"] as Array).size() > 0:
+		farm_plots.clear()
+		for plot in data["farm_plots"]:
+			farm_plots.append(plot)
+	elif farm_plots.is_empty():
+		for plot_pos in FARM_PLOTS:
+			farm_plots.append({"pos": plot_pos, "progress": -1.0, "crop": 0})
 	backpack.clear()
 	for item in data.get("guest_backpack", []):
 		backpack.append(item)
@@ -888,9 +902,13 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 	carried_materials.clear()
 	for amount in data.get("materials", [0, 0, 0]):
 		carried_materials.append(int(amount))
-	companion = data.get("mint_pos", companion)
+	coop_target_mint_pos = data.get("mint_pos", companion)
+	coop_target_rabbit_pos = data.get("rabbit_pos", rabbit_pet)
+	if not coop_mint_target_initialized or companion.distance_to(coop_target_mint_pos) > 250.0:
+		companion = coop_target_mint_pos
+		rabbit_pet = coop_target_rabbit_pos
+	coop_mint_target_initialized = true
 	companion_hp = float(data.get("mint_hp", companion_hp))
-	rabbit_pet = data.get("rabbit_pos", rabbit_pet)
 	rabbit_hp = float(data.get("rabbit_hp", rabbit_hp))
 	camera.position = player
 	choose_panel.hide()
@@ -2408,7 +2426,16 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if state == "playing":
 		if coop != null and coop.is_guest():
 			if event.keycode == KEY_E:
-				coop_guest_interact_pending = true
+				if slot_open:
+					toggle_slot()
+				elif cooking_open:
+					toggle_cooking()
+				elif not expedition_active and player.distance_to(SLOT_POS) < 105.0:
+					toggle_slot()
+				elif not expedition_active and nearest_camp_index() >= 0:
+					toggle_cooking()
+				else:
+					coop_guest_interact_pending = true
 			elif event.keycode == KEY_I:
 				toggle_inventory()
 			elif event.keycode == KEY_G:
