@@ -38,7 +38,8 @@ func _run() -> void:
 	scene.call("repair_weapon_for_actor", false)
 	_check(is_equal_approx(float(active.get("condition", 100.0)), WEAR.after_attack(after_one, 0)), "No repairing during expedition")
 	scene.call("return_to_safe_hub")
-	scene.set("stored_materials", [7, 5, 0] as Array[int])
+	var repair_bank: Array[int] = [7, 5, 0]
+	scene.set("stored_materials", repair_bank)
 	scene.set("player", Vector2(1390, 1085))
 	scene.set("equipped", {"type": "weapon", "kind": 2, "rarity": 1, "name": "TEST SWORD", "condition": 27.0})
 	scene.call("toggle_craft")
