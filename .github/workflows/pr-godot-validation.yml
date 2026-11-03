@@ -195,6 +195,18 @@ jobs:
           }
           cat godot-survival-journal.log
 
+      - name: Validate camera edge terrain coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot="$HOME/.cache/dopagaki-godot/godot"
+          timeout 75 "$godot" --headless --path . --script res://tests/test_camera_edge_background.gd > godot-camera-edge.log 2>&1 || {
+            cat godot-camera-edge.log
+            echo "::error::Camera edge forest terrain coverage failed"
+            exit 1
+          }
+          cat godot-camera-edge.log
+
       - name: Validate twin enemy full-body attack hitboxes
         shell: bash
         run: |
@@ -275,6 +287,7 @@ jobs:
             godot-survival-journal.log
             godot-weapon-condition.log
             godot-enemy-hitboxes.log
+            godot-camera-edge.log
             godot-coop-host.log
             godot-coop-guest.log
             godot-run.log

@@ -6,6 +6,9 @@ extends Node2D
 
 const SIZE := Vector2(1152, 648)
 const ARENA := Rect2(40, 105, 3600, 2380)
+# Keep the painted ground under the full camera viewport at all arena edges.
+# Also covers brief camera smoothing/shake outside the limits.
+const GROUND_MARGIN := 720.0
 const CAMP_STATIONS := [Vector2(1170, 842), Vector2(2020, 1175)]
 const CAMP_RADIUS := 365.0
 const CAMP_ENEMY_MARGIN := 27.0
@@ -7327,9 +7330,14 @@ func draw_v018_slash_trail(origin: Vector2, heading: float, kind: int, opacity: 
 		draw_line(glint - Vector2(6, 0), glint + Vector2(6, 0), Color(tint, alpha * 0.7), 2.0)
 		draw_line(glint - Vector2(0, 7), glint + Vector2(0, 7), Color("fff8eb", alpha * 0.45), 1.7)
 
+func ground_paint_bounds() -> Rect2:
+	return ARENA.grow(GROUND_MARGIN)
+
 func draw_fantasy_ground() -> void:
 	# A painterly pixel forest: four varied tiles keep the huge arena from looking stamped.
-	draw_rect(ARENA.grow(120.0), Color("0a151c"))
+	# Never expose the black clear color beyond the camera's view at the map edge.
+	var painted_bounds := ground_paint_bounds()
+	draw_rect(painted_bounds, Color("0a151c"))
 	var tile_size: float = 256.0
 	var left_tile: int = int(floor((player.x - 870.0) / tile_size))
 	var right_tile: int = int(ceil((player.x + 870.0) / tile_size))
@@ -7338,7 +7346,7 @@ func draw_fantasy_ground() -> void:
 	for tx in range(left_tile, right_tile + 1):
 		for ty in range(top_tile, bottom_tile + 1):
 			var dest := Rect2(float(tx) * tile_size, float(ty) * tile_size, tile_size, tile_size)
-			if dest.intersects(ARENA):
+			if dest.intersects(painted_bounds):
 				var variant: int = posmod(tx * 19 + ty * 13 + tx * ty, FOREST_VARIANTS.size())
 				draw_texture_rect(FOREST_VARIANTS[variant], dest, false)
 	draw_v018_forest_atmosphere()
