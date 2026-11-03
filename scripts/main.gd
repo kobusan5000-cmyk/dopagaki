@@ -986,6 +986,10 @@ func coop_apply_fx(data: Dictionary) -> void:
 func coop_client_tick(delta: float) -> void:
 	if not coop.is_guest():
 		return
+	# Guest skips the host simulation loop: age local visual effects here.
+	# Without this, hit/defeat particles and spark rings remain on screen forever.
+	update_particles(delta)
+	update_impact_fx(delta)
 	# Guest returns early from _process, so it must update music here.
 	update_music()
 	if banner_clock > 0.0:
