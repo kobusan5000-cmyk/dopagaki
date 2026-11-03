@@ -267,6 +267,18 @@ jobs:
           }
           cat godot-weapon-condition.log
 
+      - name: Validate guest workbench modal on expedition transition
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot="$HOME/.cache/dopagaki-godot/godot"
+          timeout 75 "$godot" --headless --path . --script res://tests/test_guest_craft_modal.gd > godot-guest-craft-modal.log 2>&1 || {
+            cat godot-guest-craft-modal.log
+            echo "::error::Guest craft modal regression failed"
+            exit 1
+          }
+          cat godot-guest-craft-modal.log
+
       - name: Test 2-process LAN host and guest
         shell: bash
         run: |
@@ -327,6 +339,7 @@ jobs:
             godot-slot-777.log
             godot-chubura-healing.log
             godot-rare-loot-pickup.log
+            godot-guest-craft-modal.log
             godot-coop-host.log
             godot-coop-guest.log
             godot-run.log
