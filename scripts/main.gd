@@ -294,6 +294,8 @@ var coop_remote_host_attacking := false
 var coop_remote_host_anim_time := 0.0
 var coop_remote_host_aim := 0.0
 var coop_remote_host_job := 0
+var coop_remote_host_level := 1
+var coop_remote_host_clone_clock := 0.0
 var coop_remote_host_name := "ホスト"
 var coop_connection_status := ""
 var class_id := 0
@@ -796,6 +798,7 @@ func _on_coop_introduced(job: int, display_name: String) -> void:
 	coop_guest_name = display_name if not display_name.is_empty() else "仲間"
 	coop_guest_max_hp = 85.0 if coop_guest_job == 3 else (140.0 if coop_guest_job == 4 else (95.0 if coop_guest_job == 6 else (115.0 if coop_guest_job in [0, 5] else 100.0)))
 	coop_guest_hp = coop_guest_max_hp
+	coop_guest_equipped = {"type": "weapon", "kind": CLASS_WEAPONS[coop_guest_job], "rarity": 0, "name": WEAPONS[CLASS_WEAPONS[coop_guest_job]]}
 	show_status("%s（%s）が合流した！" % [coop_guest_name, CLASS_NAMES[coop_guest_job]], Color("a9f4ca"))
 
 func _on_coop_joined() -> void:
@@ -1222,18 +1225,19 @@ func coop_process_guest_interaction() -> void:
 		if player.distance_to(drop["pos"]) < 92.0:
 			guest_loot_nearby = true
 			break
+	var seed_nearby := -1
+	for seed_i in range(crop_drops.size() - 1, -1, -1):
+		if player.distance_to(crop_drops[seed_i]["pos"]) < 95.0:
+			seed_nearby = seed_i
+			break
 	if guest_loot_nearby:
 		pickup_nearby()
+	elif seed_nearby >= 0:
+		collect_crop_seed(seed_nearby)
+	elif expedition_active and interact_expedition_site():
+		pass
 	elif nearest_plot_index() >= 0:
-		# Farming remains available at the safe-hub plots after combat starts.
 		farm_interact()
-	elif expedition_active:
-		interact_expedition_site()
-	else:
-		for seed_i in range(crop_drops.size() - 1, -1, -1):
-			if player.distance_to(crop_drops[seed_i]["pos"]) < 95.0:
-				collect_crop_seed(seed_i)
-				break
 	coop_guest_backpack = backpack.duplicate(true)
 	coop_guest_seeds = seeds
 	coop_guest_melon_seeds = melon_seeds
@@ -1290,11 +1294,9 @@ func coop_guest_tick(delta: float) -> void:
 		# Coins are auto-collected for either player, not only the host.
 		for coin_i in range(coin_drops.size() - 1, -1, -1):
 			if coop_guest_pos.distance_to(coin_drops[coin_i]["pos"]) < 44.0:
-				var host_money := coins
-				coins = coop_guest_coins
-				collect_coin(coin_i)
-				coop_guest_coins = coins
-				coins = host_money
+				coop_guest_coins += int(coin_drops[coin_i]["amount"])
+				coin_drops.remove_at(coin_i)
+				play_sound(AUDIO_PICKUP, -22.0, 1.5)
 		if expedition_active and coop_guest_shoot and coop_guest_fire_clock <= 0.0 and not is_in_safe_camp(coop_guest_pos):
 			coop_guest_attack()
 	if coop_host_downed_clock > 0.0:
@@ -1335,14 +1337,17 @@ func coop_guest_tick(delta: float) -> void:
 			"host_downed": coop_host_downed_clock, "host_jailed": coop_host_jailed,
 			"host_moving": Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_UP) or Input.is_key_pressed(KEY_DOWN),
 			"host_attacking": Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT),
+			"host_level": level, "host_shadow_clone": shadow_clone_clock,
 			"guest_pos": coop_guest_pos, "guest_hp": coop_guest_hp, "guest_job": coop_guest_job,
 			"guest_max_hp": coop_guest_max_hp, "guest_mp": coop_guest_mp, "guest_max_mp": coop_guest_max_mp,
 			"guest_level": coop_guest_level, "guest_xp": coop_guest_xp, "guest_xp_needed": coop_guest_xp_needed,
 			"guest_stats": coop_guest_stats, "guest_pending_points": coop_guest_pending_points,
 			"guest_skill_buff": coop_guest_skill_buff_clock, "guest_skill_guard": coop_guest_skill_guard_clock,
+			"guest_shadow_clone": coop_guest_shadow_clone_clock,
 			"phase": phase, "state": state, "expedition": expedition_active, "wave": wave,
 			"enemies": enemies, "projectiles": projectiles, "orbs": hostile_orbs,
 			"drops": drops, "coins_on_ground": coin_drops, "crates": search_crates,
+			"corpses": corpses, "crop_drops": crop_drops,
 			"materials": carried_materials, "coins": coop_guest_coins, "guest_banked_gold": coop_guest_banked_gold,
 			"guest_mushrooms": coop_guest_mushrooms, "guest_stew": coop_guest_stew_meals,
 			"guest_broth": coop_guest_broth_meals, "guest_melon_meals": coop_guest_melon_meals,
@@ -1578,6 +1583,8 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 	coop_host_jailed = bool(data.get("host_jailed", false))
 	coop_remote_host_aim = float(data.get("host_aim", 0.0))
 	coop_remote_host_job = int(data.get("host_job", 0))
+	coop_remote_host_level = int(data.get("host_level", 1))
+	coop_remote_host_clone_clock = float(data.get("host_shadow_clone", 0.0))
 	coop_remote_host_name = str(data.get("host_name", "ホスト"))
 	coop_remote_host_equipped = data.get("host_equipped", coop_remote_host_equipped).duplicate(true)
 	coop_remote_host_moving = bool(data.get("host_moving", false))
@@ -1601,6 +1608,7 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 	max_hp = coop_guest_max_hp
 	skill_buff_clock = float(data.get("guest_skill_buff", 0.0))
 	skill_guard_clock = float(data.get("guest_skill_guard", 0.0))
+	shadow_clone_clock = float(data.get("guest_shadow_clone", 0.0))
 	coop_guest_downed_clock = float(data.get("guest_downed", 0.0))
 	coop_guest_jailed = bool(data.get("guest_jailed", false))
 	jump_clock = float(data.get("guest_jump", 0.0))
@@ -1663,7 +1671,7 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 	extraction_clock = float(data.get("extract_clock", -1.0))
 	active_exit = int(data.get("active_exit", -1))
 	extraction_hatch_active = bool(data.get("hatch_active", false))
-	for entry in [["enemies", enemies], ["projectiles", projectiles], ["orbs", hostile_orbs], ["drops", drops], ["coins_on_ground", coin_drops], ["crates", search_crates]]:
+	for entry in [["enemies", enemies], ["projectiles", projectiles], ["orbs", hostile_orbs], ["drops", drops], ["coins_on_ground", coin_drops], ["crates", search_crates], ["corpses", corpses], ["crop_drops", crop_drops]]:
 		var destination: Array = entry[1]
 		destination.clear()
 		for item in data.get(entry[0], []):
@@ -4639,6 +4647,26 @@ func draw_shadow_clones() -> void:
 		draw_ninja_sprite(at, 1 if int(elapsed * 6.0) % 2 == 0 else 6, cos(aim_angle) > 0.0, Color(1.0, 0.53, 0.65, 0.62))
 		draw_string(ui_font, at + Vector2(-25, -65), "分身", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("ffc5d4"))
 
+func draw_coop_remote_clones() -> void:
+	if coop == null or not (coop.is_host() or coop.is_guest()):
+		return
+	if coop.is_host() and coop.peer_id <= 1:
+		return
+	var job := coop_remote_host_job if coop.is_guest() else coop_guest_job
+	var remaining := coop_remote_host_clone_clock if coop.is_guest() else coop_guest_shadow_clone_clock
+	if job != 6 or remaining <= 0.0:
+		return
+	var base_pos := coop_remote_host_render_pos if coop.is_guest() else coop_guest_render_pos
+	var facing := coop_remote_host_aim if coop.is_guest() else coop_guest_aim
+	var actor_level := coop_remote_host_level if coop.is_guest() else coop_guest_level
+	var total := 3 if actor_level >= 10 else 2
+	for i in range(total):
+		var angle := elapsed * 1.45 + TAU * float(i) / float(total)
+		var at: Vector2 = base_pos + Vector2.RIGHT.rotated(angle) * 86.0
+		draw_circle(at + Vector2(0, 17), 18.0, Color("5a3ca0", 0.22))
+		draw_ninja_sprite(at, 1 if int(elapsed * 6.0) % 2 == 0 else 6, cos(facing) > 0.0, Color(1.0, 0.53, 0.65, 0.62))
+		draw_string(ui_font, at + Vector2(-25, -65), "分身", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("ffc5d4"))
+
 func update_corpses(delta: float) -> void:
 	for i in range(corpses.size() - 1, -1, -1):
 		corpses[i]["life"] = float(corpses[i]["life"]) - delta
@@ -6897,6 +6925,7 @@ func _draw() -> void:
 	draw_wanderer()
 	draw_rabbit_pet()
 	draw_shadow_clones()
+	draw_coop_remote_clones()
 	var player_center := player
 	var fighting := attack_clock > 0.0
 	var character_frame := int(walk_clock) % 4

@@ -147,6 +147,18 @@ jobs:
           }
           cat godot-coop-session.log
 
+      - name: Validate co-op gameplay feature parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot="$HOME/.cache/dopagaki-godot/godot"
+          timeout 75 "$godot" --headless --path . --script res://tests/test_coop_parity.gd > godot-coop-parity.log 2>&1 || {
+            cat godot-coop-parity.log
+            echo "::error::Co-op gameplay parity regression failed"
+            exit 1
+          }
+          cat godot-coop-parity.log
+
       - name: Test 2-process LAN host and guest
         shell: bash
         run: |
@@ -197,6 +209,7 @@ jobs:
             godot-extraction-flow.log
             godot-expedition-inventory.log
             godot-coop-session.log
+            godot-coop-parity.log
             godot-coop-host.log
             godot-coop-guest.log
             godot-run.log
