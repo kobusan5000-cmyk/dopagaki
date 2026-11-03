@@ -233,6 +233,13 @@ var coop_remote_host_render_pos := Vector2(1208, 870)
 var coop_panel_expanded := true
 var coop_toggle_button: Button
 var coop_guest_hp := 100.0
+var coop_guest_backpack: Array[Dictionary] = [{}, {}, {}, {}, {}]
+var coop_guest_seeds := 8
+var coop_guest_melon_seeds := 0
+var coop_guest_watermelon_seeds := 0
+var coop_guest_carrots := 2
+var coop_guest_melons := 0
+var coop_guest_watermelons := 0
 var coop_guest_max_hp := 100.0
 var coop_guest_job := 0
 var coop_guest_name := "仲間"
@@ -718,8 +725,59 @@ func _on_coop_guest_controls(direction: Vector2, angle: float, firing: bool, int
 	coop_guest_held_interact = interacting
 
 func _on_coop_guest_interact() -> void:
-	if coop != null and coop.is_host() and expedition_active:
+	if coop != null and coop.is_host():
 		coop_guest_interact = true
+
+func coop_process_guest_interaction() -> void:
+	# Temporarily use the guest's position and inventory for host-authoritative
+	# pickups/farming. Restore host state before the next simulation step.
+	var host_pos: Vector2 = player
+	var host_backpack: Array[Dictionary] = backpack.duplicate(true)
+	var host_seeds: int = seeds
+	var host_melon_seeds: int = melon_seeds
+	var host_watermelon_seeds: int = watermelon_seeds
+	var host_carrots: int = carrots
+	var host_melons: int = melons
+	var host_watermelons: int = watermelons
+	player = coop_guest_pos
+	backpack = coop_guest_backpack.duplicate(true)
+	seeds = coop_guest_seeds
+	melon_seeds = coop_guest_melon_seeds
+	watermelon_seeds = coop_guest_watermelon_seeds
+	carrots = coop_guest_carrots
+	melons = coop_guest_melons
+	watermelons = coop_guest_watermelons
+	if expedition_active:
+		if not interact_expedition_site():
+			pickup_nearby()
+	else:
+		# Restrict guest hub interactions to shared ground loot and farm plots;
+		# do not open host-only stash, shop or other local UI panels.
+		var closest_drop := false
+		for drop in drops:
+			if player.distance_to(drop["pos"]) < 92.0:
+				closest_drop = true
+				break
+		if closest_drop:
+			pickup_nearby()
+		elif nearest_plot_index() >= 0:
+			farm_interact()
+	coop_guest_backpack = backpack.duplicate(true)
+	coop_guest_seeds = seeds
+	coop_guest_melon_seeds = melon_seeds
+	coop_guest_watermelon_seeds = watermelon_seeds
+	coop_guest_carrots = carrots
+	coop_guest_melons = melons
+	coop_guest_watermelons = watermelons
+	player = host_pos
+	backpack = host_backpack
+	seeds = host_seeds
+	melon_seeds = host_melon_seeds
+	watermelon_seeds = host_watermelon_seeds
+	carrots = host_carrots
+	melons = host_melons
+	watermelons = host_watermelons
+	refresh_inventory_ui()
 
 func coop_guest_tick(delta: float) -> void:
 	# Host validates and advances the remote actor; guest gets position corrections.
@@ -742,11 +800,8 @@ func coop_guest_tick(delta: float) -> void:
 			play_sound(AUDIO_BOW, -23.0)
 	if coop_guest_interact:
 		coop_guest_interact = false
-		if expedition_active and coop_guest_hp > 0.0:
-			var host_pos := player
-			player = coop_guest_pos
-			interact_expedition_site()
-			player = host_pos
+		if coop_guest_hp > 0.0:
+			coop_process_guest_interaction()
 	coop_snapshot_clock -= delta
 	if coop_snapshot_clock <= 0.0:
 		coop_snapshot_clock = 0.12
@@ -757,6 +812,11 @@ func coop_guest_tick(delta: float) -> void:
 			"enemies": enemies, "projectiles": projectiles, "orbs": hostile_orbs,
 			"drops": drops, "coins_on_ground": coin_drops, "crates": search_crates,
 			"materials": carried_materials, "coins": coins,
+			"farm_plots": farm_plots, "guest_backpack": coop_guest_backpack,
+			"guest_seeds": coop_guest_seeds, "guest_melon_seeds": coop_guest_melon_seeds,
+			"guest_watermelon_seeds": coop_guest_watermelon_seeds,
+			"guest_carrots": coop_guest_carrots, "guest_melons": coop_guest_melons,
+			"guest_watermelons": coop_guest_watermelons,
 			"extract_clock": extraction_clock, "active_exit": active_exit,
 			"hatch_active": extraction_hatch_active, "elapsed": expedition_elapsed,
 			"mint_pos": companion, "mint_hp": companion_hp, "rabbit_pos": rabbit_pet, "rabbit_hp": rabbit_hp
@@ -804,6 +864,18 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 	expedition_active = bool(data.get("expedition", false))
 	wave = int(data.get("wave", 0))
 	coins = int(data.get("coins", 0))
+	farm_plots.clear()
+	for plot in data.get("farm_plots", []):
+		farm_plots.append(plot)
+	backpack.clear()
+	for item in data.get("guest_backpack", []):
+		backpack.append(item)
+	seeds = int(data.get("guest_seeds", seeds))
+	melon_seeds = int(data.get("guest_melon_seeds", melon_seeds))
+	watermelon_seeds = int(data.get("guest_watermelon_seeds", watermelon_seeds))
+	carrots = int(data.get("guest_carrots", carrots))
+	melons = int(data.get("guest_melons", melons))
+	watermelons = int(data.get("guest_watermelons", watermelons))
 	expedition_elapsed = float(data.get("elapsed", 0.0))
 	extraction_clock = float(data.get("extract_clock", -1.0))
 	active_exit = int(data.get("active_exit", -1))
@@ -2337,6 +2409,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		if coop != null and coop.is_guest():
 			if event.keycode == KEY_E:
 				coop_guest_interact_pending = true
+			elif event.keycode == KEY_I:
+				toggle_inventory()
 			elif event.keycode == KEY_G:
 				show_status("出撃はホストが開始するよ", Color("c3eeff"))
 			return
