@@ -28,6 +28,7 @@ var health := 100.0
 var food := 82.0
 var water := 78.0
 var warmth := 80.0
+var stamina := 100.0
 var bleeding := false
 var infection := false
 var dead := false
@@ -57,6 +58,7 @@ var survived := 0.0
 var spawn_clock := 0.0
 var save_clock := 0.0
 var attack_clock := 0.0
+var walk_time := 0.0
 var raining := false
 var weather_clock := 0.0
 var bag_open := false
@@ -141,11 +143,14 @@ func _process(delta: float) -> void:
 		if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP): movement.y -= 1.0
 		if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN): movement.y += 1.0
 	is_sneaking = Input.is_key_pressed(KEY_CTRL)
-	var sprint := movement.length_squared() > 0.0 and Input.is_key_pressed(KEY_SHIFT) and not is_sneaking and food > 10.0 and water > 10.0
+	var sprint := movement.length_squared() > 0.0 and Input.is_key_pressed(KEY_SHIFT) and not is_sneaking and food > 10.0 and water > 10.0 and stamina > 5.0
 	if movement.length_squared() > 0.0:
 		var speed := 135.0 if is_sneaking else (370.0 if sprint else 235.0)
 		survivor = (survivor + movement.normalized() * speed * delta).clamp(BOUNDS.position + Vector2(32, 32), BOUNDS.end - Vector2(32, 32))
-		look_dir = movement.normalized()
+		walk_time += delta * (12.0 if sprint else (5.0 if is_sneaking else 8.0))
+	else:
+		walk_time = 0.0
+	stamina = clampf(stamina + (-16.0 if sprint else (6.0 if movement.length_squared() > 0.0 else 10.0)) * delta, 0.0, 100.0)
 	camera.position = survivor
 	noise_timer = maxf(0.0, noise_timer - delta)
 	# Companions track the survivor instead of being restricted to the former safe hub.
@@ -209,6 +214,17 @@ func _process(delta: float) -> void:
 	queue_redraw()
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion and not dead and not bag_open:
+		var toward_mouse := get_global_mouse_position() - survivor
+		if toward_mouse.length_squared() > 9.0:
+			look_dir = toward_mouse.normalized()
+		return
+	if event is InputEventMouseButton and event.pressed and not dead and not bag_open:
+		if event.button_index == MOUSE_BUTTON_LEFT:
+			attack(LOADOUT.is_ranged(equipped_weapon))
+		elif event.button_index == MOUSE_BUTTON_RIGHT:
+			attack(false)
+		return
 	if not event is InputEventKey or not event.pressed or event.echo: return
 	if dead:
 		if event.keycode == KEY_R: new_survivor()
@@ -496,6 +512,7 @@ func new_survivor() -> void:
 	food = 82.0
 	water = 78.0
 	warmth = 80.0
+	stamina = 100.0
 	bleeding = false
 	infection = false
 	carried = {"食料": 1, "飲料水": 1, "包帯": 0, "木材": 0, "スクラップ": 0, "弾薬": 0}
@@ -529,7 +546,7 @@ func save_survivor() -> void:
 		saved_corpses.append({"position": [at.x, at.y], "items": corpse.get("items", {}), "equipped": corpse.get("equipped", {}), "weapons": corpse.get("weapons", []), "armor": corpse.get("armor", [])})
 	var data := {
 		"version": 2, "position": [survivor.x, survivor.y], "health": health,
-		"food": food, "water": water, "warmth": warmth,
+		"food": food, "water": water, "warmth": warmth, "stamina": stamina,
 		"bleeding": bleeding, "infection": infection, "dead": dead,
 		"carried": carried, "stored": stored, "shelters": coords,
 		"world_clock": world_clock, "survived": survived,
@@ -553,6 +570,7 @@ func load_survivor() -> void:
 	food = clampf(float(data.get("food", food)), 0.0, 100.0)
 	water = clampf(float(data.get("water", water)), 0.0, 100.0)
 	warmth = clampf(float(data.get("warmth", warmth)), 0.0, 100.0)
+	stamina = clampf(float(data.get("stamina", stamina)), 0.0, 100.0)
 	bleeding = bool(data.get("bleeding", false))
 	infection = bool(data.get("infection", false))
 	dead = bool(data.get("dead", false))
@@ -619,11 +637,11 @@ func refresh_hud() -> void:
 	if hud == null: return
 	var time_of_day := "夜" if fmod(world_clock, 840.0) > 540.0 else "昼"
 	var zone := "禁域" if survivor.x > 3650.0 else ("廃墟" if survivor.x > 1850.0 else "森")
-	hud.text = "DOPAGAKI / %s %s | %s\nHP%d  空腹%d  水分%d  体温%d  生存%d分\n装備: %s  耐久%d%% | 予備%d/3 防具%d/4" % [zone, time_of_day, LOADOUT.CLASS_NAMES[class_id], roundi(health), roundi(food), roundi(water), roundi(warmth), int(survived / 60.0), LOADOUT.name_for(equipped_weapon), roundi(float(equipped_weapon.get("condition", 0.0))), weapon_inventory.size(), 4 - int(armor[0].is_empty()) - int(armor[1].is_empty()) - int(armor[2].is_empty()) - int(armor[3].is_empty())]
+	hud.text = "DOPAGAKI / %s %s | %s\nHP%d  空腹%d  水分%d  体温%d  持久%d  生存%d分\n装備: %s  耐久%d%% | 予備%d/3 防具%d/4" % [zone, time_of_day, LOADOUT.CLASS_NAMES[class_id], roundi(health), roundi(food), roundi(water), roundi(warmth), roundi(stamina), int(survived / 60.0), LOADOUT.name_for(equipped_weapon), roundi(float(equipped_weapon.get("condition", 0.0))), weapon_inventory.size(), 4 - int(armor[0].is_empty()) - int(armor[1].is_empty()) - int(armor[2].is_empty()) - int(armor[3].is_empty())]
 	if bleeding: hud.text += "  [出血]"
 	if infection: hud.text += "  [感染]"
 	if raining: hud.text += "  [雨]"
-	info.text = "死亡: [R] 新しい生存者で再開" if dead else "WASD/Shift走る/Ctrl静音 | E拾う・預ける G引出 | Space近接 J射撃 V武器 | Bバッグ Z食 X水 Y包帯 C工作 F拠点 H/U保管 I修理 1-7職"
+	info.text = "死亡: [R] 新しい生存者で再開" if dead else "WASD/Shift走る/Ctrl静音 左クリック攻撃/マウス照準 | E拾う・預ける G引出 | Space近接 J射撃 V武器 | Bバッグ Z食 X水 Y包帯 C工作 F拠点 H/U保管 I修理 1-7職"
 	bag.visible = bag_open
 	if bag_open:
 		var lines: Array[String] = ["持ち物  [B]閉じる"]
@@ -665,11 +683,11 @@ func _draw() -> void:
 	for corpse in corpses:
 		draw_circle(corpse["position"], 19.0, Color("ad7f83"))
 	for zombie in zombies:
-		draw_sheet_first_frame(PIERO_WALK, zombie["position"], 49.0)
+		draw_sheet_frame(PIERO_WALK, zombie["position"], 49.0, int(world_clock * 7.0))
 	# Use the original playable wolf and Mint's authored walk sheets.
-	draw_sheet_first_frame(MINT_WALK, mint_pos, 48.0)
+	draw_sheet_frame(MINT_WALK, mint_pos, 48.0, int(world_clock * 7.0))
 	draw_texture_rect(CHUBURA, Rect2(chubura_pos - Vector2(21, 21), Vector2(42, 42)), false)
-	draw_sheet_first_frame(WOLF_WALK, survivor, 55.0)
+	draw_sheet_frame(WOLF_WALK, survivor, 55.0, int(walk_time))
 	if not equipped_weapon.is_empty():
 		draw_texture_rect(WEAPON_ICONS[clampi(int(equipped_weapon.get("kind", 2)), 0, 7)], Rect2(survivor + Vector2(16, 6), Vector2(23, 23)), false)
 	# One subtle marker per nearby cache: Chubura helps locate supplies.
@@ -684,6 +702,9 @@ func _draw() -> void:
 
 # The walk animations are horizontal sprite strips. Keep the first frame visible
 # even when asset sheets use different pixel dimensions.
-func draw_sheet_first_frame(texture: Texture2D, at: Vector2, size: float) -> void:
-	var frame_width := float(mini(texture.get_width(), texture.get_height()))
-	draw_texture_rect_region(texture, Rect2(at - Vector2(size * 0.5, size * 0.5), Vector2(size, size)), Rect2(Vector2.ZERO, Vector2(frame_width, frame_width)))
+func draw_sheet_frame(texture: Texture2D, at: Vector2, size: float, frame: int) -> void:
+	var frame_width := mini(texture.get_width(), texture.get_height())
+	var frames := maxi(1, int(texture.get_width() / frame_width))
+	var index := posmod(frame, frames)
+	var source := Rect2(Vector2(float(index * frame_width), 0.0), Vector2(float(frame_width), float(frame_width)))
+	draw_texture_rect_region(texture, Rect2(at - Vector2(size * 0.5, size * 0.5), Vector2(size, size)), source)
