@@ -36,7 +36,7 @@ func _run() -> void:
 	var spare: Array[int] = [7, 5, 0]
 	scene.set("stored_materials", spare)
 	scene.call("repair_weapon_for_actor", false)
-	_check(is_equal_approx(float(active.get("condition", 100.0)), WEAR.after_attack(after_one, 0)), "No repairing during expedition")
+	_check(is_equal_approx(float(active.get("condition", 100.0)), WEAR.after_attack(after_one, int(active["kind"]))), "No repairing during expedition")
 	scene.call("return_to_safe_hub")
 	var repair_bank: Array[int] = [7, 5, 0]
 	scene.set("stored_materials", repair_bank)
