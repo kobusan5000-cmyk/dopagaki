@@ -61,6 +61,7 @@ const LUMI_SLOT_SCRIPT = preload("res://scripts/lumi_slot.gd")
 const ALL_IN_RULES = preload("res://scripts/all_in_rules.gd")
 const EXTRACTION_RULES = preload("res://scripts/extraction_rules.gd")
 const SURVIVAL_RULES = preload("res://scripts/survival_rules.gd")
+const CRAFT_RULES = preload("res://scripts/crafting_rules.gd")
 const COOP_SESSION = preload("res://scripts/coop_session.gd")
 const MATERIALS_SAVE := "user://dopagaki_stored_materials_v025.json"
 const SLOT_POS := Vector2(865, 895)
@@ -251,6 +252,7 @@ var coop_guest_hunger := 100.0
 var coop_guest_thirst := 100.0
 var coop_guest_rations := 2
 var coop_guest_water := 2
+var coop_guest_bandages := 0
 var coop_guest_survival_damage_clock := 0.0
 var coop_guest_crop_selection := 0
 var coop_guest_stash: Array[Dictionary] = []
@@ -345,6 +347,7 @@ var survival_hunger := 100.0
 var survival_thirst := 100.0
 var survival_rations := 2
 var survival_water := 2
+var survival_bandages := 0
 var survival_damage_clock := 0.0
 var extraction_clock := -1.0
 var active_exit := -1
@@ -607,6 +610,10 @@ var inventory_status: Label
 var inventory_materials_label: Label
 var cargo_discard_buttons: Array[Button] = []
 var survival_status_label: Label
+var craft_panel: PanelContainer
+var craft_info: Label
+var craft_buttons: Array[Button] = []
+var craft_open := false
 var minimap_panel: Control
 var minimap_marker: Panel
 
@@ -754,6 +761,7 @@ func _on_coop_peer_connected(id: int) -> void:
 	coop_guest_thirst = 100.0
 	coop_guest_rations = 2
 	coop_guest_water = 2
+	coop_guest_bandages = 0
 	coop_guest_survival_damage_clock = 0.0
 	coop_guest_level = 1
 	coop_guest_xp = 0
@@ -917,6 +925,10 @@ func _on_coop_guest_action(action: String, value: int) -> void:
 		coop_guest_crop_selection = value
 	elif action == "survival_use" and value in [0, 1]:
 		coop_guest_use_survival_supply(value)
+	elif action == "bandage" and value == 1:
+		coop_guest_use_bandage()
+	elif action == "craft" and value >= 0 and value < CRAFT_RULES.NAMES.size():
+		craft_for_actor(value, true)
 	elif action == "discard_material" and value >= 0 and value < carried_materials.size():
 		# Both explorers share a limited salvage pouch in the current co-op mode.
 		if expedition_active and carried_materials[value] > 0:
@@ -1435,6 +1447,7 @@ func coop_guest_tick(delta: float) -> void:
 			"guest_watermelon_meals": coop_guest_watermelon_meals, "guest_food_buff": coop_guest_food_buff_clock,
 			"guest_hunger": coop_guest_hunger, "guest_thirst": coop_guest_thirst,
 			"guest_rations": coop_guest_rations, "guest_water": coop_guest_water,
+			"guest_bandages": coop_guest_bandages, "banked_materials": stored_materials,
 			"guest_stash": coop_guest_stash,
 			"guest_slot_serial": coop_guest_slot_serial, "guest_slot_result": coop_guest_slot_result,
 			"farm_plots": farm_plots, "meal_displays": meal_displays, "guest_backpack": coop_guest_backpack,
@@ -1740,6 +1753,11 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 	survival_thirst = float(data.get("guest_thirst", survival_thirst))
 	survival_rations = int(data.get("guest_rations", survival_rations))
 	survival_water = int(data.get("guest_water", survival_water))
+	survival_bandages = int(data.get("guest_bandages", survival_bandages))
+	if data.has("banked_materials"):
+		stored_materials.clear()
+		for material in data["banked_materials"]:
+			stored_materials.append(int(material))
 	if data.has("guest_stash"):
 		stash_items.clear()
 		for item in data["guest_stash"]:
@@ -1818,6 +1836,8 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 		refresh_merchant_ui()
 	if stash_open:
 		refresh_stash_ui()
+	if craft_open:
+		refresh_craft_ui()
 	if slot_open:
 		refresh_slot_ui()
 	if upgrade_open:
@@ -2435,6 +2455,27 @@ func build_ui() -> void:
 	chest_controls.add_child(banked_gold_withdraw_button)
 	chest_box.add_child(chest_controls)
 	stash_panel.hide()
+	# Craft station is accessible from the stash's safe camp, not during combat.
+	craft_panel = make_panel(Vector2(323, 135), Vector2(506, 360), Color("8cd9b7"))
+	layer.add_child(craft_panel)
+	var craft_box := VBoxContainer.new()
+	craft_box.add_theme_constant_override("separation", 11)
+	craft_panel.get_child(0).add_child(craft_box)
+	craft_box.add_child(make_label("工作台  /  生存クラフト [N]", 26, Color("c3ffe3"), true))
+	craft_box.add_child(make_label("生還して倉庫に保管した素材を消費。素材はチーム共用、完成品は個人用。", 13, Color("ecf5ce"), true))
+	craft_info = make_label("", 15, Color("baf3ff"), true)
+	craft_info.custom_minimum_size = Vector2(455, 55)
+	craft_box.add_child(craft_info)
+	for recipe in range(CRAFT_RULES.NAMES.size()):
+		var craft_button := make_button("", Color("9bd5aa"), Vector2(440, 54))
+		craft_button.add_theme_font_size_override("font_size", 15)
+		craft_button.pressed.connect(craft_recipe.bind(recipe))
+		craft_box.add_child(craft_button)
+		craft_buttons.append(craft_button)
+	var craft_close := make_button("閉じる [N / Esc]", Color("c3d6d8"), Vector2(440, 35))
+	craft_close.pressed.connect(toggle_craft)
+	craft_box.add_child(craft_close)
+	craft_panel.hide()
 	choose_panel.hide()
 	cooking_panel.hide()
 	rabbit_menu.hide()
@@ -2516,6 +2557,7 @@ func reset_game() -> void:
 	survival_thirst = 100.0
 	survival_rations = 2
 	survival_water = 2
+	survival_bandages = 0
 	survival_damage_clock = 0.0
 	stew_meals = 0
 	broth_meals = 0
@@ -2612,6 +2654,8 @@ func reset_game() -> void:
 	upgrade_open = false
 	stash_open = false
 	stash_panel.hide()
+	craft_open = false
+	craft_panel.hide()
 	upgrade_target = "hero"
 	max_mp = 30.0
 	mp = 30.0
@@ -3406,7 +3450,9 @@ func _input(event: InputEvent) -> void:
 		return
 	if event.keycode != KEY_E:
 		return
-	if stash_open:
+	if craft_open:
+		toggle_craft()
+	elif stash_open:
 		toggle_stash()
 	elif merchant_open:
 		toggle_merchant()
@@ -3465,6 +3511,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			return
 		if coop != null and coop.is_guest():
 			# InputEvent E is handled by _input; process modal shortcuts here.
+			if craft_open:
+				if event.keycode in [KEY_N, KEY_ESCAPE]: toggle_craft()
+				elif event.keycode >= KEY_1 and event.keycode <= KEY_3: craft_recipe(event.keycode - KEY_1)
+				return
 			if inventory_open:
 				if event.keycode == KEY_B: toggle_inventory()
 				return
@@ -3505,6 +3555,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 				coop.send_guest_action("skill", 1)
 			elif event.keycode == KEY_B:
 				toggle_inventory()
+			elif event.keycode == KEY_N:
+				toggle_craft()
+			elif event.keycode == KEY_Y:
+				coop.send_guest_action("bandage", 1)
 			elif event.keycode == KEY_Z:
 				coop.send_guest_action("survival_use", 0)
 			elif event.keycode == KEY_X:
@@ -3524,6 +3578,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 				show_status("出撃をホストにリクエスト", Color("c3eeff"))
 			elif event.keycode == KEY_C:
 				toggle_controls()
+			return
+		if craft_open:
+			if event.keycode in [KEY_N, KEY_ESCAPE]: toggle_craft()
+			elif event.keycode >= KEY_1 and event.keycode <= KEY_3: craft_recipe(event.keycode - KEY_1)
 			return
 		if phase == "hub" and event.keycode == KEY_G:
 			start_sortie()
@@ -3602,6 +3660,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			return
 		if event.keycode == KEY_T:
 			toggle_rabbit_menu()
+		elif event.keycode == KEY_N:
+			toggle_craft()
+		elif event.keycode == KEY_Y:
+			use_bandage()
 		elif event.keycode == KEY_E:
 			interact_nearby()
 		elif event.keycode == KEY_SPACE:
@@ -5538,6 +5600,100 @@ func save_banked_gold() -> bool:
 	file.close()
 	return true
 
+# This transaction always executes on the host. Salvage is deposited
+# by extraction and persisted to disk; crafting never trusts a guest result.
+func craft_recipe(recipe: int) -> void:
+	if coop != null and coop.is_guest():
+		if craft_open:
+			coop.send_guest_action("craft", recipe)
+		return
+	craft_for_actor(recipe, false)
+	refresh_craft_ui()
+
+func craft_for_actor(recipe: int, guest: bool = false) -> void:
+	if state != "playing" or phase != "hub" or expedition_active or recipe < 0 or recipe >= CRAFT_RULES.NAMES.size():
+		return
+	var actor_pos: Vector2 = coop_guest_pos if guest else player
+	if actor_pos.distance_to(STASH_POS) > 160.0:
+		return
+	var supply_count := 0
+	match recipe:
+		0: supply_count = coop_guest_water if guest else survival_water
+		1: supply_count = coop_guest_rations if guest else survival_rations
+		2: supply_count = coop_guest_bandages if guest else survival_bandages
+	var available_carrots := coop_guest_carrots if guest else carrots
+	var available_mushrooms := coop_guest_mushrooms if guest else mushrooms
+	if not CRAFT_RULES.can_craft(recipe, stored_materials, available_carrots, available_mushrooms, supply_count):
+		if not guest:
+			show_status("素材・食材が足りないか、完成品の持ち上限です", Color("ffd1aa"))
+		return
+	var previous_materials: Array[int] = stored_materials.duplicate()
+	stored_materials = CRAFT_RULES.remaining_materials(recipe, stored_materials)
+	if not save_stored_materials():
+		stored_materials = previous_materials
+		return
+	# Only award the finished supplies after the material save succeeds.
+	if recipe == 0:
+		if guest: coop_guest_water += 2
+		else: survival_water += 2
+	elif recipe == 1:
+		if guest:
+			coop_guest_carrots -= 2
+			coop_guest_rations += 2
+		else:
+			carrots -= 2
+			survival_rations += 2
+	else:
+		if guest:
+			coop_guest_mushrooms -= 1
+			coop_guest_bandages += 1
+		else:
+			mushrooms -= 1
+			survival_bandages += 1
+	show_status("%sが%sをクラフト！" % ["仲間" if guest else "主人公", CRAFT_RULES.NAMES[recipe]], Color("b4ffe0"))
+	play_sound(AUDIO_RARE, -18.0)
+
+func toggle_craft() -> void:
+	if state != "playing":
+		return
+	if not craft_open:
+		if phase != "hub" or expedition_active or player.distance_to(STASH_POS) > 160.0:
+			show_status("拠点に戻り倉庫近くの工作台で[N]を押してね", Color("ffe6ac"))
+			return
+		# Only one modal should have keyboard focus at a time.
+		if stash_open or inventory_open or merchant_open or cooking_open or slot_open or rabbit_menu_open or upgrade_open or controls_open:
+			show_status("ほかのメニューを閉じてからクラフトしてね", Color("ffe6ac"))
+			return
+	craft_open = not craft_open
+	craft_panel.visible = craft_open
+	if craft_open:
+		refresh_craft_ui()
+
+func refresh_craft_ui() -> void:
+	if not craft_open or craft_panel == null:
+		return
+	craft_info.text = "保管素材: スクラップ%d  コア%d  結晶%d\nニンジン%d キノコ%d  |  水%d 食料%d 包帯%d" % [stored_materials[0], stored_materials[1], stored_materials[2], carrots, mushrooms, survival_water, survival_rations, survival_bandages]
+	for index in range(craft_buttons.size()):
+		craft_buttons[index].text = "[%d] %s\n%s" % [index + 1, CRAFT_RULES.NAMES[index], CRAFT_RULES.DESCRIPTIONS[index]]
+		var count := survival_water if index == 0 else (survival_rations if index == 1 else survival_bandages)
+		craft_buttons[index].disabled = not CRAFT_RULES.can_craft(index, stored_materials, carrots, mushrooms, count)
+
+func use_bandage() -> void:
+	if state != "playing" or hp <= 0.0 or hp >= max_hp or survival_bandages <= 0 or coop_host_downed_clock > 0.0 or coop_host_jailed:
+		return
+	survival_bandages -= 1
+	hp = minf(max_hp, hp + 45.0)
+	burst(player, Color("9fffd1"), 14)
+	show_status("応急包帯を使用！ HP+45", Color("bcffe0"))
+	play_sound(AUDIO_PICKUP, -13.0)
+
+func coop_guest_use_bandage() -> void:
+	if coop_guest_hp <= 0.0 or coop_guest_hp >= coop_guest_max_hp or coop_guest_bandages <= 0 or coop_guest_jailed or coop_guest_downed_clock > 0.0:
+		return
+	coop_guest_bandages -= 1
+	coop_guest_hp = minf(coop_guest_max_hp, coop_guest_hp + 45.0)
+	coop_emit_fx("revive", coop_guest_pos)
+
 func load_stored_materials() -> void:
 	stored_materials = [0, 0, 0]
 	if not FileAccess.file_exists(MATERIALS_SAVE):
@@ -5930,7 +6086,7 @@ func return_to_safe_hub() -> void:
 func start_sortie() -> void:
 	if state != "playing" or phase != "hub" or (coop != null and coop.is_guest()):
 		return
-	if stash_open or inventory_open or cooking_open or merchant_open or slot_open or rabbit_menu_open or upgrade_open or controls_open:
+	if stash_open or inventory_open or cooking_open or merchant_open or slot_open or rabbit_menu_open or upgrade_open or controls_open or craft_open:
 		show_status("メニューを閉じてから出撃してね", Color("ffe6b3"))
 		return
 	# Keep the starter camp and gear equipped. Waves no longer gate exploration.
@@ -6346,7 +6502,7 @@ func update_hud() -> void:
 	skill_text.text = "[Q] %s %s" % [SKILL_NAMES[class_id], ("強化" if level >= 10 else "習得済") if level >= 5 else "LV5で習得"]
 	if survival_status_label != null:
 		survival_status_label.visible = state == "playing" and expedition_active
-		survival_status_label.text = "空腹%d%% 水分%d%%\n[Z]食料%d [X]飲料%d  [B]素材" % [roundi(survival_hunger), roundi(survival_thirst), survival_rations, survival_water]
+		survival_status_label.text = "空腹%d%% 水分%d%%\n[Z]食料%d [X]飲料%d [Y]包帯%d [B]素材" % [roundi(survival_hunger), roundi(survival_thirst), survival_rations, survival_water, survival_bandages]
 		survival_status_label.add_theme_color_override("font_color", Color("ff9b88") if minf(survival_hunger, survival_thirst) < SURVIVAL_RULES.LOW_THRESHOLD else Color("a6e8cd"))
 	hotbar_container.visible = state == "playing" or state == "upgrade"
 	hotbar_currency.visible = state == "playing" or state == "upgrade"
