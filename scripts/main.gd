@@ -3883,10 +3883,23 @@ func update_enemies(delta: float) -> void:
 			"frost": normal_touch = 8.0
 			"ember": normal_touch = 11.0
 		var raw_damage := (24.0 if boss else (18.0 if elite else normal_touch)) * damage_scale * ALL_IN_RULES.danger_multiplier(wave)
-		if not is_in_safe_camp(target_pos) and (target_guest or target_rabbit or target_ally or not is_player_airborne()) and target_pos.distance_to(enemy["pos"]) < hit_radius and float(enemy["touch"]) <= 0.0:
+		if not is_in_safe_camp(target_pos) and (target_rabbit or target_ally or (not (coop_guest_jump_clock > 0.18) if target_guest else not is_player_airborne())) and target_pos.distance_to(enemy["pos"]) < hit_radius and float(enemy["touch"]) <= 0.0:
 			if target_guest:
-				coop_guest_hp = maxf(0.0, coop_guest_hp - raw_damage)
-				burst(coop_guest_pos, Color("b2dfff"), 8)
+				# Apply the same directional guard/parry concept to the remote player.
+				var guest_damage := raw_damage
+				if coop_guest_guard:
+					var facing := Vector2.RIGHT.rotated(coop_guest_aim)
+					var incoming := (enemy["pos"] as Vector2) - coop_guest_pos
+					if incoming.length_squared() > 0.01 and facing.dot(incoming.normalized()) > 0.0:
+						if coop_guest_guard_parry_clock > 0.0:
+							guest_damage = 0.0
+							coop_guest_guard_parry_clock = 0.0
+							coop_emit_fx("hit", coop_guest_pos)
+						else:
+							guest_damage *= 0.35
+				coop_guest_hp = maxf(0.0, coop_guest_hp - guest_damage)
+				if guest_damage > 0.0:
+					burst(coop_guest_pos, Color("b2dfff"), 8)
 				if coop_guest_hp <= 0.0 and coop_guest_downed_clock <= 0.0 and not coop_guest_jailed:
 					coop_guest_downed_clock = 20.0
 					coop_guest_shoot = false
