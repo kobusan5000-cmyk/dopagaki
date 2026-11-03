@@ -449,6 +449,7 @@ var projectile_speed_mult := 1.0
 var equipped: Dictionary = {"type": "weapon", "kind": 0, "rarity": 0, "name": "PISTOL"}
 var backpack: Array[Dictionary] = []
 var armor_equipped: Array[Dictionary] = [{}, {}, {}, {}]
+var coop_remote_host_equipped: Dictionary = {"type": "weapon", "kind": 0, "rarity": 0, "name": "PISTOL"}
 var coop_guest_equipped: Dictionary = {"type": "weapon", "kind": 0, "rarity": 0, "name": "PISTOL"}
 var coop_guest_armor: Array[Dictionary] = [{}, {}, {}, {}]
 var inventory_open := false
@@ -859,6 +860,7 @@ func coop_guest_tick(delta: float) -> void:
 		coop_snapshot_clock = 0.12
 		coop.send_snapshot({
 			"host_pos": player, "host_aim": aim_angle, "host_job": class_id, "host_name": character_name,
+			"host_equipped": equipped, "host_armor": armor_equipped,
 			"host_moving": Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_UP) or Input.is_key_pressed(KEY_DOWN),
 			"host_attacking": Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT),
 			"guest_pos": coop_guest_pos, "guest_hp": coop_guest_hp, "guest_job": coop_guest_job,
@@ -932,6 +934,7 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 	coop_remote_host_aim = float(data.get("host_aim", 0.0))
 	coop_remote_host_job = int(data.get("host_job", 0))
 	coop_remote_host_name = str(data.get("host_name", "ホスト"))
+	coop_remote_host_equipped = data.get("host_equipped", coop_remote_host_equipped).duplicate(true)
 	coop_remote_host_moving = bool(data.get("host_moving", false))
 	coop_remote_host_attacking = bool(data.get("host_attacking", false))
 	var incoming: Vector2 = data.get("guest_pos", player)
@@ -1030,6 +1033,10 @@ func draw_coop_teammate() -> void:
 		var attacking := coop_remote_host_attacking if coop.is_guest() else coop_guest_shoot
 		var frame := int(coop_remote_host_anim_time * 9.0) % 4 if animating else 0
 		draw_character(WOLF_ATTACK if attacking else WOLF_WALK, at, frame if animating or attacking else 0, cos(look) > 0.0, 1.85, Color("a5e6ff"))
+	var teammate_weapon: Dictionary = coop_remote_host_equipped if coop.is_guest() else coop_guest_equipped
+	if not teammate_weapon.is_empty():
+		var weapon_texture: Texture2D = item_icon(teammate_weapon)
+		draw_texture_rect(weapon_texture, Rect2(at + Vector2(20, -51), Vector2(34, 34)), false)
 	draw_string(ui_font, at + Vector2(-37, -82), name + " (2P)" if not coop.is_guest() else name + " (1P)", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, Color("b9efff"))
 
 func make_style(fill: Color, border: Color, radius: int = 14) -> StyleBoxFlat:
@@ -4703,9 +4710,12 @@ func extract_alive() -> void:
 	if extraction_hatch_active:
 		earned_cargo[0] -= EXTRACTION_RULES.HATCH_SCRAP_COST
 		earned_cargo[1] -= EXTRACTION_RULES.HATCH_CORE_COST
-	var bank: Array[Dictionary] = all_in_collect_gear()
-	# Extraction must not fail just because the stash is full. Overflow items
-	# remain persisted in the stash and can be withdrawn in the hub.
+	var kept_backpack: Array[Dictionary] = backpack.duplicate(true)
+	var kept_equipped: Dictionary = equipped.duplicate(true)
+	var kept_armor: Array[Dictionary] = armor_equipped.duplicate(true)
+	# Extraction preserves the loadout in the player inventory. Only explicit
+	# deposits through the stash UI transfer gear into storage.
+	var bank: Array[Dictionary] = []
 	var previous_gear: Array[Dictionary] = stash_items.duplicate(true)
 	var old_gold: int = banked_gold
 	var old_materials: Array[int] = stored_materials.duplicate()
@@ -4739,7 +4749,11 @@ func extract_alive() -> void:
 	var material_count: int = EXTRACTION_RULES.cargo_count(earned_cargo)
 	var gold_kept: int = coins
 	return_to_safe_hub()
-	show_status("脱出成功！ 装備%d個・素材%d個・%dGを保管。同じ職業で拠点へ帰還" % [gear_count, material_count, gold_kept], Color("a8ffdb"))
+	backpack = kept_backpack
+	equipped = kept_equipped
+	armor_equipped = kept_armor
+	refresh_inventory_ui()
+	show_status("脱出成功！ 装備はバッグに保持・素材%d個・%dGを保管" % [material_count, gold_kept], Color("a8ffdb"))
 
 # A successful extraction returns the player to the SAME job in a peaceful hub.
 # Do not call reset_game(): that would show the class selection screen and wipe farms.
