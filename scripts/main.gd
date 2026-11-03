@@ -250,6 +250,9 @@ var coop_guest_shoot := false
 var coop_guest_input_timeout := 0.0
 var coop_guest_interact := false
 var coop_guest_held_interact := false
+var coop_fx_serial := 0
+var coop_fx_events: Array[Dictionary] = []
+var coop_last_fx_serial := -1
 var coop_guest_fire_clock := 0.0
 var coop_guest_send_clock := 0.0
 var coop_snapshot_clock := 0.0
@@ -867,6 +870,7 @@ func coop_guest_tick(delta: float) -> void:
 			coop_guest_fire_clock = 0.42
 			var dir: Vector2 = Vector2.RIGHT.rotated(coop_guest_aim)
 			var weapon_kind := "kunai" if coop_guest_job == 6 else ("magic" if coop_guest_job in [3, 5] else "bullet")
+			coop_emit_fx("shot", coop_guest_pos + dir * 37.0)
 			projectiles.append({"pos": coop_guest_pos + dir * 37.0, "vel": dir * 850.0, "dmg": 8.0, "accuracy": 0.96, "radius": 5.0, "pierce": 1, "kind": weapon_kind, "tint": Color("b8f1ff"), "life": 1.25, "hit_ids": [], "crit_chance": 0.09, "trait": -1, "owner": "hero"})
 			raise_expedition_noise(coop_guest_pos, EXTRACTION_RULES.NOISE_SHOT_RADIUS, "attack")
 			play_sound(AUDIO_BOW, -23.0)
@@ -890,6 +894,7 @@ func coop_guest_tick(delta: float) -> void:
 			"farm_plots": farm_plots, "meal_displays": meal_displays, "guest_backpack": coop_guest_backpack,
 			"guest_equipped": coop_guest_equipped, "guest_armor": coop_guest_armor,
 			"guest_jump": coop_guest_jump_clock, "guest_guard": coop_guest_guard,
+			"fx_events": coop_fx_events, "fx_serial": coop_fx_serial,
 			"guest_seeds": coop_guest_seeds, "guest_melon_seeds": coop_guest_melon_seeds,
 			"guest_watermelon_seeds": coop_guest_watermelon_seeds,
 			"guest_carrots": coop_guest_carrots, "guest_melons": coop_guest_melons,
@@ -898,6 +903,37 @@ func coop_guest_tick(delta: float) -> void:
 			"hatch_active": extraction_hatch_active, "elapsed": expedition_elapsed,
 			"mint_pos": companion, "mint_hp": companion_hp, "rabbit_pos": rabbit_pet, "rabbit_hp": rabbit_hp
 		})
+
+func coop_emit_fx(kind: String, pos: Vector2) -> void:
+	if coop == null or not coop.is_host() or coop.peer_id <= 1:
+		return
+	coop_fx_serial += 1
+	coop_fx_events.append({"id": coop_fx_serial, "kind": kind, "pos": pos})
+	while coop_fx_events.size() > 24:
+		coop_fx_events.pop_front()
+
+func coop_apply_fx(data: Dictionary) -> void:
+	var latest := int(data.get("fx_serial", 0))
+	if coop_last_fx_serial < 0:
+		coop_last_fx_serial = latest
+		return
+	for event in data.get("fx_events", []):
+		var id := int(event.get("id", 0))
+		if id <= coop_last_fx_serial:
+			continue
+		var pos: Vector2 = event.get("pos", Vector2.ZERO)
+		match str(event.get("kind", "")):
+			"shot":
+				burst(pos, Color("b8f1ff"), 9)
+				play_sound(AUDIO_BOW, -18.0)
+			"hit":
+				emit_impact_sparks(pos, Color("b9e9ff"), 12, 170.0)
+				play_sound(AUDIO_IMPACT, -19.0)
+			"defeat":
+				burst(pos, Color("ffdf9c"), 18)
+				emit_impact_ring(pos, Color("fff1bc"), 54.0, 0.30, 4.0)
+				play_sound(AUDIO_DEFEAT, -11.0)
+	coop_last_fx_serial = latest
 
 func coop_client_tick(delta: float) -> void:
 	if not coop.is_guest():
@@ -955,6 +991,7 @@ func coop_client_tick(delta: float) -> void:
 func _on_coop_snapshot(data: Dictionary) -> void:
 	if not coop.is_guest():
 		return
+	coop_apply_fx(data)
 	coop_remote_host_pos = data.get("host_pos", coop_remote_host_pos)
 	coop_remote_host_aim = float(data.get("host_aim", 0.0))
 	coop_remote_host_job = int(data.get("host_job", 0))
@@ -3414,6 +3451,7 @@ func deal_enemy_damage(enemy: Dictionary, base_damage: float, impact_pos: Vector
 		enemy["alert_clock"] = EXTRACTION_RULES.ALERT_DURATION
 	enemy["hp"] = float(enemy["hp"]) - actual_damage
 	enemy["hurt"] = 0.20 if is_critical else 0.12
+	coop_emit_fx("hit", impact_pos)
 	add_damage_number(impact_pos, actual_damage, is_critical, Color("ffe478") if is_critical else Color("fff3da"))
 	if element_id == 0:
 		enemy["burn"] = maxf(float(enemy.get("burn", 0.0)), 3.0)
@@ -3978,6 +4016,7 @@ func cleanup_defeated_enemies() -> void:
 		elif rng.randf() < 0.57:
 			spawn_coins(death_spot, rng.randi_range(1, 3))
 		# Distinct satisfying enemy-defeat effect with small random pitch changes.
+		coop_emit_fx("defeat", death_spot)
 		if enemy_sound_cooldown <= 0.0:
 			play_sound(AUDIO_DEFEAT, -11.0, rng.randf_range(0.92, 1.10))
 			enemy_sound_cooldown = 0.07
