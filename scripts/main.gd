@@ -238,6 +238,22 @@ var coop_guest_seeds := 8
 var coop_guest_melon_seeds := 0
 var coop_guest_watermelon_seeds := 0
 var coop_guest_carrots := 2
+var coop_guest_mushrooms := 1
+var coop_guest_coins := 0
+var coop_guest_banked_gold := 0
+var coop_guest_stew_meals := 0
+var coop_guest_broth_meals := 0
+var coop_guest_melon_meals := 0
+var coop_guest_watermelon_meals := 0
+var coop_guest_food_buff_clock := 0.0
+var coop_guest_crop_selection := 0
+var coop_guest_stash: Array[Dictionary] = []
+var coop_guest_slot_serial := 0
+var coop_guest_last_slot_serial := 0
+var coop_guest_slot_result := "MISS"
+var coop_guest_slot_pending := false
+var coop_guest_slot_replay := false
+const COOP_GUEST_STORAGE_SAVE := "user://coop_guest_storage.json"
 var coop_guest_melons := 0
 var coop_guest_watermelons := 0
 var coop_guest_max_hp := 100.0
@@ -419,6 +435,7 @@ var rabbit_gear_level := 0
 var rabbit_affection := 35.0
 var rabbit_hunger := 48.0 # 0=空腹 / 100=満腹
 var rabbit_carried := false
+var coop_rabbit_carrier_guest := false
 var rabbit_pet_glow := 0.0
 var rabbit_menu_open := false
 var rabbit_menu: PanelContainer
@@ -737,6 +754,25 @@ func _on_coop_peer_connected(id: int) -> void:
 	coop_guest_guard = false
 	coop_guest_equipped = {"type": "weapon", "kind": 0, "rarity": 0, "name": "PISTOL"}
 	coop_guest_armor = [{}, {}, {}, {}]
+	coop_guest_coins = 0
+	coop_guest_carrots = 2
+	coop_guest_mushrooms = 1
+	coop_guest_melon_seeds = 0
+	coop_guest_watermelon_seeds = 0
+	coop_guest_seeds = 8
+	coop_guest_melons = 0
+	coop_guest_watermelons = 0
+	coop_guest_stew_meals = 0
+	coop_guest_broth_meals = 0
+	coop_guest_melon_meals = 0
+	coop_guest_watermelon_meals = 0
+	coop_guest_crop_selection = 0
+	coop_guest_food_buff_clock = 0.0
+	coop_guest_slot_serial = 0
+	coop_guest_slot_pending = false
+	coop_guest_slot_result = "MISS"
+	coop_guest_slot_replay = false
+	coop_guest_load_storage()
 	coop_guest_backpack.clear()
 	for i in range(BAG_CAPACITY):
 		coop_guest_backpack.append({})
@@ -750,6 +786,7 @@ func _on_coop_peer_disconnected(_id: int) -> void:
 	coop_guest_dir = Vector2.ZERO
 	coop_guest_shoot = false
 	coop_guest_input_timeout = 0.0
+	coop_rabbit_carrier_guest = false
 	coop_guest_interact = false
 	coop_guest_held_interact = false
 	show_status("仲間が切断した。ソロプレイに戻る", Color("ffd4a8"))
@@ -818,6 +855,15 @@ func _on_coop_guest_action(action: String, value: int) -> void:
 			coop_guest_backpack[value] = previous
 	elif action == "skill":
 		coop_guest_cast_skill()
+	elif action == "mint_upgrade" and value >= 0 and value < companion_stats.size():
+		if pending_mint_points > 0:
+			companion_stats[value] += 1
+			pending_mint_points -= 1
+			if value == 2:
+				companion_max_hp += 15.0
+				companion_hp = minf(companion_max_hp, companion_hp + 25.0)
+			elif value == 3:
+				companion_heal_clock = maxf(0.0, companion_heal_clock - 2.0)
 	elif action == "upgrade" and value >= 0 and value < coop_guest_stats.size():
 		if coop_guest_pending_points > 0:
 			coop_guest_stats[value] += 1
@@ -828,6 +874,22 @@ func _on_coop_guest_action(action: String, value: int) -> void:
 			elif value == 3:
 				coop_guest_max_mp += 10.0
 				coop_guest_mp = minf(coop_guest_max_mp, coop_guest_mp + 12.0)
+	elif action == "crop" and value >= 0 and value < CROP_NAMES.size():
+		coop_guest_crop_selection = value
+	elif action == "slot_wager":
+		coop_guest_slot_wager(value)
+	elif action == "slot_claim":
+		coop_guest_slot_claim(value)
+	elif action == "rabbit" and value >= 0 and value < 4:
+		coop_guest_rabbit_action(value)
+	elif action == "cook" and value >= 0 and value < 4:
+		coop_guest_cook(value)
+	elif action == "buy" and value >= 0 and value < 8:
+		coop_guest_buy(value)
+	elif action == "eat" and value >= 0 and value < 4:
+		coop_guest_eat(value)
+	elif action in ["stash_deposit", "stash_withdraw", "stash_equip", "stash_gold", "drop", "unequip"]:
+		coop_guest_inventory_action(action, value)
 	elif action == "sortie" and phase == "hub" and not expedition_active:
 		start_sortie()
 	elif action == "display" and value >= 0 and value < 4:
@@ -838,6 +900,9 @@ func _on_coop_guest_action(action: String, value: int) -> void:
 				break
 		if camp_i < 0:
 			return
+		var available := [coop_guest_stew_meals, coop_guest_broth_meals, coop_guest_melon_meals, coop_guest_watermelon_meals]
+		if available[value] <= 0:
+			return
 		var taken: Array[int] = []
 		for meal in meal_displays:
 			if int(meal["camp"]) == camp_i:
@@ -846,9 +911,226 @@ func _on_coop_guest_action(action: String, value: int) -> void:
 			if not taken.has(spot):
 				var pos: Vector2 = CAMP_STATIONS[camp_i] + Vector2(-105.0 + float(spot % 4) * 70.0, 145.0 + float(spot / 4) * 72.0)
 				meal_displays.append({"camp": camp_i, "spot": spot, "kind": value, "pos": pos})
+				match value:
+					0: coop_guest_stew_meals -= 1
+					1: coop_guest_broth_meals -= 1
+					2: coop_guest_melon_meals -= 1
+					3: coop_guest_watermelon_meals -= 1
 				break
 
 # Both remote and local actors follow the same 20-second rescue rule.
+# Host-side guest hub actions: bounded, distance-validated, with separate
+# balances and inventory; a guest never mutates the host's save directly.
+func coop_guest_load_storage() -> void:
+	coop_guest_stash.clear()
+	coop_guest_banked_gold = 0
+	if not FileAccess.file_exists(COOP_GUEST_STORAGE_SAVE):
+		return
+	var decoded: Variant = JSON.parse_string(FileAccess.get_file_as_string(COOP_GUEST_STORAGE_SAVE))
+	if typeof(decoded) != TYPE_DICTIONARY:
+		return
+	coop_guest_banked_gold = maxi(0, int(decoded.get("bank", 0)))
+	for item in decoded.get("stash", []):
+		if typeof(item) == TYPE_DICTIONARY and str(item.get("type", "")) in ["weapon", "armor"] and coop_guest_stash.size() < STASH_MAX:
+			coop_guest_stash.append(item.duplicate(true))
+
+func coop_guest_save_storage() -> bool:
+	var file := FileAccess.open(COOP_GUEST_STORAGE_SAVE, FileAccess.WRITE)
+	if file == null:
+		show_status("ゲスト倉庫を保存できませんでした", Color("ffabab"))
+		return false
+	file.store_string(JSON.stringify({"bank": coop_guest_banked_gold, "stash": coop_guest_stash}))
+	file.close()
+	return true
+
+func coop_guest_inventory_action(action: String, index: int) -> void:
+	if action == "drop":
+		if index < 0 or index >= coop_guest_backpack.size() or coop_guest_backpack[index].is_empty():
+			return
+		var item: Dictionary = coop_guest_backpack[index].duplicate(true)
+		item["pos"] = coop_guest_pos + Vector2(47, -8)
+		item["life"] = 35.0
+		item["phase"] = 0.0
+		drops.append(item)
+		coop_guest_backpack[index] = {}
+		return
+	if action == "unequip":
+		if index < 0 or index >= coop_guest_armor.size() or coop_guest_armor[index].is_empty():
+			return
+		for bag_i in range(coop_guest_backpack.size()):
+			if coop_guest_backpack[bag_i].is_empty():
+				coop_guest_backpack[bag_i] = coop_guest_armor[index].duplicate(true)
+				coop_guest_armor[index] = {}
+				return
+		return
+	if phase != "hub" or expedition_active or coop_guest_pos.distance_to(STASH_POS) > 106.0:
+		return
+	var old_stash: Array[Dictionary] = coop_guest_stash.duplicate(true)
+	var old_bag: Array[Dictionary] = coop_guest_backpack.duplicate(true)
+	var old_equipped: Dictionary = coop_guest_equipped.duplicate(true)
+	var old_bank := coop_guest_banked_gold
+	var old_coins := coop_guest_coins
+	if action == "stash_deposit" and index >= 0 and index < coop_guest_backpack.size() and not coop_guest_backpack[index].is_empty() and coop_guest_stash.size() < STASH_MAX:
+		coop_guest_stash.append(coop_guest_backpack[index].duplicate(true))
+		coop_guest_backpack[index] = {}
+	elif action == "stash_equip" and coop_guest_stash.size() < STASH_MAX:
+		if int(coop_guest_equipped.get("rarity", 0)) == 0 and int(coop_guest_equipped.get("kind", 0)) == CLASS_WEAPONS[coop_guest_job]:
+			return # Starter weapons cannot be minted into unlimited stash copies.
+		coop_guest_stash.append(coop_guest_equipped.duplicate(true))
+		coop_guest_equipped = {"type": "weapon", "kind": CLASS_WEAPONS[coop_guest_job], "rarity": 0, "name": WEAPONS[CLASS_WEAPONS[coop_guest_job]]}
+	elif action == "stash_withdraw" and index >= 0 and index < coop_guest_stash.size():
+		for bag_i in range(coop_guest_backpack.size()):
+			if coop_guest_backpack[bag_i].is_empty():
+				coop_guest_backpack[bag_i] = coop_guest_stash[index].duplicate(true)
+				coop_guest_stash.remove_at(index)
+				break
+	elif action == "stash_gold" and coop_guest_banked_gold > 0:
+		var taken := mini(100, coop_guest_banked_gold)
+		coop_guest_banked_gold -= taken
+		coop_guest_coins += taken
+	else:
+		return
+	if not coop_guest_save_storage():
+		coop_guest_stash = old_stash
+		coop_guest_backpack = old_bag
+		coop_guest_equipped = old_equipped
+		coop_guest_banked_gold = old_bank
+		coop_guest_coins = old_coins
+
+func coop_guest_buy(index: int) -> void:
+	if phase != "hub" or coop_guest_pos.distance_to(MERCHANT_POS) > 108.0:
+		return
+	var costs := [50, 55, 135, 55, 12, 42, 75, 18]
+	if index < 0 or index >= costs.size() or coop_guest_coins < costs[index]:
+		return
+	if index < 4:
+		var has_space := false
+		for bag_item in coop_guest_backpack:
+			if bag_item.is_empty():
+				has_space = true
+				break
+		if not has_space:
+			return
+	coop_guest_coins -= costs[index]
+	match index:
+		0: spawn_drop(MERCHANT_POS + Vector2(110, 25), 1, 2, 0)
+		1: spawn_drop(MERCHANT_POS + Vector2(110, 25), 1, 1, 1)
+		2: spawn_drop(MERCHANT_POS + Vector2(110, 25), 2, 5, 3)
+		3: spawn_armor_drop(MERCHANT_POS + Vector2(110, 25), 1, 1)
+		4: coop_guest_seeds += 3
+		5: coop_guest_melon_seeds += 2
+		6: coop_guest_watermelon_seeds += 2
+		7: coop_guest_mushrooms += 2
+
+func coop_guest_rabbit_action(index: int) -> void:
+	if not rabbit_pet_enabled or rabbit_hp <= 0.0:
+		return
+	var saved_player := player
+	var saved_coins := coins
+	var saved_carrots := carrots
+	player = coop_guest_pos
+	coins = coop_guest_coins
+	carrots = coop_guest_carrots
+	rabbit_action_selected(index)
+	if index == 1:
+		coop_rabbit_carrier_guest = rabbit_carried
+	coop_guest_coins = coins
+	coop_guest_carrots = carrots
+	player = saved_player
+	coins = saved_coins
+	carrots = saved_carrots
+
+# A co-op spin is charged and rolled on the host, never trusted from the
+# client reel UI. The client displays the host's role and claims its serial.
+func coop_guest_slot_wager(cost: int) -> void:
+	if phase != "hub" or coop_guest_pos.distance_to(SLOT_POS) > 105.0 or coop_guest_slot_pending:
+		return
+	var actual_cost := 0 if coop_guest_slot_replay else 25
+	if cost != actual_cost or coop_guest_coins < actual_cost:
+		return
+	coop_guest_coins -= actual_cost
+	coop_guest_slot_replay = false
+	coop_guest_slot_pending = true
+	coop_guest_slot_serial += 1
+	var roll := rng.randf()
+	var cut := 1.0 / 17.0
+	coop_guest_slot_result = "BIG" if roll < cut else "MISS"
+	if coop_guest_slot_result == "MISS":
+		cut += 1.0 / 6.2
+		if roll < cut:
+			coop_guest_slot_result = "REG"
+		else:
+			for role in ["GRAPE", "CHERRY", "REPLAY"]:
+				cut += 1.0 / (6.0 if role == "GRAPE" else (35.0 if role == "CHERRY" else 7.3))
+				if roll < cut:
+					coop_guest_slot_result = role
+					break
+
+func coop_guest_slot_claim(serial: int) -> void:
+	if not coop_guest_slot_pending or serial != coop_guest_slot_serial:
+		return
+	coop_guest_slot_pending = false
+	var result := coop_guest_slot_result
+	coop_guest_slot_replay = result == "REPLAY"
+	var payouts := {"BIG": 160, "REG": 60, "GRAPE": 8, "CHERRY": 2, "REPLAY": 0, "MISS": 0}
+	var host_money := coins
+	coins = coop_guest_coins
+	lumi_slot_reward(result, int(payouts[result]))
+	coop_guest_coins = coins
+	coins = host_money
+
+func coop_guest_cook(index: int) -> void:
+	var near_camp := false
+	for camp_pos in CAMP_STATIONS:
+		if coop_guest_pos.distance_to(camp_pos) < 115.0:
+			near_camp = true
+			break
+	if not near_camp:
+		return
+	match index:
+		0:
+			if coop_guest_carrots < 2: return
+			coop_guest_carrots -= 2
+			coop_guest_stew_meals += 1
+		1:
+			if coop_guest_carrots < 1 or coop_guest_mushrooms < 1: return
+			coop_guest_carrots -= 1
+			coop_guest_mushrooms -= 1
+			coop_guest_broth_meals += 1
+		2:
+			if coop_guest_melons < 1: return
+			coop_guest_melons -= 1
+			coop_guest_melon_meals += 1
+		3:
+			if coop_guest_watermelons < 1: return
+			coop_guest_watermelons -= 1
+			coop_guest_watermelon_meals += 1
+	burst(coop_guest_pos, Color("ffc782"), 16)
+	play_sound(AUDIO_RARE, -16.0)
+
+func coop_guest_eat(index: int) -> void:
+	match index:
+		0:
+			if coop_guest_stew_meals < 1: return
+			coop_guest_stew_meals -= 1
+			coop_guest_hp = minf(coop_guest_max_hp, coop_guest_hp + 40.0)
+		1:
+			if coop_guest_broth_meals < 1: return
+			coop_guest_broth_meals -= 1
+			coop_guest_hp = minf(coop_guest_max_hp, coop_guest_hp + 25.0)
+			coop_guest_food_buff_clock = 30.0
+		2:
+			if coop_guest_melon_meals < 1: return
+			coop_guest_melon_meals -= 1
+			coop_guest_hp = minf(coop_guest_max_hp, coop_guest_hp + 30.0)
+			coop_guest_mp = minf(coop_guest_max_mp, coop_guest_mp + 25.0)
+		3:
+			if coop_guest_watermelon_meals < 1: return
+			coop_guest_watermelon_meals -= 1
+			coop_guest_hp = minf(coop_guest_max_hp, coop_guest_hp + 60.0)
+	burst(coop_guest_pos, Color("b7ffaf"), 20)
+	play_sound(AUDIO_PICKUP, -12.0)
+
 func coop_revive_host() -> void:
 	if coop_host_downed_clock <= 0.0 or coop_host_jailed:
 		return
@@ -902,6 +1184,16 @@ func coop_process_guest_interaction() -> void:
 	if coop_host_downed_clock > 0.0 and coop_guest_pos.distance_to(player) < 100.0:
 		coop_revive_host()
 		return
+	# Guest pickup of placed food and seed drops must be server-authoritative.
+	for meal_i in range(meal_displays.size() - 1, -1, -1):
+		if coop_guest_pos.distance_to(meal_displays[meal_i]["pos"]) < 62.0:
+			match int(meal_displays[meal_i]["kind"]):
+				0: coop_guest_stew_meals += 1
+				1: coop_guest_broth_meals += 1
+				2: coop_guest_melon_meals += 1
+				3: coop_guest_watermelon_meals += 1
+			meal_displays.remove_at(meal_i)
+			return
 	# Temporarily use the guest's position and inventory for host-authoritative
 	# pickups/farming. Restore host state before the next simulation step.
 	var host_pos: Vector2 = player
@@ -910,6 +1202,8 @@ func coop_process_guest_interaction() -> void:
 	var host_melon_seeds: int = melon_seeds
 	var host_watermelon_seeds: int = watermelon_seeds
 	var host_carrots: int = carrots
+	var host_mushrooms: int = mushrooms
+	var host_crop_selection: int = crop_selection
 	var host_melons: int = melons
 	var host_watermelons: int = watermelons
 	player = coop_guest_pos
@@ -918,6 +1212,8 @@ func coop_process_guest_interaction() -> void:
 	melon_seeds = coop_guest_melon_seeds
 	watermelon_seeds = coop_guest_watermelon_seeds
 	carrots = coop_guest_carrots
+	mushrooms = coop_guest_mushrooms
+	crop_selection = coop_guest_crop_selection
 	melons = coop_guest_melons
 	watermelons = coop_guest_watermelons
 	# Prioritize nearby equipment before extraction sites and crates.
@@ -933,11 +1229,17 @@ func coop_process_guest_interaction() -> void:
 		farm_interact()
 	elif expedition_active:
 		interact_expedition_site()
+	else:
+		for seed_i in range(crop_drops.size() - 1, -1, -1):
+			if player.distance_to(crop_drops[seed_i]["pos"]) < 95.0:
+				collect_crop_seed(seed_i)
+				break
 	coop_guest_backpack = backpack.duplicate(true)
 	coop_guest_seeds = seeds
 	coop_guest_melon_seeds = melon_seeds
 	coop_guest_watermelon_seeds = watermelon_seeds
 	coop_guest_carrots = carrots
+	coop_guest_mushrooms = mushrooms
 	coop_guest_melons = melons
 	coop_guest_watermelons = watermelons
 	player = host_pos
@@ -946,6 +1248,8 @@ func coop_process_guest_interaction() -> void:
 	melon_seeds = host_melon_seeds
 	watermelon_seeds = host_watermelon_seeds
 	carrots = host_carrots
+	mushrooms = host_mushrooms
+	crop_selection = host_crop_selection
 	melons = host_melons
 	watermelons = host_watermelons
 	refresh_inventory_ui()
@@ -961,6 +1265,7 @@ func coop_guest_tick(delta: float) -> void:
 	coop_guest_fire_clock = maxf(0.0, coop_guest_fire_clock - delta)
 	coop_guest_mp = minf(coop_guest_max_mp, coop_guest_mp + (1.6 + float(coop_guest_stats[3]) * 0.3) * delta)
 	coop_guest_skill_buff_clock = maxf(0.0, coop_guest_skill_buff_clock - delta)
+	coop_guest_food_buff_clock = maxf(0.0, coop_guest_food_buff_clock - delta)
 	coop_guest_skill_guard_clock = maxf(0.0, coop_guest_skill_guard_clock - delta)
 	coop_guest_heal_spell_clock = maxf(0.0, coop_guest_heal_spell_clock - delta)
 	coop_guest_shadow_clone_clock = maxf(0.0, coop_guest_shadow_clone_clock - delta)
@@ -975,12 +1280,21 @@ func coop_guest_tick(delta: float) -> void:
 	if coop_guest_input_timeout <= 0.0:
 		coop_guest_dir = Vector2.ZERO
 		coop_guest_shoot = false
+	if coop_host_jailed and coop_guest_jailed and expedition_active:
+		return_to_safe_hub()
+		show_status("2人とも脱出失敗。持込装備を失い安全区域へ", Color("ffbaba"))
 	if state == "playing" and coop_guest_hp > 0.0 and not coop_guest_jailed:
-		coop_guest_pos = (coop_guest_pos + coop_guest_dir.limit_length(1.0) * 260.0 * delta + (coop_guest_jump_dir * 270.0 * delta if coop_guest_jump_clock > 0.0 else Vector2.ZERO)).clamp(ARENA.position + Vector2(35, 45), ARENA.end - Vector2(35, 35))
+		var guest_base_speed := 297.0 if coop_guest_job == 1 else (245.0 if coop_guest_job == 2 else (235.0 if coop_guest_job == 4 else (309.0 if coop_guest_job == 6 else 262.0)))
+		var guest_speed := guest_base_speed * (0.64 if coop_guest_guard else 1.0) * (1.0 + float(coop_guest_stats[1]) * 0.04) * (1.25 if coop_guest_food_buff_clock > 0.0 else 1.0) * (1.3 if coop_guest_skill_buff_clock > 0.0 else 1.0)
+		coop_guest_pos = (coop_guest_pos + coop_guest_dir.limit_length(1.0) * guest_speed * delta + (coop_guest_jump_dir * 270.0 * delta if coop_guest_jump_clock > 0.0 else Vector2.ZERO)).clamp(ARENA.position + Vector2(35, 45), ARENA.end - Vector2(35, 35))
 		# Coins are auto-collected for either player, not only the host.
 		for coin_i in range(coin_drops.size() - 1, -1, -1):
 			if coop_guest_pos.distance_to(coin_drops[coin_i]["pos"]) < 44.0:
+				var host_money := coins
+				coins = coop_guest_coins
 				collect_coin(coin_i)
+				coop_guest_coins = coins
+				coins = host_money
 		if expedition_active and coop_guest_shoot and coop_guest_fire_clock <= 0.0 and not is_in_safe_camp(coop_guest_pos):
 			coop_guest_attack()
 	if coop_host_downed_clock > 0.0:
@@ -994,6 +1308,7 @@ func coop_guest_tick(delta: float) -> void:
 				backpack.append({})
 			equipped = {"type": "weapon", "kind": CLASS_WEAPONS[class_id], "rarity": 0, "name": WEAPONS[CLASS_WEAPONS[class_id]]}
 			armor_equipped = [{}, {}, {}, {}]
+			coins = 0
 			show_status("ホストの救助時間切れ！ 装備を失い牢屋へ", Color("ffbaba"))
 	if coop_guest_downed_clock > 0.0:
 		coop_guest_downed_clock = maxf(0.0, coop_guest_downed_clock - delta)
@@ -1005,6 +1320,7 @@ func coop_guest_tick(delta: float) -> void:
 				coop_guest_backpack.append({})
 			coop_guest_equipped = {"type": "weapon", "kind": CLASS_WEAPONS[coop_guest_job], "rarity": 0, "name": WEAPONS[CLASS_WEAPONS[coop_guest_job]]}
 			coop_guest_armor = [{}, {}, {}, {}]
+			coop_guest_coins = 0
 			show_status("仲間の救助時間切れ！ 装備を失い牢屋へ", Color("ffbaba"))
 	if coop_guest_interact:
 		coop_guest_interact = false
@@ -1027,7 +1343,12 @@ func coop_guest_tick(delta: float) -> void:
 			"phase": phase, "state": state, "expedition": expedition_active, "wave": wave,
 			"enemies": enemies, "projectiles": projectiles, "orbs": hostile_orbs,
 			"drops": drops, "coins_on_ground": coin_drops, "crates": search_crates,
-			"materials": carried_materials, "coins": coins,
+			"materials": carried_materials, "coins": coop_guest_coins, "guest_banked_gold": coop_guest_banked_gold,
+			"guest_mushrooms": coop_guest_mushrooms, "guest_stew": coop_guest_stew_meals,
+			"guest_broth": coop_guest_broth_meals, "guest_melon_meals": coop_guest_melon_meals,
+			"guest_watermelon_meals": coop_guest_watermelon_meals, "guest_food_buff": coop_guest_food_buff_clock,
+			"guest_stash": coop_guest_stash,
+			"guest_slot_serial": coop_guest_slot_serial, "guest_slot_result": coop_guest_slot_result,
 			"farm_plots": farm_plots, "meal_displays": meal_displays, "guest_backpack": coop_guest_backpack,
 			"guest_equipped": coop_guest_equipped, "guest_armor": coop_guest_armor,
 			"guest_jump": coop_guest_jump_clock, "guest_guard": coop_guest_guard,
@@ -1039,7 +1360,10 @@ func coop_guest_tick(delta: float) -> void:
 			"guest_watermelons": coop_guest_watermelons,
 			"extract_clock": extraction_clock, "active_exit": active_exit,
 			"hatch_active": extraction_hatch_active, "elapsed": expedition_elapsed,
-			"mint_pos": companion, "mint_hp": companion_hp, "rabbit_pos": rabbit_pet, "rabbit_hp": rabbit_hp
+			"mint_pos": companion, "mint_hp": companion_hp, "rabbit_pos": rabbit_pet, "rabbit_hp": rabbit_hp,
+			"mint_level": companion_level, "mint_stats": companion_stats, "mint_points": pending_mint_points,
+			"rabbit_hunger": rabbit_hunger, "rabbit_affection": rabbit_affection,
+			"rabbit_gear": rabbit_gear_level, "rabbit_carried": rabbit_carried, "rabbit_mode": rabbit_pet_mode
 		})
 
 # Reuse the host weapon implementation so the guest's equipped weapon determines
@@ -1221,12 +1545,18 @@ func coop_client_tick(delta: float) -> void:
 	if state == "playing":
 		jump_clock = maxf(0.0, jump_clock - delta)
 		jump_cooldown = maxf(0.0, jump_cooldown - delta)
-		player = (player + (direction * 260.0 * delta + jump_direction * 270.0 * delta if jump_clock > 0.0 else direction * 260.0 * delta) if coop_guest_hp > 0.0 and not coop_guest_jailed else player).clamp(ARENA.position + Vector2(35, 45), ARENA.end - Vector2(35, 35))
+		var guest_base_speed := 297.0 if class_id == 1 else (245.0 if class_id == 2 else (235.0 if class_id == 4 else (309.0 if class_id == 6 else 262.0)))
+		var guest_speed := guest_base_speed * (0.64 if guard_active else 1.0) * (1.0 + float(hero_stats[1]) * 0.04) * (1.25 if food_buff_clock > 0.0 else 1.0) * (1.3 if skill_buff_clock > 0.0 else 1.0)
+		player = (player + (direction * guest_speed * delta + jump_direction * 270.0 * delta if jump_clock > 0.0 else direction * guest_speed * delta) if coop_guest_hp > 0.0 and not coop_guest_jailed else player).clamp(ARENA.position + Vector2(35, 45), ARENA.end - Vector2(35, 35))
 		camera.position = player
 		# The guest does not run the host simulation, so update proximity hints locally.
 		pickup_hint.text = ""
-		if not inventory_open and not cooking_open and not slot_open:
-			if player.distance_to(SLOT_POS) < 105.0:
+		if not inventory_open and not cooking_open and not slot_open and not stash_open and not merchant_open:
+			if phase == "hub" and player.distance_to(STASH_POS) < 106.0:
+				pickup_hint.text = "[E] 倉庫"
+			elif phase == "hub" and player.distance_to(MERCHANT_POS) < 108.0:
+				pickup_hint.text = "[E] 商人"
+			elif player.distance_to(SLOT_POS) < 105.0:
 				pickup_hint.text = "[E] スロット"
 			elif nearest_camp_index() >= 0:
 				pickup_hint.text = "[E] 料理"
@@ -1283,6 +1613,24 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 	expedition_active = bool(data.get("expedition", false))
 	wave = int(data.get("wave", 0))
 	coins = int(data.get("coins", 0))
+	var slot_serial := int(data.get("guest_slot_serial", 0))
+	if slot_serial > coop_guest_last_slot_serial:
+		if slot_open and not bool(slot_panel.get("spinning")):
+			slot_panel.call("set_wallet", coins)
+			slot_panel.call("begin_spin")
+			slot_panel.set("result_name", str(data.get("guest_slot_result", "MISS")))
+		coop_guest_last_slot_serial = slot_serial
+	banked_gold = int(data.get("guest_banked_gold", banked_gold))
+	mushrooms = int(data.get("guest_mushrooms", mushrooms))
+	stew_meals = int(data.get("guest_stew", stew_meals))
+	broth_meals = int(data.get("guest_broth", broth_meals))
+	melon_meals = int(data.get("guest_melon_meals", melon_meals))
+	watermelon_meals = int(data.get("guest_watermelon_meals", watermelon_meals))
+	food_buff_clock = float(data.get("guest_food_buff", 0.0))
+	if data.has("guest_stash"):
+		stash_items.clear()
+		for item in data["guest_stash"]:
+			stash_items.append(item)
 	if data.has("farm_plots") and (data["farm_plots"] as Array).size() > 0:
 		farm_plots.clear()
 		for plot in data["farm_plots"]:
@@ -1330,7 +1678,17 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 		rabbit_pet = coop_target_rabbit_pos
 	coop_mint_target_initialized = true
 	companion_hp = float(data.get("mint_hp", companion_hp))
+	companion_level = int(data.get("mint_level", companion_level))
+	pending_mint_points = int(data.get("mint_points", pending_mint_points))
+	if data.has("mint_stats"):
+		for stat_i in range(mini(companion_stats.size(), data["mint_stats"].size())):
+			companion_stats[stat_i] = int(data["mint_stats"][stat_i])
 	rabbit_hp = float(data.get("rabbit_hp", rabbit_hp))
+	rabbit_hunger = float(data.get("rabbit_hunger", rabbit_hunger))
+	rabbit_affection = float(data.get("rabbit_affection", rabbit_affection))
+	rabbit_gear_level = int(data.get("rabbit_gear", rabbit_gear_level))
+	rabbit_carried = bool(data.get("rabbit_carried", rabbit_carried))
+	rabbit_pet_mode = str(data.get("rabbit_mode", rabbit_pet_mode))
 	camera.position = player
 	choose_panel.hide()
 	hub_sortie_button.hide()
@@ -1343,10 +1701,16 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 		refresh_hotbar()
 	if cooking_open:
 		refresh_cooking_ui()
+	if merchant_open:
+		refresh_merchant_ui()
+	if stash_open:
+		refresh_stash_ui()
 	if slot_open:
 		refresh_slot_ui()
 	if upgrade_open:
 		refresh_upgrade_panel()
+	if rabbit_menu_open:
+		refresh_rabbit_menu()
 	update_hud()
 	queue_redraw()
 
@@ -2423,6 +2787,10 @@ func refresh_cooking_ui() -> void:
 	cooking_info.text = "ニンジン%d  キノコ%d  メロン%d  スイカ%d\n作り置き: シチュー%d [H] / スープ%d [J] / ジュース%d [K] / パフェ%d [L]" % [carrots, mushrooms, melons, watermelons, stew_meals, broth_meals, melon_meals, watermelon_meals]
 
 func cook_recipe(which: int) -> void:
+	if coop != null and coop.is_guest():
+		if cooking_open:
+			coop.send_guest_action("cook", which)
+		return
 	if state != "playing" or not cooking_open:
 		return
 	if which == 0:
@@ -2476,12 +2844,8 @@ func add_meal_amount(kind: int, increment: int) -> void:
 
 func place_meal_display(kind: int) -> void:
 	if coop != null and coop.is_guest():
-		if not cooking_open or meal_amount(kind) <= 0 or nearest_camp_index() < 0:
-			show_status("展示できる料理がありません", Color("ffc0a3"))
-			return
-		add_meal_amount(kind, -1)
-		coop.send_guest_action("display", kind)
-		refresh_cooking_ui()
+		if cooking_open and meal_amount(kind) > 0 and nearest_camp_index() >= 0:
+			coop.send_guest_action("display", kind)
 		return
 	if not cooking_open or meal_amount(kind) <= 0:
 		show_status("その料理の作り置きがありません", Color("ffc0a3"))
@@ -2601,6 +2965,10 @@ func refresh_merchant_ui() -> void:
 		merchant_buttons[i].disabled = coins < costs[i] or (i < 4 and free_backpack_slot() < 0)
 
 func buy_merchant_item(index: int) -> void:
+	if coop != null and coop.is_guest():
+		if merchant_open:
+			coop.send_guest_action("buy", index)
+		return
 	if not merchant_open or index < 0 or index > 7:
 		return
 	var costs := [50, 55, 135, 55, 12, 42, 75, 18]
@@ -2649,6 +3017,10 @@ func refresh_slot_ui() -> void:
 		slot_panel.call("set_wallet", coins)
 
 func lumi_slot_wager(cost: int) -> void:
+	if coop != null and coop.is_guest():
+		if slot_open and not bool(slot_panel.get("spinning")) and coins >= cost:
+			coop.send_guest_action("slot_wager", cost)
+		return
 	if state != "playing" or not slot_open or coins < cost:
 		refresh_slot_ui()
 		return
@@ -2662,6 +3034,9 @@ func lumi_slot_reel_stopped(_index: int) -> void:
 	play_sound(AUDIO_PICKUP, -24.0, 1.7)
 
 func lumi_slot_reward(outcome: String, payout: int) -> void:
+	if coop != null and coop.is_guest():
+		coop.send_guest_action("slot_claim", coop_guest_last_slot_serial)
+		return
 	# The Godot reels decide the outcome before the STOP buttons animate it.
 	# Payment and loot are awarded here, never by browser-side scripts.
 	coins += maxi(0, payout)
@@ -2895,13 +3270,23 @@ func _input(event: InputEvent) -> void:
 		return
 	if event.keycode != KEY_E:
 		return
-	if slot_open:
+	if stash_open:
+		toggle_stash()
+	elif merchant_open:
+		toggle_merchant()
+	elif slot_open:
 		toggle_slot()
 	elif cooking_open:
 		toggle_cooking()
-	elif player.distance_to(SLOT_POS) < 105.0:
+	elif (coop_host_downed_clock > 0.0 and player.distance_to(coop_remote_host_pos) < 100.0) or not drops.filter(func(d): return player.distance_to(d["pos"]) < 92.0).is_empty() or not meal_displays.filter(func(m): return player.distance_to(m["pos"]) < 62.0).is_empty():
+		coop_guest_interact_pending = true
+	elif phase == "hub" and player.distance_to(STASH_POS) < 106.0:
+		toggle_stash()
+	elif phase == "hub" and player.distance_to(MERCHANT_POS) < 108.0:
+		toggle_merchant()
+	elif phase == "hub" and player.distance_to(SLOT_POS) < 105.0:
 		toggle_slot()
-	elif nearest_camp_index() >= 0:
+	elif nearest_camp_index() >= 0 and not expedition_active:
 		toggle_cooking()
 	else:
 		coop_guest_interact_pending = true
@@ -2936,40 +3321,57 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			player = CAMP_STATIONS[0] + Vector2(0, 55)
 			return
 		if coop != null and coop.is_guest():
-			if event.keycode == KEY_E:
-				if slot_open:
-					toggle_slot()
-				elif cooking_open:
-					toggle_cooking()
-				elif not expedition_active and player.distance_to(SLOT_POS) < 105.0:
-					toggle_slot()
-				elif not expedition_active and nearest_camp_index() >= 0:
-					toggle_cooking()
-				else:
-					coop_guest_interact_pending = true
-			elif event.keycode == KEY_ESCAPE and cooking_open:
-				toggle_cooking()
-			elif event.keycode == KEY_ESCAPE and slot_open:
-				toggle_slot()
-			elif event.keycode == KEY_F:
+			# InputEvent E is handled by _input; process modal shortcuts here.
+			if stash_open:
+				if event.keycode == KEY_ESCAPE: toggle_stash()
+				return
+			if merchant_open:
+				if event.keycode == KEY_ESCAPE: toggle_merchant()
+				elif event.keycode >= KEY_1 and event.keycode <= KEY_8: buy_merchant_item(event.keycode - KEY_1)
+				return
+			if cooking_open:
+				if event.keycode == KEY_ESCAPE: toggle_cooking()
+				elif event.keycode >= KEY_1 and event.keycode <= KEY_4: cook_recipe(event.keycode - KEY_1)
+				elif event.keycode >= KEY_5 and event.keycode <= KEY_8: place_meal_display(event.keycode - KEY_5)
+				return
+			if rabbit_menu_open:
+				if event.keycode in [KEY_ESCAPE, KEY_T]: toggle_rabbit_menu()
+				elif event.keycode >= KEY_1 and event.keycode <= KEY_4: rabbit_action_selected(event.keycode - KEY_1)
+				return
+			if slot_open:
+				if event.keycode == KEY_ESCAPE: toggle_slot()
+				else: slot_panel.call("handle_slot_key", event.keycode)
+				return
+			if upgrade_open:
+				if event.keycode in [KEY_P, KEY_ESCAPE]: toggle_upgrade_menu()
+				elif event.keycode == KEY_TAB: set_upgrade_target("mint" if upgrade_target == "hero" else "hero")
+				elif event.keycode >= KEY_1 and event.keycode <= KEY_6: select_upgrade(event.keycode - KEY_1)
+				return
+			if event.keycode == KEY_F:
 				crop_selection = (crop_selection + 1) % CROP_NAMES.size()
+				coop.send_guest_action("crop", crop_selection)
 				show_status("作物: %s" % CROP_NAMES[crop_selection])
-			elif event.keycode == KEY_I:
-				pass # Handled in coop_client_tick.
-			elif event.keycode == KEY_SPACE:
-				coop.send_guest_action("jump", 1)
-				start_jump()
-			elif event.keycode >= KEY_1 and event.keycode <= KEY_5 and not upgrade_open:
-				equip_backpack_item(event.keycode - KEY_1)
-			elif event.keycode == KEY_Q:
-				coop.send_guest_action("skill", 1)
+			elif event.keycode == KEY_T:
+				toggle_rabbit_menu()
 			elif event.keycode == KEY_P:
 				toggle_upgrade_menu()
-			elif upgrade_open and event.keycode >= KEY_1 and event.keycode <= KEY_6:
-				select_upgrade(event.keycode - KEY_1)
+			elif event.keycode == KEY_Q:
+				coop.send_guest_action("skill", 1)
+			elif event.keycode == KEY_H:
+				coop.send_guest_action("eat", 0)
+			elif event.keycode == KEY_J:
+				coop.send_guest_action("eat", 1)
+			elif event.keycode == KEY_K:
+				coop.send_guest_action("eat", 2)
+			elif event.keycode == KEY_L:
+				coop.send_guest_action("eat", 3)
+			elif event.keycode >= KEY_1 and event.keycode <= KEY_5:
+				equip_backpack_item(event.keycode - KEY_1)
 			elif event.keycode == KEY_G:
 				coop.send_guest_action("sortie", 1)
-				show_status("ホストに出撃をリクエストしたよ", Color("c3eeff"))
+				show_status("出撃をホストにリクエスト", Color("c3eeff"))
+			elif event.keycode == KEY_C:
+				toggle_controls()
 			return
 		if phase == "hub" and event.keycode == KEY_G:
 			start_sortie()
@@ -4574,6 +4976,10 @@ func equip_backpack_item(index: int) -> void:
 	update_hud()
 
 func drop_backpack_slot(index: int) -> void:
+	if coop != null and coop.is_guest():
+		if inventory_open:
+			coop.send_guest_action("drop", index)
+		return
 	if not inventory_open or index < 0 or index >= backpack.size():
 		return
 	if backpack[index].is_empty():
@@ -4590,6 +4996,10 @@ func drop_backpack_slot(index: int) -> void:
 	update_hud()
 
 func unequip_armor(slot: int) -> void:
+	if coop != null and coop.is_guest():
+		if inventory_open:
+			coop.send_guest_action("unequip", slot)
+		return
 	if not inventory_open or slot < 0 or slot >= armor_equipped.size():
 		return
 	if armor_equipped[slot].is_empty():
@@ -4877,8 +5287,8 @@ func refresh_upgrade_panel() -> void:
 func select_upgrade(index: int) -> void:
 	if not upgrade_open or index < 0 or index >= 6:
 		return
-	if coop != null and coop.is_guest() and upgrade_target == "hero":
-		coop.send_guest_action("upgrade", index)
+	if coop != null and coop.is_guest():
+		coop.send_guest_action("upgrade" if upgrade_target == "hero" else "mint_upgrade", index)
 		return
 	if upgrade_target == "hero":
 		if pending_hero_points <= 0:
@@ -4964,6 +5374,10 @@ func save_stored_materials() -> bool:
 	return true
 
 func withdraw_banked_gold() -> void:
+	if coop != null and coop.is_guest():
+		if stash_open:
+			coop.send_guest_action("stash_gold", 0)
+		return
 	if state != "playing" or not stash_open or wave >= 1 or banked_gold <= 0:
 		return
 	var taken: int = mini(100, banked_gold)
@@ -5029,6 +5443,10 @@ func refresh_stash_ui() -> void:
 		button.expand_icon = true
 
 func stash_deposit_backpack(index: int) -> void:
+	if coop != null and coop.is_guest():
+		if stash_open:
+			coop.send_guest_action("stash_deposit", index)
+		return
 	if wave >= 1:
 		show_status("探索中は預けられない。脱出してから倉庫を使おう", Color("ffe0ae"))
 		return
@@ -5049,6 +5467,10 @@ func stash_deposit_backpack(index: int) -> void:
 	show_status("倉庫に預けた！ 次の探索でも取り出せます", Color("ffe7a5"))
 
 func stash_deposit_equipped() -> void:
+	if coop != null and coop.is_guest():
+		if stash_open:
+			coop.send_guest_action("stash_equip", 0)
+		return
 	if wave >= 1:
 		show_status("探索中は預けられない。脱出してから倉庫を使おう", Color("ffe0ae"))
 		return
@@ -5069,6 +5491,10 @@ func stash_deposit_equipped() -> void:
 	show_status("武器を倉庫へ。初期銃に切り替えた", Color("ffe7a5"))
 
 func stash_withdraw(index: int) -> void:
+	if coop != null and coop.is_guest():
+		if stash_open:
+			coop.send_guest_action("stash_withdraw", index)
+		return
 	if not stash_open or index < 0 or index >= stash_items.size():
 		return
 	var slot: int = free_backpack_slot()
@@ -5146,6 +5572,14 @@ func extract_alive() -> void:
 	var gear_count: int = bank.size()
 	var material_count: int = EXTRACTION_RULES.cargo_count(earned_cargo)
 	var gold_kept: int = coins
+	# Bank the guest's own expedition coins only when alive and extracting.
+	if coop != null and coop.is_host() and coop.peer_id > 1 and coop_guest_hp > 0.0 and not coop_guest_jailed:
+		var guest_old_bank := coop_guest_banked_gold
+		coop_guest_banked_gold += coop_guest_coins
+		if not coop_guest_save_storage():
+			coop_guest_banked_gold = guest_old_bank
+			return
+		coop_guest_coins = 0
 	return_to_safe_hub()
 	backpack = kept_backpack
 	equipped = kept_equipped
@@ -5932,6 +6366,10 @@ func refresh_rabbit_menu() -> void:
 	rabbit_menu_buttons[3].text = "[4] 次の装備を購入 (%dG)" % RABBIT_GEAR_COSTS[gear_next] if rabbit_gear_level < 3 else "[4] すべての装備を購入済"
 
 func rabbit_action_selected(action: int) -> void:
+	if coop != null and coop.is_guest():
+		if rabbit_menu_open:
+			coop.send_guest_action("rabbit", action)
+		return
 	if state != "playing" or not rabbit_pet_enabled or rabbit_hp <= 0.0:
 		return
 	match action:
@@ -5991,7 +6429,8 @@ func update_rabbit_pet(delta: float) -> void:
 	rabbit_pet_bob_clock += delta * 8.0
 	rabbit_hunger = maxf(0.0, rabbit_hunger - delta * 0.45)
 	if rabbit_carried:
-		rabbit_pet = player + Vector2(0, -44)
+		var carrier_pos := coop_guest_pos if coop_rabbit_carrier_guest and coop != null and coop.is_host() else player
+		rabbit_pet = carrier_pos + Vector2(0, -44)
 		rabbit_pet_mode = "抱っこ中"
 		return
 
