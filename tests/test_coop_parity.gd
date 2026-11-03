@@ -111,6 +111,33 @@ func _run() -> void:
 	scene.call("coop_guest_slot_claim", serial)
 	_check(int(scene.get("coop_guest_coins")) == after_claim, "Duplicate claim cannot pay twice")
 
+	# Jail can be resolved symmetrically by teammate E, and guest R in the hub.
+	scene.set("phase", "hub")
+	scene.set("coop_host_jailed", true)
+	scene.set("hp", 0.0)
+	scene.set("coop_guest_hp", 100.0)
+	scene.set("coop_guest_pos", scene.get("player") + Vector2(35.0, 0))
+	scene.call("coop_process_guest_interaction")
+	_check(not bool(scene.get("coop_host_jailed")), "Guest E releases host from jail")
+	_check(is_equal_approx(float(scene.get("hp")), 45.0), "Host jail release recovers HP")
+	scene.set("coop_guest_jailed", true)
+	scene.set("coop_guest_hp", 0.0)
+	scene.set("coop_guest_pos", scene.get("player") + Vector2(35.0, 0))
+	scene.call("interact_nearby")
+	_check(not bool(scene.get("coop_guest_jailed")), "Host E releases guest from jail")
+	_check(is_equal_approx(float(scene.get("coop_guest_hp")), 45.0), "Guest jail release recovers HP")
+	scene.set("coop_guest_jailed", true)
+	scene.set("coop_guest_hp", 0.0)
+	scene.call("_on_coop_guest_action", "release", 1)
+	_check(not bool(scene.get("coop_guest_jailed")), "Guest hub R-equivalent release is honored")
+	_check(is_equal_approx(float(scene.get("coop_guest_hp")), float(scene.get("coop_guest_max_hp"))), "Guest home release fully restores HP")
+
+	# A peer disconnect cannot strand the remaining host in a downed state.
+	scene.set("coop_host_downed_clock", 12.0)
+	scene.set("hp", 0.0)
+	scene.call("_on_coop_peer_disconnected", 2)
+	_check(is_equal_approx(float(scene.get("coop_host_downed_clock")), 0.0), "Disconnect clears host rescue timer")
+	_check(float(scene.get("hp")) > 0.0, "Disconnected host can resume solo play")
 	session.peer_id = 0
 	scene.get("coop").close_game()
 	scene.queue_free()
