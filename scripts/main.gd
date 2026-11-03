@@ -982,7 +982,11 @@ func coop_guest_inventory_action(action: String, index: int) -> void:
 				coop_guest_armor[index] = {}
 				return
 		return
-	if phase != "hub" or expedition_active or coop_guest_pos.distance_to(STASH_POS) > 106.0:
+	# Same rule as the host: the chest opens in a sortie and withdrawal
+	# stays available, while deposits and bank withdrawals stay locked.
+	if not is_in_safe_camp(coop_guest_pos) or coop_guest_pos.distance_to(STASH_POS) > 106.0:
+		return
+	if wave >= 1 and action in ["stash_deposit", "stash_equip", "stash_gold"]:
 		return
 	var old_stash: Array[Dictionary] = coop_guest_stash.duplicate(true)
 	var old_bag: Array[Dictionary] = coop_guest_backpack.duplicate(true)
@@ -1017,7 +1021,7 @@ func coop_guest_inventory_action(action: String, index: int) -> void:
 		coop_guest_coins = old_coins
 
 func coop_guest_buy(index: int) -> void:
-	if phase != "hub" or coop_guest_pos.distance_to(MERCHANT_POS) > 108.0:
+	if not is_in_safe_camp(coop_guest_pos) or coop_guest_pos.distance_to(MERCHANT_POS) > 108.0:
 		return
 	var costs := [50, 55, 135, 55, 12, 42, 75, 18]
 	if index < 0 or index >= costs.size() or coop_guest_coins < costs[index]:
@@ -1062,7 +1066,7 @@ func coop_guest_rabbit_action(index: int) -> void:
 # A co-op spin is charged and rolled on the host, never trusted from the
 # client reel UI. The client displays the host's role and claims its serial.
 func coop_guest_slot_wager(cost: int) -> void:
-	if phase != "hub" or coop_guest_pos.distance_to(SLOT_POS) > 105.0 or coop_guest_slot_pending:
+	if not is_in_safe_camp(coop_guest_pos) or coop_guest_pos.distance_to(SLOT_POS) > 105.0 or coop_guest_slot_pending:
 		return
 	var actual_cost := 0 if coop_guest_slot_replay else 25
 	if cost != actual_cost or coop_guest_coins < actual_cost:
@@ -1609,9 +1613,9 @@ func coop_client_tick(delta: float) -> void:
 		# The guest does not run the host simulation, so update proximity hints locally.
 		pickup_hint.text = ""
 		if not inventory_open and not cooking_open and not slot_open and not stash_open and not merchant_open:
-			if phase == "hub" and player.distance_to(STASH_POS) < 106.0:
+			if player.distance_to(STASH_POS) < 106.0:
 				pickup_hint.text = "[E] 倉庫"
-			elif phase == "hub" and player.distance_to(MERCHANT_POS) < 108.0:
+			elif player.distance_to(MERCHANT_POS) < 108.0:
 				pickup_hint.text = "[E] 商人"
 			elif player.distance_to(SLOT_POS) < 105.0:
 				pickup_hint.text = "[E] スロット"
@@ -3350,13 +3354,15 @@ func _input(event: InputEvent) -> void:
 		toggle_cooking()
 	elif (coop_host_downed_clock > 0.0 and player.distance_to(coop_remote_host_pos) < 100.0) or not drops.filter(func(d): return player.distance_to(d["pos"]) < 92.0).is_empty() or not meal_displays.filter(func(m): return player.distance_to(m["pos"]) < 62.0).is_empty():
 		coop_guest_interact_pending = true
-	elif phase == "hub" and player.distance_to(STASH_POS) < 106.0:
+	# Hub amenities remain usable inside their safe areas during a sortie.
+	# The host uses proximity, not the global phase, to open these menus.
+	elif player.distance_to(STASH_POS) < 106.0:
 		toggle_stash()
-	elif phase == "hub" and player.distance_to(MERCHANT_POS) < 108.0:
+	elif player.distance_to(MERCHANT_POS) < 108.0:
 		toggle_merchant()
-	elif phase == "hub" and player.distance_to(SLOT_POS) < 105.0:
+	elif player.distance_to(SLOT_POS) < 105.0:
 		toggle_slot()
-	elif nearest_camp_index() >= 0 and not expedition_active:
+	elif nearest_camp_index() >= 0:
 		toggle_cooking()
 	else:
 		coop_guest_interact_pending = true
