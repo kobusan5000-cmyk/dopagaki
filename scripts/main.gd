@@ -241,6 +241,18 @@ var coop_guest_carrots := 2
 var coop_guest_melons := 0
 var coop_guest_watermelons := 0
 var coop_guest_max_hp := 100.0
+var coop_guest_level := 1
+var coop_guest_xp := 0
+var coop_guest_xp_needed := 5
+var coop_guest_pending_points := 0
+var coop_guest_stats: Array[int] = [0, 0, 0, 0, 0, 0]
+var coop_guest_mp := 30.0
+var coop_guest_max_mp := 30.0
+var coop_guest_skill_buff_clock := 0.0
+var coop_guest_skill_guard_clock := 0.0
+var coop_guest_shadow_clone_clock := 0.0
+var coop_guest_shadow_clone_fire := 0.0
+var coop_guest_heal_spell_clock := 0.0
 var coop_guest_job := 0
 var coop_guest_name := "仲間"
 var coop_guest_aim := 0.0
@@ -702,6 +714,18 @@ func _on_coop_peer_connected(id: int) -> void:
 	coop_guest_render_pos = coop_guest_pos
 	coop_panel_expanded = false
 	coop_guest_hp = 100.0
+	coop_guest_level = 1
+	coop_guest_xp = 0
+	coop_guest_xp_needed = 5
+	coop_guest_pending_points = 0
+	coop_guest_stats = [0, 0, 0, 0, 0, 0]
+	coop_guest_mp = 30.0
+	coop_guest_max_mp = 30.0
+	coop_guest_skill_buff_clock = 0.0
+	coop_guest_skill_guard_clock = 0.0
+	coop_guest_shadow_clone_clock = 0.0
+	coop_guest_shadow_clone_fire = 0.0
+	coop_guest_heal_spell_clock = 0.0
 	coop_guest_downed_clock = 0.0
 	coop_guest_jailed = false
 	coop_guest_jump_clock = 0.0
@@ -729,6 +753,8 @@ func _on_coop_peer_disconnected(_id: int) -> void:
 func _on_coop_introduced(job: int, display_name: String) -> void:
 	coop_guest_job = clampi(job, 0, 6)
 	coop_guest_name = display_name if not display_name.is_empty() else "仲間"
+	coop_guest_max_hp = 85.0 if coop_guest_job == 3 else (140.0 if coop_guest_job == 4 else (95.0 if coop_guest_job == 6 else (115.0 if coop_guest_job in [0, 5] else 100.0)))
+	coop_guest_hp = coop_guest_max_hp
 	show_status("%s（%s）が合流した！" % [coop_guest_name, CLASS_NAMES[coop_guest_job]], Color("a9f4ca"))
 
 func _on_coop_joined() -> void:
@@ -786,6 +812,18 @@ func _on_coop_guest_action(action: String, value: int) -> void:
 			var previous: Dictionary = coop_guest_armor[slot].duplicate(true)
 			coop_guest_armor[slot] = item.duplicate(true)
 			coop_guest_backpack[value] = previous
+	elif action == "skill":
+		coop_guest_cast_skill()
+	elif action == "upgrade" and value >= 0 and value < coop_guest_stats.size():
+		if coop_guest_pending_points > 0:
+			coop_guest_stats[value] += 1
+			coop_guest_pending_points -= 1
+			if value == 2:
+				coop_guest_max_hp += 15.0
+				coop_guest_hp = minf(coop_guest_max_hp, coop_guest_hp + 25.0)
+			elif value == 3:
+				coop_guest_max_mp += 10.0
+				coop_guest_mp = minf(coop_guest_max_mp, coop_guest_mp + 12.0)
 	elif action == "sortie" and phase == "hub" and not expedition_active:
 		start_sortie()
 	elif action == "display" and value >= 0 and value < 4:
@@ -873,6 +911,18 @@ func coop_guest_tick(delta: float) -> void:
 	coop_guest_jump_cooldown = maxf(0.0, coop_guest_jump_cooldown - delta)
 	coop_guest_guard_parry_clock = maxf(0.0, coop_guest_guard_parry_clock - delta)
 	coop_guest_fire_clock = maxf(0.0, coop_guest_fire_clock - delta)
+	coop_guest_mp = minf(coop_guest_max_mp, coop_guest_mp + (1.6 + float(coop_guest_stats[3]) * 0.3) * delta)
+	coop_guest_skill_buff_clock = maxf(0.0, coop_guest_skill_buff_clock - delta)
+	coop_guest_skill_guard_clock = maxf(0.0, coop_guest_skill_guard_clock - delta)
+	coop_guest_heal_spell_clock = maxf(0.0, coop_guest_heal_spell_clock - delta)
+	coop_guest_shadow_clone_clock = maxf(0.0, coop_guest_shadow_clone_clock - delta)
+	while coop_guest_xp >= coop_guest_xp_needed:
+		coop_guest_xp -= coop_guest_xp_needed
+		coop_guest_level += 1
+		coop_guest_xp_needed = 4 + coop_guest_level * 3
+		coop_guest_pending_points += 1
+	if coop_guest_shadow_clone_clock > 0.0 and phase == "combat" and not is_in_safe_camp(coop_guest_pos):
+		coop_guest_update_clones(delta)
 	coop_guest_input_timeout = maxf(0.0, coop_guest_input_timeout - delta)
 	if coop_guest_input_timeout <= 0.0:
 		coop_guest_dir = Vector2.ZERO
@@ -904,6 +954,10 @@ func coop_guest_tick(delta: float) -> void:
 			"host_moving": Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_UP) or Input.is_key_pressed(KEY_DOWN),
 			"host_attacking": Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT),
 			"guest_pos": coop_guest_pos, "guest_hp": coop_guest_hp, "guest_job": coop_guest_job,
+			"guest_max_hp": coop_guest_max_hp, "guest_mp": coop_guest_mp, "guest_max_mp": coop_guest_max_mp,
+			"guest_level": coop_guest_level, "guest_xp": coop_guest_xp, "guest_xp_needed": coop_guest_xp_needed,
+			"guest_stats": coop_guest_stats, "guest_pending_points": coop_guest_pending_points,
+			"guest_skill_buff": coop_guest_skill_buff_clock, "guest_skill_guard": coop_guest_skill_guard_clock,
 			"phase": phase, "state": state, "expedition": expedition_active, "wave": wave,
 			"enemies": enemies, "projectiles": projectiles, "orbs": hostile_orbs,
 			"drops": drops, "coins_on_ground": coin_drops, "crates": search_crates,
@@ -924,6 +978,69 @@ func coop_guest_tick(delta: float) -> void:
 
 # Reuse the host weapon implementation so the guest's equipped weapon determines
 # rate, projectile type, melee reach and damage instead of a fixed 8-damage bullet.
+func coop_guest_cast_skill() -> void:
+	if coop_guest_level < 5 or phase != "combat" or is_in_safe_camp(coop_guest_pos):
+		return
+	var host_actor := {
+		"pos": player, "aim": aim_angle, "job": class_id,
+		"level": level, "stats": hero_stats.duplicate(),
+		"hp": hp, "max_hp": max_hp, "mp": mp, "max_mp": max_mp,
+		"buff": skill_buff_clock, "guard": skill_guard_clock,
+		"clone": shadow_clone_clock, "clone_fire": shadow_clone_fire
+	}
+	player = coop_guest_pos
+	aim_angle = coop_guest_aim
+	class_id = coop_guest_job
+	level = coop_guest_level
+	hero_stats = coop_guest_stats.duplicate()
+	hp = coop_guest_hp
+	max_hp = coop_guest_max_hp
+	mp = coop_guest_mp
+	max_mp = coop_guest_max_mp
+	skill_buff_clock = coop_guest_skill_buff_clock
+	skill_guard_clock = coop_guest_skill_guard_clock
+	shadow_clone_clock = coop_guest_shadow_clone_clock
+	shadow_clone_fire = coop_guest_shadow_clone_fire
+	activate_class_skill()
+	coop_guest_hp = hp
+	coop_guest_mp = mp
+	coop_guest_skill_buff_clock = skill_buff_clock
+	coop_guest_skill_guard_clock = skill_guard_clock
+	coop_guest_shadow_clone_clock = shadow_clone_clock
+	coop_guest_shadow_clone_fire = shadow_clone_fire
+	player = host_actor["pos"]
+	aim_angle = host_actor["aim"]
+	class_id = host_actor["job"]
+	level = host_actor["level"]
+	hero_stats = host_actor["stats"]
+	hp = host_actor["hp"]
+	max_hp = host_actor["max_hp"]
+	mp = host_actor["mp"]
+	max_mp = host_actor["max_mp"]
+	skill_buff_clock = host_actor["buff"]
+	skill_guard_clock = host_actor["guard"]
+	shadow_clone_clock = host_actor["clone"]
+	shadow_clone_fire = host_actor["clone_fire"]
+
+func coop_guest_update_clones(delta: float) -> void:
+	var saved_player := player
+	var saved_level := level
+	var saved_stats: Array[int] = hero_stats.duplicate()
+	var saved_shadow := shadow_clone_clock
+	var saved_fire := shadow_clone_fire
+	player = coop_guest_pos
+	level = coop_guest_level
+	hero_stats = coop_guest_stats.duplicate()
+	shadow_clone_clock = coop_guest_shadow_clone_clock
+	shadow_clone_fire = coop_guest_shadow_clone_fire
+	update_shadow_clones(delta)
+	coop_guest_shadow_clone_fire = shadow_clone_fire
+	player = saved_player
+	level = saved_level
+	hero_stats = saved_stats
+	shadow_clone_clock = saved_shadow
+	shadow_clone_fire = saved_fire
+
 func coop_guest_attack() -> void:
 	var saved_player := player
 	var saved_aim := aim_angle
@@ -932,16 +1049,26 @@ func coop_guest_attack() -> void:
 	var saved_attack_clock := attack_clock
 	var saved_attack_duration := attack_duration
 	var saved_hp := hp
+	var saved_max_hp := max_hp
 	var saved_heal_clock := heal_spell_clock
+	var saved_stats: Array[int] = hero_stats.duplicate()
+	var saved_buff := skill_buff_clock
+	var saved_damage_mult := damage_mult
 	player = coop_guest_pos
 	aim_angle = coop_guest_aim
 	equipped = coop_guest_equipped.duplicate(true)
+	damage_mult = 1.15 if coop_guest_job == 3 else 1.0
+	hero_stats = coop_guest_stats.duplicate()
+	max_hp = coop_guest_max_hp
+	hp = coop_guest_hp
+	skill_buff_clock = coop_guest_skill_buff_clock
+	heal_spell_clock = coop_guest_heal_spell_clock
 	fire_clock = 0.0
 	attack()
 	coop_guest_fire_clock = maxf(0.1, fire_clock)
 	coop_guest_equipped = equipped.duplicate(true)
-	if hp > saved_hp:
-		coop_guest_hp = minf(100.0, coop_guest_hp + hp - saved_hp)
+	coop_guest_hp = hp
+	coop_guest_heal_spell_clock = heal_spell_clock
 	player = saved_player
 	aim_angle = saved_aim
 	equipped = saved_equipped
@@ -949,6 +1076,10 @@ func coop_guest_attack() -> void:
 	attack_clock = saved_attack_clock
 	attack_duration = saved_attack_duration
 	hp = saved_hp
+	max_hp = saved_max_hp
+	hero_stats = saved_stats
+	skill_buff_clock = saved_buff
+	damage_mult = saved_damage_mult
 	heal_spell_clock = saved_heal_clock
 	coop_emit_fx("shot", coop_guest_pos + Vector2.RIGHT.rotated(coop_guest_aim) * 37.0)
 
@@ -1057,6 +1188,21 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 	# Blend small discrepancies; correct large drift immediately.
 	player = incoming if player.distance_to(incoming) > 110.0 else player.lerp(incoming, 0.48)
 	coop_guest_hp = float(data.get("guest_hp", 100.0))
+	coop_guest_max_hp = float(data.get("guest_max_hp", coop_guest_max_hp))
+	coop_guest_mp = float(data.get("guest_mp", coop_guest_mp))
+	coop_guest_max_mp = float(data.get("guest_max_mp", coop_guest_max_mp))
+	level = int(data.get("guest_level", level))
+	xp = int(data.get("guest_xp", xp))
+	xp_needed = int(data.get("guest_xp_needed", xp_needed))
+	pending_hero_points = int(data.get("guest_pending_points", pending_hero_points))
+	if data.has("guest_stats"):
+		for stat_i in range(mini(hero_stats.size(), data["guest_stats"].size())):
+			hero_stats[stat_i] = int(data["guest_stats"][stat_i])
+	mp = coop_guest_mp
+	max_mp = coop_guest_max_mp
+	max_hp = coop_guest_max_hp
+	skill_buff_clock = float(data.get("guest_skill_buff", 0.0))
+	skill_guard_clock = float(data.get("guest_skill_guard", 0.0))
 	coop_guest_downed_clock = float(data.get("guest_downed", 0.0))
 	coop_guest_jailed = bool(data.get("guest_jailed", false))
 	jump_clock = float(data.get("guest_jump", 0.0))
@@ -1131,6 +1277,8 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 		refresh_cooking_ui()
 	if slot_open:
 		refresh_slot_ui()
+	if upgrade_open:
+		refresh_upgrade_panel()
 	update_hud()
 	queue_redraw()
 
@@ -2734,8 +2882,14 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			elif event.keycode == KEY_SPACE:
 				coop.send_guest_action("jump", 1)
 				start_jump()
-			elif event.keycode >= KEY_1 and event.keycode <= KEY_5:
+			elif event.keycode >= KEY_1 and event.keycode <= KEY_5 and not upgrade_open:
 				equip_backpack_item(event.keycode - KEY_1)
+			elif event.keycode == KEY_Q:
+				coop.send_guest_action("skill", 1)
+			elif event.keycode == KEY_P:
+				toggle_upgrade_menu()
+			elif upgrade_open and event.keycode >= KEY_1 and event.keycode <= KEY_6:
+				select_upgrade(event.keycode - KEY_1)
 			elif event.keycode == KEY_G:
 				coop.send_guest_action("sortie", 1)
 				show_status("ホストに出撃をリクエストしたよ", Color("c3eeff"))
@@ -4089,6 +4243,8 @@ func cleanup_defeated_enemies() -> void:
 		var boss: bool = bool(enemy["boss"])
 		var xp_award := 9 if boss else (3 if elite else 1)
 		xp += xp_award
+		if coop != null and coop.is_host() and coop.peer_id > 1:
+			coop_guest_xp += xp_award
 		award_mint_xp(xp_award)
 		if boss:
 			spawn_coins(death_spot, rng.randi_range(24, 35))
@@ -4654,6 +4810,9 @@ func refresh_upgrade_panel() -> void:
 func select_upgrade(index: int) -> void:
 	if not upgrade_open or index < 0 or index >= 6:
 		return
+	if coop != null and coop.is_guest() and upgrade_target == "hero":
+		coop.send_guest_action("upgrade", index)
+		return
 	if upgrade_target == "hero":
 		if pending_hero_points <= 0:
 			return
@@ -5023,6 +5182,15 @@ func return_to_safe_hub() -> void:
 	companion = player + Vector2(-59, 14)
 	companion_goal = CAMP_STATIONS[0]
 	coop_guest_hp = coop_guest_max_hp
+	coop_guest_mp = coop_guest_max_mp
+	coop_guest_level = 1
+	coop_guest_xp = 0
+	coop_guest_xp_needed = 5
+	coop_guest_pending_points = 0
+	coop_guest_stats = [0, 0, 0, 0, 0, 0]
+	coop_guest_skill_buff_clock = 0.0
+	coop_guest_skill_guard_clock = 0.0
+	coop_guest_shadow_clone_clock = 0.0
 	coop_guest_pos = player + Vector2(55, 25)
 	rabbit_pet = player + Vector2(52, 48)
 	rabbit_pet_goal = rabbit_pet
