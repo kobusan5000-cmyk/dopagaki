@@ -63,6 +63,7 @@ const EXTRACTION_RULES = preload("res://scripts/extraction_rules.gd")
 const SURVIVAL_RULES = preload("res://scripts/survival_rules.gd")
 const CRAFT_RULES = preload("res://scripts/crafting_rules.gd")
 const JOURNAL_RULES = preload("res://scripts/survival_journal_rules.gd")
+const WEAR_RULES = preload("res://scripts/weapon_condition_rules.gd")
 const JOURNAL_HOST_SAVE := "user://dopagaki_survival_journal_v1.json"
 const JOURNAL_GUEST_SAVE := "user://dopagaki_guest_journal_v1.json"
 const COOP_SESSION = preload("res://scripts/coop_session.gd")
@@ -618,6 +619,7 @@ var survival_status_label: Label
 var craft_panel: PanelContainer
 var craft_info: Label
 var craft_buttons: Array[Button] = []
+var craft_repair_button: Button
 var craft_open := false
 var journal_panel: PanelContainer
 var journal_info: Label
@@ -939,6 +941,8 @@ func _on_coop_guest_action(action: String, value: int) -> void:
 		coop_guest_use_bandage()
 	elif action == "craft" and value >= 0 and value < CRAFT_RULES.NAMES.size():
 		craft_for_actor(value, true)
+	elif action == "repair" and value == 1:
+		repair_weapon_for_actor(true)
 	elif action == "discard_material" and value >= 0 and value < carried_materials.size():
 		# Both explorers share a limited salvage pouch in the current co-op mode.
 		if expedition_active and carried_materials[value] > 0:
@@ -2471,7 +2475,7 @@ func build_ui() -> void:
 	chest_box.add_child(chest_controls)
 	stash_panel.hide()
 	# Craft station is accessible from the stash's safe camp, not during combat.
-	craft_panel = make_panel(Vector2(323, 135), Vector2(506, 360), Color("8cd9b7"))
+	craft_panel = make_panel(Vector2(323, 100), Vector2(506, 425), Color("8cd9b7"))
 	layer.add_child(craft_panel)
 	var craft_box := VBoxContainer.new()
 	craft_box.add_theme_constant_override("separation", 11)
@@ -2487,6 +2491,10 @@ func build_ui() -> void:
 		craft_button.pressed.connect(craft_recipe.bind(recipe))
 		craft_box.add_child(craft_button)
 		craft_buttons.append(craft_button)
+	craft_repair_button = make_button("[4] 武器を修理（スクラップ2 + 電力コア1）", Color("9bd5aa"), Vector2(440, 43))
+	craft_repair_button.add_theme_font_size_override("font_size", 14)
+	craft_repair_button.pressed.connect(repair_equipped_weapon)
+	craft_box.add_child(craft_repair_button)
 	var craft_close := make_button("閉じる [N / Esc]", Color("c3d6d8"), Vector2(440, 35))
 	craft_close.pressed.connect(toggle_craft)
 	craft_box.add_child(craft_close)
@@ -3548,6 +3556,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			if craft_open:
 				if event.keycode in [KEY_N, KEY_ESCAPE]: toggle_craft()
 				elif event.keycode >= KEY_1 and event.keycode <= KEY_3: craft_recipe(event.keycode - KEY_1)
+				elif event.keycode == KEY_4: repair_equipped_weapon()
 				return
 			if inventory_open:
 				if event.keycode == KEY_B: toggle_inventory()
@@ -3621,6 +3630,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		if craft_open:
 			if event.keycode in [KEY_N, KEY_ESCAPE]: toggle_craft()
 			elif event.keycode >= KEY_1 and event.keycode <= KEY_3: craft_recipe(event.keycode - KEY_1)
+			elif event.keycode == KEY_4: repair_equipped_weapon()
 			return
 		if phase == "hub" and event.keycode == KEY_G:
 			start_sortie()
@@ -4467,7 +4477,10 @@ func attack() -> void:
 		raise_expedition_noise(player, EXTRACTION_RULES.NOISE_SHOT_RADIUS, "attack")
 	var kind: int = int(equipped["kind"])
 	var tier: int = int(equipped["rarity"])
-	var power: float = RARITY_DAMAGE[tier] * float(equipped.get("bonus", 1.0)) * damage_mult * attack_stat_multiplier(kind) * (1.35 if skill_buff_clock > 0.0 else 1.0)
+	var condition := float(equipped.get("condition", 100.0))
+	var power: float = RARITY_DAMAGE[tier] * float(equipped.get("bonus", 1.0)) * damage_mult * attack_stat_multiplier(kind) * (1.35 if skill_buff_clock > 0.0 else 1.0) * WEAR_RULES.power_factor(condition)
+	if expedition_active:
+		equipped["condition"] = WEAR_RULES.after_attack(condition, kind)
 	var speed: float = RARITY_RATE[tier] * attack_speed_mult * (1.0 + float(hero_stats[1]) * 0.02)
 	attack_clock = 0.21
 	attack_duration = 0.21
@@ -5076,7 +5089,7 @@ func spawn_drop(pos: Vector2, rarity: int, forced_kind: int = -1, forced_trait: 
 	var element_id: int = forced_trait if forced_trait >= 0 else rng.randi_range(0, WEAPON_TRAITS.size() - 1)
 	var bonus: float = snappedf(rng.randf_range(0.85, 1.20) + float(element_id) * 0.04 + float(rarity) * 0.035, 0.01)
 	var item_name: String = "%s・%s  [威力x%.2f]" % [WEAPON_TRAITS[element_id], build_drop_name(kind, rarity), bonus]
-	drops.append({"type": "weapon", "pos": pos, "rarity": rarity, "kind": kind, "trait": element_id, "bonus": bonus, "name": item_name, "life": 65.0 if rarity >= 3 else 32.0, "phase": rng.randf() * TAU})
+	drops.append({"type": "weapon", "pos": pos, "rarity": rarity, "kind": kind, "trait": element_id, "bonus": bonus, "name": item_name, "condition": WEAR_RULES.initial_condition(rng.randf(), rarity), "life": 65.0 if rarity >= 3 else 32.0, "phase": rng.randf() * TAU})
 	celebrate_loot(pos, rarity, item_name)
 
 func spawn_armor_drop(pos: Vector2, rarity: int, forced_slot: int = -1) -> void:
@@ -5124,6 +5137,7 @@ func to_inventory_item(drop: Dictionary) -> Dictionary:
 		item["kind"] = int(drop["kind"])
 		item["trait"] = int(drop.get("trait", -1))
 		item["bonus"] = float(drop.get("bonus", 1.0))
+		item["condition"] = float(drop.get("condition", 100.0))
 	else:
 		item["slot"] = int(drop["slot"])
 		item["defense"] = int(drop["defense"])
@@ -5136,7 +5150,7 @@ func item_description(item: Dictionary) -> String:
 	var rarity := str(RARITIES[int(item["rarity"])])
 	if str(item["type"]) == "armor":
 		return "%s  [防御+%d]  (%s)" % [item["name"], int(item["defense"]), rarity]
-	return "%s  [武器/倍率x%.2f]  (%s)" % [item["name"], float(item.get("bonus", 1.0)), rarity]
+	return "%s [耐久%d%%/倍率x%.2f] (%s)" % [item["name"], roundi(float(item.get("condition", 100.0))), float(item.get("bonus", 1.0)), rarity]
 
 # Long item names must not be cut off: shrink the font until the text fits next to the icon
 # (never below 9 px; the full text is always available as the tooltip).
@@ -5192,10 +5206,12 @@ const CONTROLS_HELP := [
 	["脱出", "マップ内の青い脱出装置でEを押し、12秒間守る"],
 	["Q", "クラススキル（LV5で習得）"],
 	["1 - 5", "バッグの装備をすばやく切り替え"],
-	["I", "バッグを開く / 閉じる"],
-	["P", "能力ポイントを割り振る"],
+	["I / B", "装備バッグ / 素材ポーチを開く"],
+	["P / O", "能力ポイント / 探索図鑑"],
 	["F", "作物の切り替え"],
 	["T", "ちゅぶらのお世話メニュー"],
+	["N / Y", "拠点工作台 / 応急包帯"],
+	["Z / X", "非常食 / 飲料水を使う"],
 	["H / J", "シチュー / スープを食べる"],
 	["K / L", "果物を食べる"],
 	["M", "音のオン / オフ"],
@@ -5720,6 +5736,37 @@ func refresh_craft_ui() -> void:
 		craft_buttons[index].text = "[%d] %s\n%s" % [index + 1, CRAFT_RULES.NAMES[index], CRAFT_RULES.DESCRIPTIONS[index]]
 		var count := survival_water if index == 0 else (survival_rations if index == 1 else survival_bandages)
 		craft_buttons[index].disabled = not CRAFT_RULES.can_craft(index, stored_materials, carrots, mushrooms, count)
+	var condition := float(equipped.get("condition", 100.0))
+	craft_repair_button.text = "[4] 武器修理 : %d%% → 100%%（スクラップ2 + 電力コア1）" % roundi(condition)
+	craft_repair_button.disabled = not WEAR_RULES.can_repair(stored_materials, condition)
+
+# Repair consumes persistent team salvage and restores only the requesting
+# actor's equipped weapon. Neither the client nor the UI can mint repairs.
+func repair_equipped_weapon() -> void:
+	if coop != null and coop.is_guest():
+		if craft_open:
+			coop.send_guest_action("repair", 1)
+		return
+	repair_weapon_for_actor(false)
+	refresh_craft_ui()
+
+func repair_weapon_for_actor(guest: bool = false) -> void:
+	if state != "playing" or phase != "hub" or expedition_active:
+		return
+	var actor_pos: Vector2 = coop_guest_pos if guest else player
+	if actor_pos.distance_to(STASH_POS) > 160.0:
+		return
+	var weapon: Dictionary = coop_guest_equipped if guest else equipped
+	if not WEAR_RULES.can_repair(stored_materials, float(weapon.get("condition", 100.0))):
+		return
+	var original: Array[int] = stored_materials.duplicate()
+	stored_materials = WEAR_RULES.after_repair_cost(stored_materials)
+	if not save_stored_materials():
+		stored_materials = original
+		return
+	weapon["condition"] = 100.0
+	show_status("%sの武器を100%%まで修理！" % ("仲間" if guest else "主人公"), Color("bcffe0"))
+	play_sound(AUDIO_RARE, -16.0)
 
 func use_bandage() -> void:
 	if state != "playing" or hp <= 0.0 or hp >= max_hp or survival_bandages <= 0 or coop_host_downed_clock > 0.0 or coop_host_jailed:
@@ -6584,7 +6631,7 @@ func update_hud() -> void:
 	hud.text = "%s / %s  LV%d  討伐%d  防御%d  バッグ%d/5  |  %s" % [character_name, CLASS_NAMES[class_id], level, kills, total_defense(), BAG_CAPACITY - count_empty_bag_slots(), str(equipped["name"])]
 	hud.add_theme_color_override("font_color", RARITY_COLORS[current_rarity] if state == "playing" else Color("eaf6ff"))
 	equipped_icon.texture = item_icon(equipped)
-	equipped_icon.tooltip_text = "装備中: %s (%s)" % [str(equipped["name"]), RARITIES[current_rarity]]
+	equipped_icon.tooltip_text = "装備中: %s (%s) | 耐久%d%%" % [str(equipped["name"]), RARITIES[current_rarity], roundi(float(equipped.get("condition", 100.0)))]
 	equipped_icon.visible = state == "playing" or state == "upgrade"
 	mp_text.text = "MP %d/%d   XP %d/%d   [P]能力P:主人公%d / ミント%d" % [roundi(mp), roundi(max_mp), xp, xp_needed, pending_hero_points, pending_mint_points]
 	var new_state := 0 if hp < max_hp * 0.3 else (1 if hp < max_hp * 0.6 else 2)
