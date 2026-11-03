@@ -798,10 +798,6 @@ func coop_guest_tick(delta: float) -> void:
 		coop_guest_shoot = false
 	if state == "playing" and coop_guest_hp > 0.0:
 		coop_guest_pos = (coop_guest_pos + coop_guest_dir.limit_length(1.0) * 260.0 * delta).clamp(ARENA.position + Vector2(35, 45), ARENA.end - Vector2(35, 35))
-		# Coins are auto-collected for either player, not only the host.
-		for coin_i in range(coin_drops.size() - 1, -1, -1):
-			if coop_guest_pos.distance_to(coin_drops[coin_i]["pos"]) < 44.0:
-				collect_coin(coin_i)
 		if expedition_active and coop_guest_shoot and coop_guest_fire_clock <= 0.0 and not is_in_safe_camp(coop_guest_pos):
 			coop_guest_fire_clock = 0.42
 			var dir: Vector2 = Vector2.RIGHT.rotated(coop_guest_aim)
@@ -840,9 +836,6 @@ func coop_client_tick(delta: float) -> void:
 		return
 	# Guest returns early from _process, so it must update music here.
 	update_music()
-	if banner_clock > 0.0:
-		banner_clock = maxf(0.0, banner_clock - delta)
-		banner.visible = banner_clock > 0.0
 	refresh_coop_ui()
 	coop_remote_host_render_pos = coop_remote_host_render_pos.lerp(coop_remote_host_pos, 1.0 - exp(-delta * 16.0))
 	coop_remote_host_anim_time += delta
@@ -898,8 +891,6 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 	coop_guest_hp = float(data.get("guest_hp", 100.0))
 	hp = coop_guest_hp
 	phase = str(data.get("phase", "hub"))
-	# Apply the authoritative phase immediately, even while a modal UI is open.
-	update_music()
 	state = "playing" if str(data.get("state", "playing")) == "playing" else "dead"
 	expedition_active = bool(data.get("expedition", false))
 	wave = int(data.get("wave", 0))
@@ -2499,13 +2490,6 @@ func _unhandled_key_input(event: InputEvent) -> void:
 					toggle_cooking()
 				else:
 					coop_guest_interact_pending = true
-			elif event.keycode == KEY_ESCAPE and cooking_open:
-				toggle_cooking()
-			elif event.keycode == KEY_ESCAPE and slot_open:
-				toggle_slot()
-			elif event.keycode == KEY_F:
-				crop_selection = (crop_selection + 1) % CROP_NAMES.size()
-				show_status("作物: %s" % CROP_NAMES[crop_selection])
 			elif event.keycode == KEY_I:
 				toggle_inventory()
 			elif event.keycode == KEY_G:
