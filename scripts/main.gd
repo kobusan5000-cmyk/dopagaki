@@ -792,11 +792,12 @@ func _on_coop_peer_disconnected(_id: int) -> void:
 	coop_guest_interact = false
 	coop_guest_held_interact = false
 	# A network drop must not leave the remaining solo host in an unrecoverable grave/jail.
-	if coop_host_jailed:
-		return_to_safe_hub()
-	elif coop_host_downed_clock > 0.0:
-		coop_host_downed_clock = 0.0
-		hp = minf(max_hp, 45.0)
+	if coop != null and coop.is_host():
+		if coop_host_jailed:
+			return_to_safe_hub()
+		elif coop_host_downed_clock > 0.0:
+			coop_host_downed_clock = 0.0
+			hp = minf(max_hp, 45.0)
 	show_status("仲間が切断した。ソロプレイに戻る", Color("ffd4a8"))
 
 func _on_coop_introduced(job: int, display_name: String) -> void:
@@ -3377,11 +3378,6 @@ func _unhandled_key_input(event: InputEvent) -> void:
 				coop_host_jailed = false
 				hp = max_hp
 				player = CAMP_STATIONS[0] + Vector2(0, 55)
-			return
-		if coop != null and coop.is_host() and coop_host_jailed and event.keycode == KEY_R and phase == "hub":
-			coop_host_jailed = false
-			hp = max_hp
-			player = CAMP_STATIONS[0] + Vector2(0, 55)
 			return
 		if coop != null and coop.is_guest():
 			# InputEvent E is handled by _input; process modal shortcuts here.
