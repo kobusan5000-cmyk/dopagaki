@@ -43,6 +43,28 @@ static func cargo_count(cargo: Array[int]) -> int:
 static func can_search(cargo: Array[int]) -> bool:
 	return cargo_count(cargo) < CARGO_CAPACITY
 
+# Overflow from opened expedition caches is persistent within the current sortie:
+# do not award more slots than exist, and leave remaining materials inside the cache.
+static func pending_material_count(pending: Array) -> int:
+	var total := 0
+	for kind in range(mini(MATERIAL_NAMES.size(), pending.size())):
+		total += maxi(0, int(pending[kind]))
+	return total
+
+static func take_pending_materials(carried: Array[int], pending: Array) -> int:
+	if carried.size() < MATERIAL_NAMES.size() or pending.size() < MATERIAL_NAMES.size():
+		return 0
+	var room := maxi(0, CARGO_CAPACITY - cargo_count(carried))
+	var taken := 0
+	# Scarce crystals and power cores take priority when the pouch is nearly full.
+	for kind in range(MATERIAL_NAMES.size() - 1, -1, -1):
+		var amount := mini(room, maxi(0, int(pending[kind])))
+		carried[kind] += amount
+		pending[kind] = maxi(0, int(pending[kind]) - amount)
+		room -= amount
+		taken += amount
+	return taken
+
 static func is_near_exit(pos: Vector2, exit_pos: Vector2) -> bool:
 	return pos.distance_to(exit_pos) <= EXTRACTION_RADIUS
 

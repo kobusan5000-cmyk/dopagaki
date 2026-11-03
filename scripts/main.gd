@@ -5355,7 +5355,7 @@ func refresh_inventory_ui() -> void:
 	defense_label.text = "防御力 %d  |  ダメージ軽減 %d%%" % [total_defense(), roundi(calculate_damage_reduction() * 100.0)]
 	var capacity: int = EXTRACTION_RULES.CARGO_CAPACITY
 	var amount: int = EXTRACTION_RULES.cargo_count(carried_materials)
-	inventory_materials_label.text = "素材ポーチ %d/%d（武器・防具バッグ5枠とは別）\n%s %d  /  %s %d  /  %s %d  | B/Iで確認" % [amount, capacity, EXTRACTION_RULES.MATERIAL_NAMES[0], carried_materials[0], EXTRACTION_RULES.MATERIAL_NAMES[1], carried_materials[1], EXTRACTION_RULES.MATERIAL_NAMES[2], carried_materials[2]]
+	inventory_materials_label.text = "素材ポーチ %d/%d（装備バッグ5枠とは別）\n%s %d / %s %d / %s %d\n満杯時は素材を捨て、残りは箱へ戻って[E]で回収" % [amount, capacity, EXTRACTION_RULES.MATERIAL_NAMES[0], carried_materials[0], EXTRACTION_RULES.MATERIAL_NAMES[1], carried_materials[1], EXTRACTION_RULES.MATERIAL_NAMES[2], carried_materials[2]]
 	inventory_materials_label.visible = expedition_active or amount > 0
 	for kind in range(cargo_discard_buttons.size()):
 		cargo_discard_buttons[kind].disabled = not expedition_active or carried_materials[kind] <= 0
@@ -5409,8 +5409,14 @@ func update_drops(delta: float) -> void:
 		if EXTRACTION_RULES.is_near_exit(player, EXTRACTION_RULES.HATCH_POSITION):
 			pickup_hint.text = "[E] 隠し脱出路  |  スクラップ2＋電力コア1（4秒）"
 		for box_data in search_crates:
-			if not bool(box_data["opened"]) and player.distance_to(box_data["pos"]) < EXTRACTION_RULES.SEARCH_RADIUS:
-				pickup_hint.text = "[E] 物資コンテナを調べる  |  素材 %d/%d" % [EXTRACTION_RULES.cargo_count(carried_materials), EXTRACTION_RULES.CARGO_CAPACITY]
+			if player.distance_to(box_data["pos"]) >= EXTRACTION_RULES.SEARCH_RADIUS:
+				continue
+			var leftover: int = EXTRACTION_RULES.pending_material_count(box_data.get("pending_materials", []))
+			if not bool(box_data["opened"]):
+				pickup_hint.text = "[E] 物資コンテナを調べる  |  素材ポーチ%d/%d" % [EXTRACTION_RULES.cargo_count(carried_materials), EXTRACTION_RULES.CARGO_CAPACITY]
+				break
+			if leftover > 0:
+				pickup_hint.text = "[E] 箱に残った素材%d個を回収  |  ポーチ%d/%d" % [leftover, EXTRACTION_RULES.cargo_count(carried_materials), EXTRACTION_RULES.CARGO_CAPACITY]
 				break
 		for exit_pos in EXTRACTION_RULES.EXITS:
 			if player.distance_to(exit_pos) < EXTRACTION_RULES.EXTRACTION_RADIUS:
@@ -6512,19 +6518,35 @@ func interact_expedition_site() -> bool:
 			show_status("脱出装置を起動！ 12秒間、半径100以内で守り抜こう", Color("b2f3ff"))
 			return true
 	for box_data in search_crates:
-		if bool(box_data["opened"]) or player.distance_to(box_data["pos"]) > EXTRACTION_RULES.SEARCH_RADIUS:
+		if player.distance_to(box_data["pos"]) > EXTRACTION_RULES.SEARCH_RADIUS:
 			continue
-		# A full cargo pouch blocks *materials*, not weapons, food or money.
-		# Once opened, a cache is consumed so this cannot be farmed repeatedly.
+		# Opened crates may still hold materials that did not fit in the shared pouch.
+		# Gold, food and gear are awarded exactly once on the first opening.
+		if bool(box_data["opened"]):
+			var pending: Array = box_data.get("pending_materials", [])
+			if EXTRACTION_RULES.pending_material_count(pending) <= 0:
+				continue
+			var retrieved: int = EXTRACTION_RULES.take_pending_materials(carried_materials, pending)
+			box_data["pending_materials"] = pending
+			if retrieved == 0:
+				show_status("素材ポーチ満杯！装備バッグとは別の12枠。[B]で不要な素材を捨てると回収可能", Color("ffdd95"))
+			else:
+				show_status("箱の残り素材 +%d個（ポーチ%d/%d）。箱の未回収は%d個" % [retrieved, EXTRACTION_RULES.cargo_count(carried_materials), EXTRACTION_RULES.CARGO_CAPACITY, EXTRACTION_RULES.pending_material_count(pending)], Color("b9f4d9"))
+			refresh_inventory_ui()
+			return true
 		box_data["opened"] = true
 		journal_record_cache()
 		var tier: int = int(box_data["tier"])
 		var is_vault: bool = bool(box_data.get("vault", false))
 		raise_expedition_noise(box_data["pos"], EXTRACTION_RULES.NOISE_SEARCH_RADIUS + float(tier) * 65.0, "search")
-		var count: int = mini(EXTRACTION_RULES.CARGO_CAPACITY - EXTRACTION_RULES.cargo_count(carried_materials), 1 + tier + rng.randi_range(0, 1))
-		for item_index in range(count):
+		# Roll all materials now, regardless of current pouch space.
+		# Leftovers stay in this specific crate until picked up or the sortie ends.
+		var pending_materials: Array = [0, 0, 0]
+		for item_index in range(1 + tier + rng.randi_range(0, 1)):
 			var kind: int = EXTRACTION_RULES.material_kind(tier, rng.randf())
-			carried_materials[kind] += 1
+			pending_materials[kind] += 1
+		var count: int = EXTRACTION_RULES.take_pending_materials(carried_materials, pending_materials)
+		box_data["pending_materials"] = pending_materials
 		var found_rations := 0
 		var found_water := 0
 		if survival_rations < SURVIVAL_RULES.MAX_SUPPLIES and rng.randf() < SURVIVAL_RULES.cache_food_chance(tier):
@@ -6551,8 +6573,9 @@ func interact_expedition_site() -> bool:
 		burst(box_data["pos"], Color("b6e6ff") if tier < 2 else Color("ffdf9f"), 25)
 		play_sound(AUDIO_PICKUP, -10.0)
 		var loot_message := "物資回収：素材+%d / +%dG（素材%d/%d）" % [count, gold_amount, EXTRACTION_RULES.cargo_count(carried_materials), EXTRACTION_RULES.CARGO_CAPACITY]
-		if count == 0:
-			loot_message += " | 素材ポーチ満杯（[B]で整理）"
+		var remaining: int = EXTRACTION_RULES.pending_material_count(pending_materials)
+		if remaining > 0:
+			loot_message += " | 箱に素材%d個残った！[B]で整理して[E]で再回収" % remaining
 		if found_rations + found_water > 0:
 			loot_message += " | 食料+%d 飲料+%d" % [found_rations, found_water]
 		if not found_gear_name.is_empty():
@@ -6579,7 +6602,8 @@ func draw_expedition_sites() -> void:
 		var at: Vector2 = box_data["pos"]
 		var opened: bool = bool(box_data["opened"])
 		var tier: int = int(box_data["tier"])
-		var col: Color = Color("6b8282") if opened else (Color("ffd591") if tier >= 2 else (Color("aa9df6") if tier == 1 else Color("8be2ce")))
+		var remaining: int = EXTRACTION_RULES.pending_material_count(box_data.get("pending_materials", []))
+		var col: Color = (Color("ffca7e") if remaining > 0 else Color("6b8282")) if opened else (Color("ffd591") if tier >= 2 else (Color("aa9df6") if tier == 1 else Color("8be2ce")))
 		draw_circle(at + Vector2(0, 18), 37.0, Color("091b2a", 0.43))
 		draw_rect(Rect2(at + Vector2(-31, -24), Vector2(62, 45)), Color("273743") if not opened else Color("354047"))
 		draw_rect(Rect2(at + Vector2(-31, -24), Vector2(62, 45)), col, false, 3.0)
@@ -6589,7 +6613,8 @@ func draw_expedition_sites() -> void:
 			var site_label: String = "禁域保管庫 [E]" if bool(box_data.get("vault", false)) else "物資 [E]"
 			draw_string(ui_font, at + Vector2(-66, -34), site_label, HORIZONTAL_ALIGNMENT_LEFT, -1, 16, col)
 		else:
-			draw_string(ui_font, at + Vector2(-25, -34), "回収済", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color("aab6bd"))
+			var status_text: String = "残り素材%d [E]" % remaining if remaining > 0 else "回収済"
+			draw_string(ui_font, at + Vector2(-53, -34), status_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, col)
 	for i in range(EXTRACTION_RULES.EXITS.size()):
 		var exit_point: Vector2 = EXTRACTION_RULES.EXITS[i]
 		var active: bool = active_exit == i and extraction_clock > 0.0
@@ -6666,7 +6691,7 @@ func update_hud() -> void:
 		var nearest_cache: Vector2 = Vector2.ZERO
 		var cache_distance := INF
 		for box_data in search_crates:
-			if bool(box_data["opened"]):
+			if bool(box_data["opened"]) and EXTRACTION_RULES.pending_material_count(box_data.get("pending_materials", [])) == 0:
 				continue
 			var cache_dir: Vector2 = box_data["pos"] - player
 			if cache_dir.length() < cache_distance:
