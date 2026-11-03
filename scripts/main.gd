@@ -786,6 +786,8 @@ func _on_coop_guest_action(action: String, value: int) -> void:
 			var previous: Dictionary = coop_guest_armor[slot].duplicate(true)
 			coop_guest_armor[slot] = item.duplicate(true)
 			coop_guest_backpack[value] = previous
+	elif action == "sortie" and phase == "hub" and not expedition_active:
+		start_sortie()
 	elif action == "display" and value >= 0 and value < 4:
 		var camp_i := -1
 		for i in range(CAMP_STATIONS.size()):
@@ -882,13 +884,7 @@ func coop_guest_tick(delta: float) -> void:
 			if coop_guest_pos.distance_to(coin_drops[coin_i]["pos"]) < 44.0:
 				collect_coin(coin_i)
 		if expedition_active and coop_guest_shoot and coop_guest_fire_clock <= 0.0 and not is_in_safe_camp(coop_guest_pos):
-			coop_guest_fire_clock = 0.42
-			var dir: Vector2 = Vector2.RIGHT.rotated(coop_guest_aim)
-			var weapon_kind := "kunai" if coop_guest_job == 6 else ("magic" if coop_guest_job in [3, 5] else "bullet")
-			coop_emit_fx("shot", coop_guest_pos + dir * 37.0)
-			projectiles.append({"pos": coop_guest_pos + dir * 37.0, "vel": dir * 850.0, "dmg": 8.0, "accuracy": 0.96, "radius": 5.0, "pierce": 1, "kind": weapon_kind, "tint": Color("b8f1ff"), "life": 1.25, "hit_ids": [], "crit_chance": 0.09, "trait": -1, "owner": "hero"})
-			raise_expedition_noise(coop_guest_pos, EXTRACTION_RULES.NOISE_SHOT_RADIUS, "attack")
-			play_sound(AUDIO_BOW, -23.0)
+			coop_guest_attack()
 	if coop_guest_downed_clock > 0.0:
 		coop_guest_downed_clock = maxf(0.0, coop_guest_downed_clock - delta)
 		if coop_guest_downed_clock <= 0.0:
@@ -925,6 +921,36 @@ func coop_guest_tick(delta: float) -> void:
 			"hatch_active": extraction_hatch_active, "elapsed": expedition_elapsed,
 			"mint_pos": companion, "mint_hp": companion_hp, "rabbit_pos": rabbit_pet, "rabbit_hp": rabbit_hp
 		})
+
+# Reuse the host weapon implementation so the guest's equipped weapon determines
+# rate, projectile type, melee reach and damage instead of a fixed 8-damage bullet.
+func coop_guest_attack() -> void:
+	var saved_player := player
+	var saved_aim := aim_angle
+	var saved_equipped: Dictionary = equipped.duplicate(true)
+	var saved_fire := fire_clock
+	var saved_attack_clock := attack_clock
+	var saved_attack_duration := attack_duration
+	var saved_hp := hp
+	var saved_heal_clock := heal_spell_clock
+	player = coop_guest_pos
+	aim_angle = coop_guest_aim
+	equipped = coop_guest_equipped.duplicate(true)
+	fire_clock = 0.0
+	attack()
+	coop_guest_fire_clock = maxf(0.1, fire_clock)
+	coop_guest_equipped = equipped.duplicate(true)
+	if hp > saved_hp:
+		coop_guest_hp = minf(100.0, coop_guest_hp + hp - saved_hp)
+	player = saved_player
+	aim_angle = saved_aim
+	equipped = saved_equipped
+	fire_clock = saved_fire
+	attack_clock = saved_attack_clock
+	attack_duration = saved_attack_duration
+	hp = saved_hp
+	heal_spell_clock = saved_heal_clock
+	coop_emit_fx("shot", coop_guest_pos + Vector2.RIGHT.rotated(coop_guest_aim) * 37.0)
 
 func coop_emit_fx(kind: String, pos: Vector2) -> void:
 	if coop == null or not coop.is_host() or coop.peer_id <= 1:
@@ -2707,7 +2733,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			elif event.keycode >= KEY_1 and event.keycode <= KEY_5:
 				equip_backpack_item(event.keycode - KEY_1)
 			elif event.keycode == KEY_G:
-				show_status("出撃はホストが開始するよ", Color("c3eeff"))
+				coop.send_guest_action("sortie", 1)
+				show_status("ホストに出撃をリクエストしたよ", Color("c3eeff"))
 			return
 		if phase == "hub" and event.keycode == KEY_G:
 			start_sortie()
