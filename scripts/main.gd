@@ -867,6 +867,19 @@ func coop_client_tick(delta: float) -> void:
 	if state == "playing":
 		player = (player + direction * 260.0 * delta).clamp(ARENA.position + Vector2(35, 45), ARENA.end - Vector2(35, 35))
 		camera.position = player
+		# The guest does not run the host simulation, so update proximity hints locally.
+		pickup_hint.text = ""
+		if not inventory_open and not cooking_open and not slot_open:
+			if player.distance_to(SLOT_POS) < 105.0 and phase == "hub":
+				pickup_hint.text = "[E] スロット"
+			elif nearest_camp_index() >= 0 and phase == "hub":
+				pickup_hint.text = "[E] 料理"
+			elif nearest_plot_index() >= 0 and phase == "hub":
+				pickup_hint.text = "[E] 畑"
+			for drop in drops:
+				if player.distance_to(drop["pos"]) < 92.0:
+					pickup_hint.text = "[E] 拾う  %s" % str(drop.get("name", "装備"))
+					break
 	update_hud()
 	queue_redraw()
 
@@ -896,9 +909,12 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 	elif farm_plots.is_empty():
 		for plot_pos in FARM_PLOTS:
 			farm_plots.append({"pos": plot_pos, "progress": -1.0, "crop": 0})
-	backpack.clear()
-	for item in data.get("guest_backpack", []):
-		backpack.append(item)
+	if data.has("guest_backpack"):
+		backpack.clear()
+		for item in data["guest_backpack"]:
+			backpack.append(item)
+		while backpack.size() < BAG_CAPACITY:
+			backpack.append({})
 	seeds = int(data.get("guest_seeds", seeds))
 	melon_seeds = int(data.get("guest_melon_seeds", melon_seeds))
 	watermelon_seeds = int(data.get("guest_watermelon_seeds", watermelon_seeds))
@@ -931,6 +947,14 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 	coop_connection_status = "接続済み"
 	refresh_coop_ui()
 	dead_panel.visible = state == "dead"
+	if inventory_open:
+		refresh_inventory_ui()
+	else:
+		refresh_hotbar()
+	if cooking_open:
+		refresh_cooking_ui()
+	if slot_open:
+		refresh_slot_ui()
 	update_hud()
 	queue_redraw()
 
@@ -2430,7 +2454,7 @@ func _input(event: InputEvent) -> void:
 		toggle_slot()
 	elif cooking_open:
 		toggle_cooking()
-	elif not expedition_active and player.distance_to(SLOT_POS) < 135.0:
+	elif phase == "hub" and player.distance_to(SLOT_POS) < 105.0:
 		toggle_slot()
 	elif not expedition_active and nearest_camp_index() >= 0:
 		toggle_cooking()
