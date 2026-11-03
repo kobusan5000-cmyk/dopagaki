@@ -183,6 +183,18 @@ jobs:
           }
           cat godot-survival-crafting.log
 
+      - name: Validate persistent exploration journal and discovery milestones
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot="$HOME/.cache/dopagaki-godot/godot"
+          timeout 75 "$godot" --headless --path . --script res://tests/test_survival_journal.gd > godot-survival-journal.log 2>&1 || {
+            cat godot-survival-journal.log
+            echo "::error::Exploration codex progression regression failed"
+            exit 1
+          }
+          cat godot-survival-journal.log
+
       - name: Test 2-process LAN host and guest
         shell: bash
         run: |
@@ -236,6 +248,7 @@ jobs:
             godot-coop-parity.log
             godot-survival-cargo.log
             godot-survival-crafting.log
+            godot-survival-journal.log
             godot-coop-host.log
             godot-coop-guest.log
             godot-run.log
