@@ -121,6 +121,36 @@ func _run() -> void:
 	scene.call("coop_guest_slot_claim", serial)
 	_check(int(scene.get("coop_guest_coins")) == after_claim, "Duplicate claim cannot pay twice")
 
+	# Once the host starts a sortie, safe-camp machines must keep working
+	# for the guest without granting access from outside the interaction radius.
+	scene.set("phase", "combat")
+	scene.set("expedition_active", true)
+	scene.set("wave", 3)
+	scene.set("coop_guest_pos", Vector2(1780, 985))
+	scene.set("coop_guest_coins", 100)
+	scene.set("coop_guest_seeds", 10)
+	scene.call("_on_coop_guest_action", "buy", 4)
+	_check(int(scene.get("coop_guest_coins")) == 88, "Guest purchase works at safe-camp merchant during combat")
+	_check(int(scene.get("coop_guest_seeds")) == 13, "Guest receives combat-phase merchant purchase")
+	scene.set("coop_guest_pos", Vector2(865, 895))
+	scene.set("coop_guest_slot_pending", false)
+	scene.set("coop_guest_slot_replay", false)
+	scene.call("_on_coop_guest_action", "slot_wager", 25)
+	_check(int(scene.get("coop_guest_coins")) == 63, "Guest slot charges own wallet during combat")
+	_check(bool(scene.get("coop_guest_slot_pending")), "Guest slot spins during combat")
+	var active_spin: int = scene.get("coop_guest_slot_serial")
+	scene.call("coop_guest_slot_claim", active_spin)
+	scene.set("coop_guest_pos", Vector2(2900, 1700))
+	scene.set("coop_guest_slot_pending", false)
+	scene.set("coop_guest_slot_replay", false)
+	var remote_balance: int = scene.get("coop_guest_coins")
+	scene.call("_on_coop_guest_action", "slot_wager", 25)
+	_check(int(scene.get("coop_guest_coins")) == remote_balance, "Combat-phase slot rejects distant guests")
+	scene.call("_on_coop_guest_action", "buy", 4)
+	_check(int(scene.get("coop_guest_coins")) == remote_balance, "Combat-phase merchant rejects distant guests")
+	# Restore peaceful hub for jail release tests.
+	scene.set("expedition_active", false)
+
 	# Jail can be resolved symmetrically by teammate E, and guest R in the hub.
 	scene.set("phase", "hub")
 	scene.set("coop_host_jailed", true)
