@@ -248,6 +248,11 @@ var coop_guest_watermelon_meals := 0
 var coop_guest_food_buff_clock := 0.0
 var coop_guest_crop_selection := 0
 var coop_guest_stash: Array[Dictionary] = []
+var coop_guest_slot_serial := 0
+var coop_guest_last_slot_serial := 0
+var coop_guest_slot_result := "MISS"
+var coop_guest_slot_pending := false
+var coop_guest_slot_replay := false
 const COOP_GUEST_STORAGE_SAVE := "user://coop_guest_storage.json"
 var coop_guest_melons := 0
 var coop_guest_watermelons := 0
@@ -762,6 +767,10 @@ func _on_coop_peer_connected(id: int) -> void:
 	coop_guest_watermelon_meals = 0
 	coop_guest_crop_selection = 0
 	coop_guest_food_buff_clock = 0.0
+	coop_guest_slot_serial = 0
+	coop_guest_slot_pending = false
+	coop_guest_slot_result = "MISS"
+	coop_guest_slot_replay = false
 	coop_guest_load_storage()
 	coop_guest_backpack.clear()
 	for i in range(BAG_CAPACITY):
@@ -856,6 +865,10 @@ func _on_coop_guest_action(action: String, value: int) -> void:
 				coop_guest_mp = minf(coop_guest_max_mp, coop_guest_mp + 12.0)
 	elif action == "crop" and value >= 0 and value < CROP_NAMES.size():
 		coop_guest_crop_selection = value
+	elif action == "slot_wager":
+		coop_guest_slot_wager(value)
+	elif action == "slot_claim":
+		coop_guest_slot_claim(value)
 	elif action == "rabbit" and value >= 0 and value < 4:
 		coop_guest_rabbit_action(value)
 	elif action == "cook" and value >= 0 and value < 4:
@@ -950,6 +963,8 @@ func coop_guest_inventory_action(action: String, index: int) -> void:
 		coop_guest_stash.append(coop_guest_backpack[index].duplicate(true))
 		coop_guest_backpack[index] = {}
 	elif action == "stash_equip" and coop_guest_stash.size() < STASH_MAX:
+		if int(coop_guest_equipped.get("rarity", 0)) == 0 and int(coop_guest_equipped.get("kind", 0)) == CLASS_WEAPONS[coop_guest_job]:
+			return # Starter weapons cannot be minted into unlimited stash copies.
 		coop_guest_stash.append(coop_guest_equipped.duplicate(true))
 		coop_guest_equipped = {"type": "weapon", "kind": CLASS_WEAPONS[coop_guest_job], "rarity": 0, "name": WEAPONS[CLASS_WEAPONS[coop_guest_job]]}
 	elif action == "stash_withdraw" and index >= 0 and index < coop_guest_stash.size():
@@ -977,8 +992,14 @@ func coop_guest_buy(index: int) -> void:
 	var costs := [50, 55, 135, 55, 12, 42, 75, 18]
 	if index < 0 or index >= costs.size() or coop_guest_coins < costs[index]:
 		return
-	if index < 4 and coop_guest_backpack.all(func(item): return not (item as Dictionary).is_empty()):
-		return
+	if index < 4:
+		var has_space := false
+		for bag_item in coop_guest_backpack:
+			if bag_item.is_empty():
+				has_space = true
+				break
+		if not has_space:
+			return
 	coop_guest_coins -= costs[index]
 	match index:
 		0: spawn_drop(MERCHANT_POS + Vector2(110, 25), 1, 2, 0)
@@ -1005,6 +1026,45 @@ func coop_guest_rabbit_action(index: int) -> void:
 	player = saved_player
 	coins = saved_coins
 	carrots = saved_carrots
+
+# A co-op spin is charged and rolled on the host, never trusted from the
+# client reel UI. The client displays the host's role and claims its serial.
+func coop_guest_slot_wager(cost: int) -> void:
+	if phase != "hub" or coop_guest_pos.distance_to(SLOT_POS) > 105.0 or coop_guest_slot_pending:
+		return
+	var actual_cost := 0 if coop_guest_slot_replay else 25
+	if cost != actual_cost or coop_guest_coins < actual_cost:
+		return
+	coop_guest_coins -= actual_cost
+	coop_guest_slot_replay = false
+	coop_guest_slot_pending = true
+	coop_guest_slot_serial += 1
+	var roll := rng.randf()
+	var cut := 1.0 / 17.0
+	coop_guest_slot_result = "BIG" if roll < cut else "MISS"
+	if coop_guest_slot_result == "MISS":
+		cut += 1.0 / 6.2
+		if roll < cut:
+			coop_guest_slot_result = "REG"
+		else:
+			for role in ["GRAPE", "CHERRY", "REPLAY"]:
+				cut += 1.0 / (6.0 if role == "GRAPE" else (35.0 if role == "CHERRY" else 7.3))
+				if roll < cut:
+					coop_guest_slot_result = role
+					break
+
+func coop_guest_slot_claim(serial: int) -> void:
+	if not coop_guest_slot_pending or serial != coop_guest_slot_serial:
+		return
+	coop_guest_slot_pending = false
+	var result := coop_guest_slot_result
+	coop_guest_slot_replay = result == "REPLAY"
+	var payouts := {"BIG": 160, "REG": 60, "GRAPE": 8, "CHERRY": 2, "REPLAY": 0, "MISS": 0}
+	var host_money := coins
+	coins = coop_guest_coins
+	lumi_slot_reward(result, int(payouts[result]))
+	coop_guest_coins = coins
+	coins = host_money
 
 func coop_guest_cook(index: int) -> void:
 	var near_camp := false
@@ -1111,6 +1171,16 @@ func coop_process_guest_interaction() -> void:
 	if coop_host_downed_clock > 0.0 and coop_guest_pos.distance_to(player) < 100.0:
 		coop_revive_host()
 		return
+	# Guest pickup of placed food and seed drops must be server-authoritative.
+	for meal_i in range(meal_displays.size() - 1, -1, -1):
+		if coop_guest_pos.distance_to(meal_displays[meal_i]["pos"]) < 62.0:
+			match int(meal_displays[meal_i]["kind"]):
+				0: coop_guest_stew_meals += 1
+				1: coop_guest_broth_meals += 1
+				2: coop_guest_melon_meals += 1
+				3: coop_guest_watermelon_meals += 1
+			meal_displays.remove_at(meal_i)
+			return
 	# Temporarily use the guest's position and inventory for host-authoritative
 	# pickups/farming. Restore host state before the next simulation step.
 	var host_pos: Vector2 = player
@@ -1146,6 +1216,11 @@ func coop_process_guest_interaction() -> void:
 		farm_interact()
 	elif expedition_active:
 		interact_expedition_site()
+	else:
+		for seed_i in range(crop_drops.size() - 1, -1, -1):
+			if player.distance_to(crop_drops[seed_i]["pos"]) < 95.0:
+				collect_crop_seed(seed_i)
+				break
 	coop_guest_backpack = backpack.duplicate(true)
 	coop_guest_seeds = seeds
 	coop_guest_melon_seeds = melon_seeds
@@ -1257,6 +1332,7 @@ func coop_guest_tick(delta: float) -> void:
 			"guest_broth": coop_guest_broth_meals, "guest_melon_meals": coop_guest_melon_meals,
 			"guest_watermelon_meals": coop_guest_watermelon_meals, "guest_food_buff": coop_guest_food_buff_clock,
 			"guest_stash": coop_guest_stash,
+			"guest_slot_serial": coop_guest_slot_serial, "guest_slot_result": coop_guest_slot_result,
 			"farm_plots": farm_plots, "meal_displays": meal_displays, "guest_backpack": coop_guest_backpack,
 			"guest_equipped": coop_guest_equipped, "guest_armor": coop_guest_armor,
 			"guest_jump": coop_guest_jump_clock, "guest_guard": coop_guest_guard,
@@ -1512,6 +1588,13 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 	expedition_active = bool(data.get("expedition", false))
 	wave = int(data.get("wave", 0))
 	coins = int(data.get("coins", 0))
+	var slot_serial := int(data.get("guest_slot_serial", 0))
+	if slot_serial > coop_guest_last_slot_serial:
+		if slot_open and not bool(slot_panel.get("spinning")):
+			slot_panel.call("set_wallet", coins)
+			slot_panel.call("begin_spin")
+			slot_panel.set("result_name", str(data.get("guest_slot_result", "MISS")))
+		coop_guest_last_slot_serial = slot_serial
 	banked_gold = int(data.get("guest_banked_gold", banked_gold))
 	mushrooms = int(data.get("guest_mushrooms", mushrooms))
 	stew_meals = int(data.get("guest_stew", stew_meals))
@@ -2897,6 +2980,10 @@ func refresh_slot_ui() -> void:
 		slot_panel.call("set_wallet", coins)
 
 func lumi_slot_wager(cost: int) -> void:
+	if coop != null and coop.is_guest():
+		if slot_open and not bool(slot_panel.get("spinning")) and coins >= cost:
+			coop.send_guest_action("slot_wager", cost)
+		return
 	if state != "playing" or not slot_open or coins < cost:
 		refresh_slot_ui()
 		return
@@ -2910,6 +2997,9 @@ func lumi_slot_reel_stopped(_index: int) -> void:
 	play_sound(AUDIO_PICKUP, -24.0, 1.7)
 
 func lumi_slot_reward(outcome: String, payout: int) -> void:
+	if coop != null and coop.is_guest():
+		coop.send_guest_action("slot_claim", coop_guest_last_slot_serial)
+		return
 	# The Godot reels decide the outcome before the STOP buttons animate it.
 	# Payment and loot are awarded here, never by browser-side scripts.
 	coins += maxi(0, payout)
@@ -3151,6 +3241,8 @@ func _input(event: InputEvent) -> void:
 		toggle_slot()
 	elif cooking_open:
 		toggle_cooking()
+	elif (coop_host_downed_clock > 0.0 and player.distance_to(coop_remote_host_pos) < 100.0) or not drops.filter(func(d): return player.distance_to(d["pos"]) < 92.0).is_empty() or not meal_displays.filter(func(m): return player.distance_to(m["pos"]) < 62.0).is_empty():
+		coop_guest_interact_pending = true
 	elif phase == "hub" and player.distance_to(STASH_POS) < 106.0:
 		toggle_stash()
 	elif phase == "hub" and player.distance_to(MERCHANT_POS) < 108.0:
