@@ -25,7 +25,8 @@ func _run() -> void:
 	await process_frame
 	scene.call("select_class", 0)
 	var initial: Array[int] = (scene.get("stored_materials") as Array[int]).duplicate()
-	scene.set("stored_materials", [10, 10, 10] as Array[int])
+	var rich_materials: Array[int] = [10, 10, 10]
+	scene.set("stored_materials", rich_materials)
 	scene.set("player", Vector2(1390, 1085))
 	_check(str(scene.get("phase")) == "hub", "Workbench only in hub")
 	scene.call("toggle_craft")
