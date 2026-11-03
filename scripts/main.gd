@@ -856,6 +856,8 @@ func _on_coop_guest_action(action: String, value: int) -> void:
 				coop_guest_mp = minf(coop_guest_max_mp, coop_guest_mp + 12.0)
 	elif action == "crop" and value >= 0 and value < CROP_NAMES.size():
 		coop_guest_crop_selection = value
+	elif action == "rabbit" and value >= 0 and value < 4:
+		coop_guest_rabbit_action(value)
 	elif action == "cook" and value >= 0 and value < 4:
 		coop_guest_cook(value)
 	elif action == "buy" and value >= 0 and value < 8:
@@ -987,6 +989,22 @@ func coop_guest_buy(index: int) -> void:
 		5: coop_guest_melon_seeds += 2
 		6: coop_guest_watermelon_seeds += 2
 		7: coop_guest_mushrooms += 2
+
+func coop_guest_rabbit_action(index: int) -> void:
+	if not rabbit_pet_enabled or rabbit_hp <= 0.0:
+		return
+	var saved_player := player
+	var saved_coins := coins
+	var saved_carrots := carrots
+	player = coop_guest_pos
+	coins = coop_guest_coins
+	carrots = coop_guest_carrots
+	rabbit_action_selected(index)
+	coop_guest_coins = coins
+	coop_guest_carrots = carrots
+	player = saved_player
+	coins = saved_coins
+	carrots = saved_carrots
 
 func coop_guest_cook(index: int) -> void:
 	var near_camp := false
@@ -1199,6 +1217,7 @@ func coop_guest_tick(delta: float) -> void:
 				backpack.append({})
 			equipped = {"type": "weapon", "kind": CLASS_WEAPONS[class_id], "rarity": 0, "name": WEAPONS[CLASS_WEAPONS[class_id]]}
 			armor_equipped = [{}, {}, {}, {}]
+			coins = 0
 			show_status("ホストの救助時間切れ！ 装備を失い牢屋へ", Color("ffbaba"))
 	if coop_guest_downed_clock > 0.0:
 		coop_guest_downed_clock = maxf(0.0, coop_guest_downed_clock - delta)
@@ -1210,6 +1229,7 @@ func coop_guest_tick(delta: float) -> void:
 				coop_guest_backpack.append({})
 			coop_guest_equipped = {"type": "weapon", "kind": CLASS_WEAPONS[coop_guest_job], "rarity": 0, "name": WEAPONS[CLASS_WEAPONS[coop_guest_job]]}
 			coop_guest_armor = [{}, {}, {}, {}]
+			coop_guest_coins = 0
 			show_status("仲間の救助時間切れ！ 装備を失い牢屋へ", Color("ffbaba"))
 	if coop_guest_interact:
 		coop_guest_interact = false
@@ -2647,6 +2667,10 @@ func refresh_cooking_ui() -> void:
 	cooking_info.text = "ニンジン%d  キノコ%d  メロン%d  スイカ%d\n作り置き: シチュー%d [H] / スープ%d [J] / ジュース%d [K] / パフェ%d [L]" % [carrots, mushrooms, melons, watermelons, stew_meals, broth_meals, melon_meals, watermelon_meals]
 
 func cook_recipe(which: int) -> void:
+	if coop != null and coop.is_guest():
+		if cooking_open:
+			coop.send_guest_action("cook", which)
+		return
 	if state != "playing" or not cooking_open:
 		return
 	if which == 0:
@@ -2821,6 +2845,10 @@ func refresh_merchant_ui() -> void:
 		merchant_buttons[i].disabled = coins < costs[i] or (i < 4 and free_backpack_slot() < 0)
 
 func buy_merchant_item(index: int) -> void:
+	if coop != null and coop.is_guest():
+		if merchant_open:
+			coop.send_guest_action("buy", index)
+		return
 	if not merchant_open or index < 0 or index > 7:
 		return
 	var costs := [50, 55, 135, 55, 12, 42, 75, 18]
@@ -3115,13 +3143,21 @@ func _input(event: InputEvent) -> void:
 		return
 	if event.keycode != KEY_E:
 		return
-	if slot_open:
+	if stash_open:
+		toggle_stash()
+	elif merchant_open:
+		toggle_merchant()
+	elif slot_open:
 		toggle_slot()
 	elif cooking_open:
 		toggle_cooking()
-	elif player.distance_to(SLOT_POS) < 105.0:
+	elif phase == "hub" and player.distance_to(STASH_POS) < 106.0:
+		toggle_stash()
+	elif phase == "hub" and player.distance_to(MERCHANT_POS) < 108.0:
+		toggle_merchant()
+	elif phase == "hub" and player.distance_to(SLOT_POS) < 105.0:
 		toggle_slot()
-	elif nearest_camp_index() >= 0:
+	elif nearest_camp_index() >= 0 and not expedition_active:
 		toggle_cooking()
 	else:
 		coop_guest_interact_pending = true
@@ -3156,40 +3192,57 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			player = CAMP_STATIONS[0] + Vector2(0, 55)
 			return
 		if coop != null and coop.is_guest():
-			if event.keycode == KEY_E:
-				if slot_open:
-					toggle_slot()
-				elif cooking_open:
-					toggle_cooking()
-				elif not expedition_active and player.distance_to(SLOT_POS) < 105.0:
-					toggle_slot()
-				elif not expedition_active and nearest_camp_index() >= 0:
-					toggle_cooking()
-				else:
-					coop_guest_interact_pending = true
-			elif event.keycode == KEY_ESCAPE and cooking_open:
-				toggle_cooking()
-			elif event.keycode == KEY_ESCAPE and slot_open:
-				toggle_slot()
-			elif event.keycode == KEY_F:
+			# InputEvent E is handled by _input; process modal shortcuts here.
+			if stash_open:
+				if event.keycode == KEY_ESCAPE: toggle_stash()
+				return
+			if merchant_open:
+				if event.keycode == KEY_ESCAPE: toggle_merchant()
+				elif event.keycode >= KEY_1 and event.keycode <= KEY_8: buy_merchant_item(event.keycode - KEY_1)
+				return
+			if cooking_open:
+				if event.keycode == KEY_ESCAPE: toggle_cooking()
+				elif event.keycode >= KEY_1 and event.keycode <= KEY_4: cook_recipe(event.keycode - KEY_1)
+				elif event.keycode >= KEY_5 and event.keycode <= KEY_8: place_meal_display(event.keycode - KEY_5)
+				return
+			if rabbit_menu_open:
+				if event.keycode in [KEY_ESCAPE, KEY_T]: toggle_rabbit_menu()
+				elif event.keycode >= KEY_1 and event.keycode <= KEY_4: rabbit_action_selected(event.keycode - KEY_1)
+				return
+			if slot_open:
+				if event.keycode == KEY_ESCAPE: toggle_slot()
+				else: slot_panel.call("handle_slot_key", event.keycode)
+				return
+			if upgrade_open:
+				if event.keycode in [KEY_P, KEY_ESCAPE]: toggle_upgrade_menu()
+				elif event.keycode == KEY_TAB: set_upgrade_target("mint" if upgrade_target == "hero" else "hero")
+				elif event.keycode >= KEY_1 and event.keycode <= KEY_6: select_upgrade(event.keycode - KEY_1)
+				return
+			if event.keycode == KEY_F:
 				crop_selection = (crop_selection + 1) % CROP_NAMES.size()
+				coop.send_guest_action("crop", crop_selection)
 				show_status("作物: %s" % CROP_NAMES[crop_selection])
-			elif event.keycode == KEY_I:
-				pass # Handled in coop_client_tick.
-			elif event.keycode == KEY_SPACE:
-				coop.send_guest_action("jump", 1)
-				start_jump()
-			elif event.keycode >= KEY_1 and event.keycode <= KEY_5 and not upgrade_open:
-				equip_backpack_item(event.keycode - KEY_1)
-			elif event.keycode == KEY_Q:
-				coop.send_guest_action("skill", 1)
+			elif event.keycode == KEY_T:
+				toggle_rabbit_menu()
 			elif event.keycode == KEY_P:
 				toggle_upgrade_menu()
-			elif upgrade_open and event.keycode >= KEY_1 and event.keycode <= KEY_6:
-				select_upgrade(event.keycode - KEY_1)
+			elif event.keycode == KEY_Q:
+				coop.send_guest_action("skill", 1)
+			elif event.keycode == KEY_H:
+				coop.send_guest_action("eat", 0)
+			elif event.keycode == KEY_J:
+				coop.send_guest_action("eat", 1)
+			elif event.keycode == KEY_K:
+				coop.send_guest_action("eat", 2)
+			elif event.keycode == KEY_L:
+				coop.send_guest_action("eat", 3)
+			elif event.keycode >= KEY_1 and event.keycode <= KEY_5:
+				equip_backpack_item(event.keycode - KEY_1)
 			elif event.keycode == KEY_G:
 				coop.send_guest_action("sortie", 1)
-				show_status("ホストに出撃をリクエストしたよ", Color("c3eeff"))
+				show_status("出撃をホストにリクエスト", Color("c3eeff"))
+			elif event.keycode == KEY_C:
+				toggle_controls()
 			return
 		if phase == "hub" and event.keycode == KEY_G:
 			start_sortie()
@@ -4794,6 +4847,10 @@ func equip_backpack_item(index: int) -> void:
 	update_hud()
 
 func drop_backpack_slot(index: int) -> void:
+	if coop != null and coop.is_guest():
+		if inventory_open:
+			coop.send_guest_action("drop", index)
+		return
 	if not inventory_open or index < 0 or index >= backpack.size():
 		return
 	if backpack[index].is_empty():
@@ -4810,6 +4867,10 @@ func drop_backpack_slot(index: int) -> void:
 	update_hud()
 
 func unequip_armor(slot: int) -> void:
+	if coop != null and coop.is_guest():
+		if inventory_open:
+			coop.send_guest_action("unequip", slot)
+		return
 	if not inventory_open or slot < 0 or slot >= armor_equipped.size():
 		return
 	if armor_equipped[slot].is_empty():
@@ -5184,6 +5245,10 @@ func save_stored_materials() -> bool:
 	return true
 
 func withdraw_banked_gold() -> void:
+	if coop != null and coop.is_guest():
+		if stash_open:
+			coop.send_guest_action("stash_gold", 0)
+		return
 	if state != "playing" or not stash_open or wave >= 1 or banked_gold <= 0:
 		return
 	var taken: int = mini(100, banked_gold)
@@ -5249,6 +5314,10 @@ func refresh_stash_ui() -> void:
 		button.expand_icon = true
 
 func stash_deposit_backpack(index: int) -> void:
+	if coop != null and coop.is_guest():
+		if stash_open:
+			coop.send_guest_action("stash_deposit", index)
+		return
 	if wave >= 1:
 		show_status("探索中は預けられない。脱出してから倉庫を使おう", Color("ffe0ae"))
 		return
@@ -5269,6 +5338,10 @@ func stash_deposit_backpack(index: int) -> void:
 	show_status("倉庫に預けた！ 次の探索でも取り出せます", Color("ffe7a5"))
 
 func stash_deposit_equipped() -> void:
+	if coop != null and coop.is_guest():
+		if stash_open:
+			coop.send_guest_action("stash_equip", 0)
+		return
 	if wave >= 1:
 		show_status("探索中は預けられない。脱出してから倉庫を使おう", Color("ffe0ae"))
 		return
@@ -5289,6 +5362,10 @@ func stash_deposit_equipped() -> void:
 	show_status("武器を倉庫へ。初期銃に切り替えた", Color("ffe7a5"))
 
 func stash_withdraw(index: int) -> void:
+	if coop != null and coop.is_guest():
+		if stash_open:
+			coop.send_guest_action("stash_withdraw", index)
+		return
 	if not stash_open or index < 0 or index >= stash_items.size():
 		return
 	var slot: int = free_backpack_slot()
@@ -5366,6 +5443,14 @@ func extract_alive() -> void:
 	var gear_count: int = bank.size()
 	var material_count: int = EXTRACTION_RULES.cargo_count(earned_cargo)
 	var gold_kept: int = coins
+	# Bank the guest's own expedition coins only when alive and extracting.
+	if coop != null and coop.is_host() and coop.peer_id > 1 and coop_guest_hp > 0.0 and not coop_guest_jailed:
+		var guest_old_bank := coop_guest_banked_gold
+		coop_guest_banked_gold += coop_guest_coins
+		if not coop_guest_save_storage():
+			coop_guest_banked_gold = guest_old_bank
+			return
+		coop_guest_coins = 0
 	return_to_safe_hub()
 	backpack = kept_backpack
 	equipped = kept_equipped
@@ -6152,6 +6237,10 @@ func refresh_rabbit_menu() -> void:
 	rabbit_menu_buttons[3].text = "[4] 次の装備を購入 (%dG)" % RABBIT_GEAR_COSTS[gear_next] if rabbit_gear_level < 3 else "[4] すべての装備を購入済"
 
 func rabbit_action_selected(action: int) -> void:
+	if coop != null and coop.is_guest():
+		if rabbit_menu_open:
+			coop.send_guest_action("rabbit", action)
+		return
 	if state != "playing" or not rabbit_pet_enabled or rabbit_hp <= 0.0:
 		return
 	match action:
