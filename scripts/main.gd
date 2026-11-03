@@ -435,6 +435,7 @@ var rabbit_gear_level := 0
 var rabbit_affection := 35.0
 var rabbit_hunger := 48.0 # 0=空腹 / 100=満腹
 var rabbit_carried := false
+var coop_rabbit_carrier_guest := false
 var rabbit_pet_glow := 0.0
 var rabbit_menu_open := false
 var rabbit_menu: PanelContainer
@@ -785,6 +786,7 @@ func _on_coop_peer_disconnected(_id: int) -> void:
 	coop_guest_dir = Vector2.ZERO
 	coop_guest_shoot = false
 	coop_guest_input_timeout = 0.0
+	coop_rabbit_carrier_guest = false
 	coop_guest_interact = false
 	coop_guest_held_interact = false
 	show_status("仲間が切断した。ソロプレイに戻る", Color("ffd4a8"))
@@ -853,6 +855,15 @@ func _on_coop_guest_action(action: String, value: int) -> void:
 			coop_guest_backpack[value] = previous
 	elif action == "skill":
 		coop_guest_cast_skill()
+	elif action == "mint_upgrade" and value >= 0 and value < companion_stats.size():
+		if pending_mint_points > 0:
+			companion_stats[value] += 1
+			pending_mint_points -= 1
+			if value == 2:
+				companion_max_hp += 15.0
+				companion_hp = minf(companion_max_hp, companion_hp + 25.0)
+			elif value == 3:
+				companion_heal_clock = maxf(0.0, companion_heal_clock - 2.0)
 	elif action == "upgrade" and value >= 0 and value < coop_guest_stats.size():
 		if coop_guest_pending_points > 0:
 			coop_guest_stats[value] += 1
@@ -1021,6 +1032,8 @@ func coop_guest_rabbit_action(index: int) -> void:
 	coins = coop_guest_coins
 	carrots = coop_guest_carrots
 	rabbit_action_selected(index)
+	if index == 1:
+		coop_rabbit_carrier_guest = rabbit_carried
 	coop_guest_coins = coins
 	coop_guest_carrots = carrots
 	player = saved_player
@@ -1267,6 +1280,9 @@ func coop_guest_tick(delta: float) -> void:
 	if coop_guest_input_timeout <= 0.0:
 		coop_guest_dir = Vector2.ZERO
 		coop_guest_shoot = false
+	if coop_host_jailed and coop_guest_jailed and expedition_active:
+		return_to_safe_hub()
+		show_status("2人とも脱出失敗。持込装備を失い安全区域へ", Color("ffbaba"))
 	if state == "playing" and coop_guest_hp > 0.0 and not coop_guest_jailed:
 		var guest_base_speed := 297.0 if coop_guest_job == 1 else (245.0 if coop_guest_job == 2 else (235.0 if coop_guest_job == 4 else (309.0 if coop_guest_job == 6 else 262.0)))
 		var guest_speed := guest_base_speed * (0.64 if coop_guest_guard else 1.0) * (1.0 + float(coop_guest_stats[1]) * 0.04) * (1.25 if coop_guest_food_buff_clock > 0.0 else 1.0) * (1.3 if coop_guest_skill_buff_clock > 0.0 else 1.0)
@@ -1344,7 +1360,10 @@ func coop_guest_tick(delta: float) -> void:
 			"guest_watermelons": coop_guest_watermelons,
 			"extract_clock": extraction_clock, "active_exit": active_exit,
 			"hatch_active": extraction_hatch_active, "elapsed": expedition_elapsed,
-			"mint_pos": companion, "mint_hp": companion_hp, "rabbit_pos": rabbit_pet, "rabbit_hp": rabbit_hp
+			"mint_pos": companion, "mint_hp": companion_hp, "rabbit_pos": rabbit_pet, "rabbit_hp": rabbit_hp,
+			"mint_level": companion_level, "mint_stats": companion_stats, "mint_points": pending_mint_points,
+			"rabbit_hunger": rabbit_hunger, "rabbit_affection": rabbit_affection,
+			"rabbit_gear": rabbit_gear_level, "rabbit_carried": rabbit_carried, "rabbit_mode": rabbit_pet_mode
 		})
 
 # Reuse the host weapon implementation so the guest's equipped weapon determines
@@ -1526,12 +1545,18 @@ func coop_client_tick(delta: float) -> void:
 	if state == "playing":
 		jump_clock = maxf(0.0, jump_clock - delta)
 		jump_cooldown = maxf(0.0, jump_cooldown - delta)
-		player = (player + (direction * 260.0 * delta + jump_direction * 270.0 * delta if jump_clock > 0.0 else direction * 260.0 * delta) if coop_guest_hp > 0.0 and not coop_guest_jailed else player).clamp(ARENA.position + Vector2(35, 45), ARENA.end - Vector2(35, 35))
+		var guest_base_speed := 297.0 if class_id == 1 else (245.0 if class_id == 2 else (235.0 if class_id == 4 else (309.0 if class_id == 6 else 262.0)))
+		var guest_speed := guest_base_speed * (0.64 if guard_active else 1.0) * (1.0 + float(hero_stats[1]) * 0.04) * (1.25 if food_buff_clock > 0.0 else 1.0) * (1.3 if skill_buff_clock > 0.0 else 1.0)
+		player = (player + (direction * guest_speed * delta + jump_direction * 270.0 * delta if jump_clock > 0.0 else direction * guest_speed * delta) if coop_guest_hp > 0.0 and not coop_guest_jailed else player).clamp(ARENA.position + Vector2(35, 45), ARENA.end - Vector2(35, 35))
 		camera.position = player
 		# The guest does not run the host simulation, so update proximity hints locally.
 		pickup_hint.text = ""
-		if not inventory_open and not cooking_open and not slot_open:
-			if player.distance_to(SLOT_POS) < 105.0:
+		if not inventory_open and not cooking_open and not slot_open and not stash_open and not merchant_open:
+			if phase == "hub" and player.distance_to(STASH_POS) < 106.0:
+				pickup_hint.text = "[E] 倉庫"
+			elif phase == "hub" and player.distance_to(MERCHANT_POS) < 108.0:
+				pickup_hint.text = "[E] 商人"
+			elif player.distance_to(SLOT_POS) < 105.0:
 				pickup_hint.text = "[E] スロット"
 			elif nearest_camp_index() >= 0:
 				pickup_hint.text = "[E] 料理"
@@ -1653,7 +1678,17 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 		rabbit_pet = coop_target_rabbit_pos
 	coop_mint_target_initialized = true
 	companion_hp = float(data.get("mint_hp", companion_hp))
+	companion_level = int(data.get("mint_level", companion_level))
+	pending_mint_points = int(data.get("mint_points", pending_mint_points))
+	if data.has("mint_stats"):
+		for stat_i in range(mini(companion_stats.size(), data["mint_stats"].size())):
+			companion_stats[stat_i] = int(data["mint_stats"][stat_i])
 	rabbit_hp = float(data.get("rabbit_hp", rabbit_hp))
+	rabbit_hunger = float(data.get("rabbit_hunger", rabbit_hunger))
+	rabbit_affection = float(data.get("rabbit_affection", rabbit_affection))
+	rabbit_gear_level = int(data.get("rabbit_gear", rabbit_gear_level))
+	rabbit_carried = bool(data.get("rabbit_carried", rabbit_carried))
+	rabbit_pet_mode = str(data.get("rabbit_mode", rabbit_pet_mode))
 	camera.position = player
 	choose_panel.hide()
 	hub_sortie_button.hide()
@@ -1674,6 +1709,8 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 		refresh_slot_ui()
 	if upgrade_open:
 		refresh_upgrade_panel()
+	if rabbit_menu_open:
+		refresh_rabbit_menu()
 	update_hud()
 	queue_redraw()
 
@@ -5250,8 +5287,8 @@ func refresh_upgrade_panel() -> void:
 func select_upgrade(index: int) -> void:
 	if not upgrade_open or index < 0 or index >= 6:
 		return
-	if coop != null and coop.is_guest() and upgrade_target == "hero":
-		coop.send_guest_action("upgrade", index)
+	if coop != null and coop.is_guest():
+		coop.send_guest_action("upgrade" if upgrade_target == "hero" else "mint_upgrade", index)
 		return
 	if upgrade_target == "hero":
 		if pending_hero_points <= 0:
@@ -6392,7 +6429,8 @@ func update_rabbit_pet(delta: float) -> void:
 	rabbit_pet_bob_clock += delta * 8.0
 	rabbit_hunger = maxf(0.0, rabbit_hunger - delta * 0.45)
 	if rabbit_carried:
-		rabbit_pet = player + Vector2(0, -44)
+		var carrier_pos := coop_guest_pos if coop_rabbit_carrier_guest and coop != null and coop.is_host() else player
+		rabbit_pet = carrier_pos + Vector2(0, -44)
 		rabbit_pet_mode = "抱っこ中"
 		return
 
