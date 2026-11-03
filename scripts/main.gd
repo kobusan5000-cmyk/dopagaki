@@ -750,6 +750,11 @@ func _on_coop_peer_connected(id: int) -> void:
 	coop_guest_render_pos = coop_guest_pos
 	coop_panel_expanded = false
 	coop_guest_hp = 100.0
+	coop_guest_hunger = 100.0
+	coop_guest_thirst = 100.0
+	coop_guest_rations = 2
+	coop_guest_water = 2
+	coop_guest_survival_damage_clock = 0.0
 	coop_guest_level = 1
 	coop_guest_xp = 0
 	coop_guest_xp_needed = 5
@@ -1158,20 +1163,25 @@ func coop_guest_eat(index: int) -> void:
 			if coop_guest_stew_meals < 1: return
 			coop_guest_stew_meals -= 1
 			coop_guest_hp = minf(coop_guest_max_hp, coop_guest_hp + 40.0)
+			coop_guest_hunger = minf(100.0, coop_guest_hunger + 50.0)
 		1:
 			if coop_guest_broth_meals < 1: return
 			coop_guest_broth_meals -= 1
 			coop_guest_hp = minf(coop_guest_max_hp, coop_guest_hp + 25.0)
+			coop_guest_hunger = minf(100.0, coop_guest_hunger + 30.0)
+			coop_guest_thirst = minf(100.0, coop_guest_thirst + 15.0)
 			coop_guest_food_buff_clock = 30.0
 		2:
 			if coop_guest_melon_meals < 1: return
 			coop_guest_melon_meals -= 1
 			coop_guest_hp = minf(coop_guest_max_hp, coop_guest_hp + 30.0)
+			coop_guest_thirst = minf(100.0, coop_guest_thirst + 45.0)
 			coop_guest_mp = minf(coop_guest_max_mp, coop_guest_mp + 25.0)
 		3:
 			if coop_guest_watermelon_meals < 1: return
 			coop_guest_watermelon_meals -= 1
 			coop_guest_hp = minf(coop_guest_max_hp, coop_guest_hp + 60.0)
+			coop_guest_thirst = minf(100.0, coop_guest_thirst + 35.0)
 	burst(coop_guest_pos, Color("b7ffaf"), 20)
 	play_sound(AUDIO_PICKUP, -12.0)
 
@@ -1360,7 +1370,7 @@ func coop_guest_tick(delta: float) -> void:
 		show_status("2人とも脱出失敗。持込装備を失い安全区域へ", Color("ffbaba"))
 	if state == "playing" and coop_guest_hp > 0.0 and not coop_guest_jailed:
 		var guest_base_speed := 297.0 if coop_guest_job == 1 else (245.0 if coop_guest_job == 2 else (235.0 if coop_guest_job == 4 else (309.0 if coop_guest_job == 6 else 262.0)))
-		var guest_speed := guest_base_speed * (0.64 if coop_guest_guard else 1.0) * (1.0 + float(coop_guest_stats[1]) * 0.04) * (1.25 if coop_guest_food_buff_clock > 0.0 else 1.0) * (1.3 if coop_guest_skill_buff_clock > 0.0 else 1.0)
+		var guest_speed := guest_base_speed * (0.64 if coop_guest_guard else 1.0) * (1.0 + float(coop_guest_stats[1]) * 0.04) * (1.25 if coop_guest_food_buff_clock > 0.0 else 1.0) * (1.3 if coop_guest_skill_buff_clock > 0.0 else 1.0) * SURVIVAL_RULES.movement_factor(coop_guest_hunger, coop_guest_thirst)
 		coop_guest_pos = (coop_guest_pos + coop_guest_dir.limit_length(1.0) * guest_speed * delta + (coop_guest_jump_dir * 270.0 * delta if coop_guest_jump_clock > 0.0 else Vector2.ZERO)).clamp(ARENA.position + Vector2(35, 45), ARENA.end - Vector2(35, 35))
 		# Coins are auto-collected for either player, not only the host.
 		for coin_i in range(coin_drops.size() - 1, -1, -1):
@@ -1638,7 +1648,7 @@ func coop_client_tick(delta: float) -> void:
 		jump_clock = maxf(0.0, jump_clock - delta)
 		jump_cooldown = maxf(0.0, jump_cooldown - delta)
 		var guest_base_speed := 297.0 if class_id == 1 else (245.0 if class_id == 2 else (235.0 if class_id == 4 else (309.0 if class_id == 6 else 262.0)))
-		var guest_speed := guest_base_speed * (0.64 if guard_active else 1.0) * (1.0 + float(hero_stats[1]) * 0.04) * (1.25 if food_buff_clock > 0.0 else 1.0) * (1.3 if skill_buff_clock > 0.0 else 1.0)
+		var guest_speed := guest_base_speed * (0.64 if guard_active else 1.0) * (1.0 + float(hero_stats[1]) * 0.04) * (1.25 if food_buff_clock > 0.0 else 1.0) * (1.3 if skill_buff_clock > 0.0 else 1.0) * SURVIVAL_RULES.movement_factor(survival_hunger, survival_thirst)
 		player = (player + (direction * guest_speed * delta + jump_direction * 270.0 * delta if jump_clock > 0.0 else direction * guest_speed * delta) if coop_guest_hp > 0.0 and not coop_guest_jailed else player).clamp(ARENA.position + Vector2(35, 45), ARENA.end - Vector2(35, 35))
 		camera.position = player
 		# The guest does not run the host simulation, so update proximity hints locally.
@@ -2502,6 +2512,11 @@ func reset_game() -> void:
 	seeds = 8
 	carrots = 2
 	mushrooms = 1
+	survival_hunger = 100.0
+	survival_thirst = 100.0
+	survival_rations = 2
+	survival_water = 2
+	survival_damage_clock = 0.0
 	stew_meals = 0
 	broth_meals = 0
 	expedition_active = false
@@ -3787,7 +3802,7 @@ func _process(delta: float) -> void:
 		movement = Vector2.ZERO
 	if movement.length_squared() > 0.1:
 		walk_clock += delta * (5.0 if expedition_quiet_move else 10.0)
-		player += movement.normalized() * move_speed * (0.43 if expedition_quiet_move else 1.0) * (0.64 if guard_active else 1.0) * (0.0 if freeze_lock_clock > 0.0 else (0.52 if freeze_clock > 0.0 else 1.0)) * (1.0 + float(hero_stats[1]) * 0.04) * (1.25 if food_buff_clock > 0.0 else 1.0) * (1.3 if skill_buff_clock > 0.0 else 1.0) * delta
+		player += movement.normalized() * move_speed * (0.43 if expedition_quiet_move else 1.0) * (0.64 if guard_active else 1.0) * (0.0 if freeze_lock_clock > 0.0 else (0.52 if freeze_clock > 0.0 else 1.0)) * (1.0 + float(hero_stats[1]) * 0.04) * (1.25 if food_buff_clock > 0.0 else 1.0) * (1.3 if skill_buff_clock > 0.0 else 1.0) * SURVIVAL_RULES.movement_factor(survival_hunger, survival_thirst) * delta
 	else:
 		walk_clock = 0.0
 	if jump_clock > 0.0 and coop_host_downed_clock <= 0.0 and not coop_host_jailed:
@@ -4054,6 +4069,8 @@ func eat_meal(is_broth: bool) -> void:
 			return
 		broth_meals -= 1
 		hp = minf(max_hp, hp + 25.0)
+		survival_hunger = minf(100.0, survival_hunger + 30.0)
+		survival_thirst = minf(100.0, survival_thirst + 15.0)
 		food_buff_clock = 30.0
 		show_status("スープ！ HP+25 / 移動速度アップ", Color("a4ffbc"))
 	else:
@@ -4062,6 +4079,7 @@ func eat_meal(is_broth: bool) -> void:
 			return
 		stew_meals -= 1
 		hp = minf(max_hp, hp + 40.0)
+		survival_hunger = minf(100.0, survival_hunger + 50.0)
 		show_status("シチュー！ HP+40", Color("a4ffbc"))
 	burst(player, Color("adffca"), 20)
 	play_sound(AUDIO_PICKUP, -12.0)
@@ -4073,12 +4091,14 @@ func eat_fruit(is_watermelon: bool) -> void:
 			return
 		watermelon_meals -= 1
 		hp = minf(max_hp, hp + 60.0)
+		survival_thirst = minf(100.0, survival_thirst + 35.0)
 	else:
 		if melon_meals <= 0:
 			show_status("メロンジュースがない！", Color("ffc5a3"))
 			return
 		melon_meals -= 1
 		hp = minf(max_hp, hp + 30.0)
+		survival_thirst = minf(100.0, survival_thirst + 45.0)
 		mp = minf(max_mp, mp + 25.0)
 	burst(player, Color("b7ffaf"), 24)
 	play_sound(AUDIO_PICKUP, -9.0)
@@ -5757,6 +5777,13 @@ func return_to_safe_hub() -> void:
 	state = "playing"
 	phase = "hub"
 	expedition_active = false
+	# The sanctuary provides rest and clean water between sorties.
+	survival_hunger = 100.0
+	survival_thirst = 100.0
+	survival_damage_clock = 0.0
+	coop_guest_hunger = 100.0
+	coop_guest_thirst = 100.0
+	coop_guest_survival_damage_clock = 0.0
 	search_crates.clear()
 	carried_materials = [0, 0, 0]
 	extraction_clock = -1.0
@@ -5968,10 +5995,90 @@ func count_open_crates() -> int:
 			opened += 1
 	return opened
 
+# Salvage is a separate 12-slot team pouch, not the five equipment slots.
+# Let a survivor drop one unit when searching for rarer cores or crystals.
+func discard_material(kind: int) -> void:
+	if state != "playing" or not expedition_active or kind < 0 or kind >= carried_materials.size():
+		return
+	if coop != null and coop.is_guest():
+		if carried_materials[kind] > 0:
+			coop.send_guest_action("discard_material", kind)
+		return
+	if carried_materials[kind] <= 0:
+		return
+	carried_materials[kind] -= 1
+	show_status("%sを1個捨てた（素材ポーチ%d/%d）" % [EXTRACTION_RULES.MATERIAL_NAMES[kind], EXTRACTION_RULES.cargo_count(carried_materials), EXTRACTION_RULES.CARGO_CAPACITY], Color("ffe1a1"))
+	refresh_inventory_ui()
+
+func use_survival_supply(kind: int) -> void:
+	if state != "playing" or not (kind in [0, 1]) or hp <= 0.0 or coop_host_downed_clock > 0.0 or coop_host_jailed:
+		return
+	if kind == 0:
+		if not SURVIVAL_RULES.can_use_supply(survival_rations, survival_hunger):
+			show_status("食料がないか、空腹が十分満たされている", Color("ffcea5"))
+			return
+		survival_rations -= 1
+		survival_hunger = minf(100.0, survival_hunger + SURVIVAL_RULES.RATION_RESTORE)
+		show_status("非常食を食べた！ 空腹%d%%" % roundi(survival_hunger), Color("b9ffc3"))
+	else:
+		if not SURVIVAL_RULES.can_use_supply(survival_water, survival_thirst):
+			show_status("飲料がないか、水分が十分満たされている", Color("a9ddff"))
+			return
+		survival_water -= 1
+		survival_thirst = minf(100.0, survival_thirst + SURVIVAL_RULES.WATER_RESTORE)
+		show_status("飲料水を飲んだ！ 水分%d%%" % roundi(survival_thirst), Color("a9e9ff"))
+	play_sound(AUDIO_PICKUP, -13.0)
+
+func coop_guest_use_survival_supply(kind: int) -> void:
+	if coop_guest_hp <= 0.0 or coop_guest_jailed or coop_guest_downed_clock > 0.0:
+		return
+	if kind == 0 and SURVIVAL_RULES.can_use_supply(coop_guest_rations, coop_guest_hunger):
+		coop_guest_rations -= 1
+		coop_guest_hunger = minf(100.0, coop_guest_hunger + SURVIVAL_RULES.RATION_RESTORE)
+	elif kind == 1 and SURVIVAL_RULES.can_use_supply(coop_guest_water, coop_guest_thirst):
+		coop_guest_water -= 1
+		coop_guest_thirst = minf(100.0, coop_guest_thirst + SURVIVAL_RULES.WATER_RESTORE)
+
+# Only the authoritative host simulates metabolism and starvation damage.
+# Camp is safe: a prepared player can rest there without draining supplies.
+func update_survival(delta: float) -> void:
+	if not expedition_active:
+		return
+	if hp > 0.0 and coop_host_downed_clock <= 0.0 and not coop_host_jailed and not is_in_safe_camp(player):
+		var previous_low := minf(survival_hunger, survival_thirst)
+		var zone := EXTRACTION_RULES.zone_for_position(player)
+		survival_hunger = SURVIVAL_RULES.decrease_need(survival_hunger, SURVIVAL_RULES.HUNGER_DRAIN_PER_SECOND, delta, zone)
+		survival_thirst = SURVIVAL_RULES.decrease_need(survival_thirst, SURVIVAL_RULES.THIRST_DRAIN_PER_SECOND, delta, zone)
+		if previous_low >= SURVIVAL_RULES.LOW_THRESHOLD and minf(survival_hunger, survival_thirst) < SURVIVAL_RULES.LOW_THRESHOLD:
+			show_status("生存警告：空腹・水分が低下！ [Z]食料 [X]飲料", Color("ffac8c"))
+		if survival_hunger <= 0.0 or survival_thirst <= 0.0:
+			survival_damage_clock += delta
+			if survival_damage_clock >= SURVIVAL_RULES.STARVATION_DAMAGE_SECONDS:
+				survival_damage_clock = 0.0
+				apply_status_damage(SURVIVAL_RULES.STARVATION_DAMAGE, Color("ffa080"))
+		else:
+			survival_damage_clock = 0.0
+	if coop != null and coop.is_host() and coop.peer_id > 1 and coop_guest_hp > 0.0 and not coop_guest_jailed and coop_guest_downed_clock <= 0.0 and not is_in_safe_camp(coop_guest_pos):
+		var guest_zone := EXTRACTION_RULES.zone_for_position(coop_guest_pos)
+		coop_guest_hunger = SURVIVAL_RULES.decrease_need(coop_guest_hunger, SURVIVAL_RULES.HUNGER_DRAIN_PER_SECOND, delta, guest_zone)
+		coop_guest_thirst = SURVIVAL_RULES.decrease_need(coop_guest_thirst, SURVIVAL_RULES.THIRST_DRAIN_PER_SECOND, delta, guest_zone)
+		if coop_guest_hunger <= 0.0 or coop_guest_thirst <= 0.0:
+			coop_guest_survival_damage_clock += delta
+			if coop_guest_survival_damage_clock >= SURVIVAL_RULES.STARVATION_DAMAGE_SECONDS:
+				coop_guest_survival_damage_clock = 0.0
+				coop_guest_hp = maxf(0.0, coop_guest_hp - SURVIVAL_RULES.STARVATION_DAMAGE)
+				if coop_guest_hp <= 0.0:
+					coop_guest_downed_clock = 20.0
+					coop_guest_shoot = false
+					show_status("仲間が脱水・空腹でダウン！ 20秒以内に救助", Color("ffac8c"))
+		else:
+			coop_guest_survival_damage_clock = 0.0
+
 func update_expedition(delta: float) -> void:
 	if not expedition_active:
 		return
 	expedition_elapsed += delta
+	update_survival(delta)
 	expedition_noise_clock = maxf(0.0, expedition_noise_clock - delta)
 	expedition_spawn_clock -= delta
 	# Ambient danger remains, but enemies no longer arrive in numbered waves.
