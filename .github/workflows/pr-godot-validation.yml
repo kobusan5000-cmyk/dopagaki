@@ -195,6 +195,18 @@ jobs:
           }
           cat godot-survival-journal.log
 
+      - name: Validate rare equipment pickup celebrations and no loot duplication
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot="$HOME/.cache/dopagaki-godot/godot"
+          timeout 75 "$godot" --headless --path . --script res://tests/test_rare_loot_pickup.gd > godot-rare-loot-pickup.log 2>&1 || {
+            cat godot-rare-loot-pickup.log
+            echo "::error::Rare equipment pickup FX regression failed"
+            exit 1
+          }
+          cat godot-rare-loot-pickup.log
+
       - name: Validate Chubura carrot healing and guest supplies
         shell: bash
         run: |
@@ -314,6 +326,7 @@ jobs:
             godot-camera-edge.log
             godot-slot-777.log
             godot-chubura-healing.log
+            godot-rare-loot-pickup.log
             godot-coop-host.log
             godot-coop-guest.log
             godot-run.log
