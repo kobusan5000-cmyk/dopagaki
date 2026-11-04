@@ -219,6 +219,18 @@ jobs:
           }
           cat godot-chubura-healing.log
 
+      - name: Validate fixed-setting slot odds and prize rarity boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot="$HOME/.cache/dopagaki-godot/godot"
+          timeout 75 "$godot" --headless --path . --script res://tests/test_slot_odds.gd > godot-slot-odds.log 2>&1 || {
+            cat godot-slot-odds.log
+            echo "::error::Slot odds or prize rarity regression failed"
+            exit 1
+          }
+          cat godot-slot-odds.log
+
       - name: Validate rainbow 777 bonus animation and single payout
         shell: bash
         run: |
@@ -324,6 +336,7 @@ jobs:
             godot-weapon-condition.log
             godot-enemy-hitboxes.log
             godot-camera-edge.log
+            godot-slot-odds.log
             godot-slot-777.log
             godot-chubura-healing.log
             godot-rare-loot-pickup.log
