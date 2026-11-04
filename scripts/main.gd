@@ -62,6 +62,7 @@ const ARMOR_RARITY_MULT := [1.0, 1.6, 2.3, 3.5, 5.0]
 const BAG_CAPACITY := 5
 const SLOT_COST := 25
 const LUMI_SLOT_SCRIPT = preload("res://scripts/lumi_slot.gd")
+const SLOT_ODDS = preload("res://scripts/slot_odds_rules.gd")
 const ALL_IN_RULES = preload("res://scripts/all_in_rules.gd")
 const EXTRACTION_RULES = preload("res://scripts/extraction_rules.gd")
 const SURVIVAL_RULES = preload("res://scripts/survival_rules.gd")
@@ -1134,19 +1135,7 @@ func coop_guest_slot_wager(cost: int) -> void:
 	coop_guest_slot_replay = false
 	coop_guest_slot_pending = true
 	coop_guest_slot_serial += 1
-	var roll := rng.randf()
-	var cut := 1.0 / 17.0
-	coop_guest_slot_result = "BIG" if roll < cut else "MISS"
-	if coop_guest_slot_result == "MISS":
-		cut += 1.0 / 6.2
-		if roll < cut:
-			coop_guest_slot_result = "REG"
-		else:
-			for role in ["GRAPE", "CHERRY", "REPLAY"]:
-				cut += 1.0 / (6.0 if role == "GRAPE" else (35.0 if role == "CHERRY" else 7.3))
-				if roll < cut:
-					coop_guest_slot_result = role
-					break
+	coop_guest_slot_result = SLOT_ODDS.outcome_for_roll(rng.randf())
 
 func coop_guest_slot_claim(serial: int) -> void:
 	if not coop_guest_slot_pending or serial != coop_guest_slot_serial:
@@ -3270,14 +3259,14 @@ func lumi_slot_reward(outcome: String, payout: int) -> void:
 		"BIG":
 			# Always an epic-or-better weapon: EPIC 74%, LEGENDARY 23%, MYTHIC 3%.
 			var big_roll: float = rng.randf()
-			var jackpot_rarity: int = 2 if big_roll < 0.74 else (3 if big_roll < 0.97 else 4)
+			var jackpot_rarity: int = SLOT_ODDS.prize_rarity("BIG", big_roll)
 			spawn_drop(prize_pos, jackpot_rarity)
 			gear_won = true
 			trigger_camera_shake(0.25, 10.0)
 		"REG":
 			# Mostly ordinary equipment: COMMON 75%, RARE 22%, EPIC 3%.
 			var reg_roll: float = rng.randf()
-			var reg_rarity: int = 0 if reg_roll < 0.75 else (1 if reg_roll < 0.97 else 2)
+			var reg_rarity: int = SLOT_ODDS.prize_rarity("REG", reg_roll)
 			if rng.randf() < 0.55:
 				spawn_drop(prize_pos, reg_rarity)
 			else:
