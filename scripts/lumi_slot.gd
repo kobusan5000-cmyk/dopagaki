@@ -12,8 +12,9 @@ const SYMBOLS := ["7", "BAR", "🍉", "🍒", "🍇", "↻"]
 # BIG + REG is about one win in 4.5 spins, permanently fixed to setting 6.
 # Fantasy game rates (not real-world slot machine probabilities).
 # Setting 6 is permanently active; no player-adjustable odds.
-const BIG_ODDS := 17.0
-const REG_ODDS := 6.2
+const SLOT_ODDS = preload("res://scripts/slot_odds_rules.gd")
+const BIG_ODDS := SLOT_ODDS.BIG_ODDS
+const REG_ODDS := SLOT_ODDS.REG_ODDS
 # Balanced against a 25G entry cost and much more frequent gear drops.
 const ROLE_PAYOUT := {"BIG": 160, "REG": 60, "GRAPE": 8, "CHERRY": 2, "REPLAY": 0, "MISS": 0}
 const RESULT_NAMES := {"BIG": "BIG BONUS!!", "REG": "REG BONUS!", "GRAPE": "🍇 ぶどう", "CHERRY": "🍒 チェリー", "REPLAY": "↻ リプレイ！", "MISS": "はずれ…"}
@@ -320,20 +321,7 @@ func begin_spin() -> void:
 	_update_info()
 
 func _draw_outcome() -> String:
-	var roll: float = rng.randf()
-	var big_chance: float = 1.0 / BIG_ODDS
-	var reg_chance: float = 1.0 / REG_ODDS
-	if roll < big_chance:
-		return "BIG"
-	if roll < big_chance + reg_chance:
-		return "REG"
-	var cut: float = big_chance + reg_chance
-	for result in ["GRAPE", "CHERRY", "REPLAY"]:
-		var odds: float = 1.0 / (6.0 if result == "GRAPE" else (35.0 if result == "CHERRY" else 7.3))
-		cut += odds
-		if roll < cut:
-			return result
-	return "MISS"
+	return SLOT_ODDS.outcome_for_roll(rng.randf())
 
 func _result_symbols(role: String) -> Array[String]:
 	match role:
