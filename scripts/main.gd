@@ -2298,8 +2298,12 @@ func build_ui() -> void:
 		quick_button.pressed.connect(quickbar_equip.bind(i))
 		hotbar.add_child(quick_button)
 		hotbar_buttons.append(quick_button)
-	hotbar_currency = make_label("所持金 0G", 18, Color("ffe6a0"))
-	hotbar_currency.position = Vector2(878, 572)
+	hotbar_currency = make_label("所持金 0G", 14, Color("ffe6a0"))
+	# Keep the right-side resource readout inside the 1152x648 viewport.
+	# It must not overlap the survival status above or run off the right edge.
+	hotbar_currency.position = Vector2(878, 568)
+	hotbar_currency.custom_minimum_size = Vector2(266, 72)
+	hotbar_currency.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	layer.add_child(hotbar_currency)
 	survival_status_label = make_label("", 14, Color("a6e8cd"), true)
 	survival_status_label.position = Vector2(878, 523)
@@ -3154,7 +3158,7 @@ func refresh_hotbar() -> void:
 			btn.text = "%d %s" % [i + 1, short_name]
 			btn.tooltip_text = item_description(item) + "\nクリック / 数字キーで装備"
 			btn.add_theme_stylebox_override("normal", make_style(Color("152430"), RARITY_COLORS[rarity], 7))
-	hotbar_currency.text = "所持金 %dG\n素材 %d/%d  |  種:人参%d/メロン%d/スイカ%d" % [coins, EXTRACTION_RULES.cargo_count(carried_materials), EXTRACTION_RULES.CARGO_CAPACITY, seeds, melon_seeds, watermelon_seeds]
+	hotbar_currency.text = "所持金 %dG  |  素材 %d/%d\n種: 人参%d  メロン%d\nスイカ%d" % [coins, EXTRACTION_RULES.cargo_count(carried_materials), EXTRACTION_RULES.CARGO_CAPACITY, seeds, melon_seeds, watermelon_seeds]
 
 func item_icon(item: Dictionary) -> Texture2D:
 	if str(item.get("type", "")) == "armor":
