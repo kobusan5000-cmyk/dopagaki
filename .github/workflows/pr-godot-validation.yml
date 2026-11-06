@@ -243,6 +243,18 @@ jobs:
           }
           cat godot-camera-edge.log
 
+      - name: Validate camera-following forest tile culling
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot="$HOME/.cache/dopagaki-godot/godot"
+          timeout 75 "$godot" --headless --path . --script res://tests/test_ground_camera_coverage.gd > godot-ground-tiles.log 2>&1 || {
+            cat godot-ground-tiles.log
+            echo "::error::Camera-following ground tile regression failed"
+            exit 1
+          }
+          cat godot-ground-tiles.log
+
       - name: Validate twin enemy full-body attack hitboxes
         shell: bash
         run: |
@@ -324,6 +336,7 @@ jobs:
             godot-weapon-condition.log
             godot-enemy-hitboxes.log
             godot-camera-edge.log
+            godot-ground-tiles.log
             godot-slot-777.log
             godot-chubura-healing.log
             godot-rare-loot-pickup.log
