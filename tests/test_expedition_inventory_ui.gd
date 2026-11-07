@@ -15,6 +15,22 @@ func _run() -> void:
 	var panel: Control = scene.get("inventory_panel")
 	var materials: Label = scene.get("inventory_materials_label")
 	_check(sortie.visible, "Sortie button visible when hub menus closed")
+	# Regression: the bottom-right material/seed text previously ran off-screen
+	# when three seed counters shared one unwrapped line.
+	var resource_label: Label = scene.get("hotbar_currency")
+	_check(resource_label.autowrap_mode != TextServer.AUTOWRAP_OFF, "Bottom-right resources allow wrapping")
+	scene.set("coins", 9999)
+	scene.set("seeds", 999)
+	scene.set("melon_seeds", 999)
+	scene.set("watermelon_seeds", 999)
+	scene.call("refresh_hotbar")
+	await process_frame
+	_check(resource_label.text.contains("素材 0/12"), "Materials remain readable")
+	_check(resource_label.text.contains("人参999") and resource_label.text.contains("メロン999") and resource_label.text.contains("スイカ999"), "All seed counters remain visible")
+	_check(resource_label.position.x + resource_label.size.x <= 1152.0, "Resource readout fits right viewport edge")
+	_check(resource_label.position.y + resource_label.size.y <= 648.0, "Resource readout fits bottom viewport edge")
+	_check(resource_label.get_visible_line_count() >= 3, "Resource readout uses multiple short lines")
+
 
 	scene.call("toggle_inventory")
 	await process_frame
