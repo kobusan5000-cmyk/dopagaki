@@ -31,6 +31,7 @@ const WOLF_ATTACK: Texture2D = preload("res://assets/ookami_attack.png")
 const PIERO_WALK: Texture2D = preload("res://assets/piero_walk.png")
 const STAR_DUO_SOURCE = preload("res://scripts/star_duo_art.gd")
 const ENEMY_HITBOX = preload("res://scripts/enemy_hitbox_rules.gd")
+const GROUND_TILE_RULES = preload("res://scripts/ground_tile_rules.gd")
 # 48px frames in the order idle / walk / skill-or-dash / hit.
 const HIHI_ART: Texture2D = preload("res://assets/characters/hihi_actions.png")
 const HEALER_ART: Texture2D = preload("res://assets/characters/healer_actions.png")
@@ -7392,13 +7393,12 @@ func draw_fantasy_ground() -> void:
 	# Never expose the black clear color beyond the camera's view at the map edge.
 	var painted_bounds := ground_paint_bounds()
 	draw_rect(painted_bounds, Color("0a151c"))
-	var tile_size: float = 256.0
-	var left_tile: int = int(floor((player.x - 870.0) / tile_size))
-	var right_tile: int = int(ceil((player.x + 870.0) / tile_size))
-	var top_tile: int = int(floor((player.y - 560.0) / tile_size))
-	var bottom_tile: int = int(ceil((player.y + 560.0) / tile_size))
-	for tx in range(left_tile, right_tile + 1):
-		for ty in range(top_tile, bottom_tile + 1):
+	# Use the clamped Camera2D screen center, not the wolf position.
+	var tile_size: float = GROUND_TILE_RULES.TILE_SIZE
+	var camera_center: Vector2 = camera.get_screen_center_position()
+	var tile_range: Rect2i = GROUND_TILE_RULES.visible_tile_range(camera_center, get_viewport_rect().size, camera.zoom)
+	for tx in range(tile_range.position.x, tile_range.end.x):
+		for ty in range(tile_range.position.y, tile_range.end.y):
 			var dest := Rect2(float(tx) * tile_size, float(ty) * tile_size, tile_size, tile_size)
 			if dest.intersects(painted_bounds):
 				var variant: int = posmod(tx * 19 + ty * 13 + tx * ty, FOREST_VARIANTS.size())
