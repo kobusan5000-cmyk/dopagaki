@@ -328,6 +328,18 @@ jobs:
             exit 1
           fi
 
+      - name: Validate camera-centered forest tile coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot="$HOME/.cache/dopagaki-godot/godot"
+          timeout 75 "$godot" --headless --path . --script res://tests/test_ground_camera_coverage.gd > godot-ground-tiles.log 2>&1 || {
+            cat godot-ground-tiles.log
+            echo "::error::Camera tile coverage regression failed"
+            exit 1
+          }
+          cat godot-ground-tiles.log
+
       - name: Save diagnostic logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -348,6 +360,7 @@ jobs:
             godot-weapon-condition.log
             godot-enemy-hitboxes.log
             godot-camera-edge.log
+            godot-ground-tiles.log
             godot-slot-odds.log
             godot-slot-777.log
             godot-chubura-healing.log
