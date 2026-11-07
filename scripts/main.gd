@@ -1755,6 +1755,7 @@ func _on_coop_snapshot(data: Dictionary) -> void:
 	update_music()
 	state = "playing" if str(data.get("state", "playing")) == "playing" else "dead"
 	expedition_active = bool(data.get("expedition", false))
+	close_craft_on_remote_sortie()
 	wave = int(data.get("wave", 0))
 	coins = int(data.get("coins", 0))
 	var slot_serial := int(data.get("guest_slot_serial", 0))
@@ -5752,6 +5753,15 @@ func craft_for_actor(recipe: int, guest: bool = false) -> void:
 			survival_bandages += 1
 	show_status("%sが%sをクラフト！" % ["仲間" if guest else "主人公", CRAFT_RULES.NAMES[recipe]], Color("b4ffe0"))
 	play_sound(AUDIO_RARE, -18.0)
+
+# A guest can have the workbench open when the host starts a sortie.
+# Close the modal as soon as the authoritative expedition state arrives,
+# otherwise it blocks combat controls and shows recipes that cannot be used.
+func close_craft_on_remote_sortie() -> void:
+	if craft_open and (expedition_active or phase != "hub" or state != "playing"):
+		craft_open = false
+		if craft_panel != null:
+			craft_panel.hide()
 
 func toggle_craft() -> void:
 	if state != "playing":
