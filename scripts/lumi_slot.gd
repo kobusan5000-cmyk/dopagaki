@@ -439,4 +439,9 @@ func prepare_new_game() -> void:
 	jackpot_panel_style.border_color = Color("aa8758")
 	jackpot_banner.hide()
 	jackpot_sound_player.stop()
+	# A new game can start while the rainbow animation is still active.
+	# Restore both the lamp and all reel colors, not only the panel border.
+	_light_lamps("")
+	for i in range(3):
+		_paint_reel(i, center_symbols[i])
 	_update_info()
