@@ -44,8 +44,25 @@ func _run() -> void:
 	_check(result_events.size() == 2, "REG also emits exactly one event")
 	_check(float(panel.get("jackpot_flash_clock")) == 0.0, "REG does not trigger 777 animation")
 	_check(not (panel.get("jackpot_banner") as Label).visible, "REG has no 777 banner")
+	# Restart while BIG rainbow is still visible; no stale rainbow text may persist.
+	panel.call("begin_spin")
+	panel.set("result_name", "BIG")
+	panel.set("spin_time", 1.0)
+	for index in range(3):
+		panel.call("stop_reel", index)
+	panel.call("_process", 0.2)
+	var reel_tiles: Array = panel.get("reel_tiles")
+	var center_symbols: Array = panel.get("center_symbols")
+	var first_reel: Label = reel_tiles[0][1]
+	var animated_color: Color = first_reel.get_theme_color("font_color")
 	panel.call("prepare_new_game")
 	_check(float(panel.get("jackpot_flash_clock")) == 0.0, "Session reset clears active celebration")
+	_check(not (panel.get("jackpot_banner") as Label).visible, "Session reset hides rainbow banner")
+	_check((panel.get("jackpot_panel_style") as StyleBoxFlat).border_color == Color("aa8758"), "Session reset restores normal border")
+	_check((panel.get("big_lamp") as Label).get_theme_color("font_color") == Color("61596f"), "Session reset clears BIG lamp")
+	var expected_color := Color("df4770") if center_symbols[0] in ["7", "🍒"] else (Color("9268c0") if center_symbols[0] == "BAR" else Color("387e6b"))
+	_check(first_reel.get_theme_color("font_color") == expected_color, "Session reset restores normal center reel color")
+	_check(animated_color != expected_color, "Regression exercised a visible rainbow override")
 	panel.queue_free()
 	if failures > 0:
 		push_error("LUMI 777 celebration regressions failed: %d" % failures)
